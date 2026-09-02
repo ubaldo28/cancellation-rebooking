@@ -22,3 +22,7 @@ seed/
 *.tar.gz
 design/*.html
 !design/*.dc.html
+
+# React app
+web/node_modules/
+web/dist/

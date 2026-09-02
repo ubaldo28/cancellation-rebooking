@@ -1,12 +1,7 @@
 # Cancellation Rebooking
 
-A scheduling app for solo mobile operators — car detailers, junk removal, bin
-and trash-can cleaning, pressure washing — that turns a cancelled appointment
-back into a booked one.
-
-These are businesses that drive to the customer and can't afford to buy leads.
-When a slot goes empty, the usual answer is to pay a lead marketplace. This
-fills it from the customer list they already have, for nothing.
+A scheduling backend for solo trades operators — mobile detailers, plumbers,
+barbers — that turns a cancelled appointment back into a booked one.
 
 When a client cancels, the operator loses the slot and usually the revenue. The
 obvious fix is a waitlist, and every booking platform already has one. This does
@@ -22,8 +17,8 @@ the product.
 
 ## Status
 
-Backend complete and tested. The React operator dashboard is designed but not
-built yet — that is the next piece of work. Not deployed.
+Backend complete and tested. No frontend yet — the operator dashboard is
+designed but not built. Not deployed.
 
 - **147 tests passing**, run against a real SQLite instance executing the actual
   migrations and queries
@@ -31,9 +26,8 @@ built yet — that is the next piece of work. Not deployed.
 - Runs entirely within Cloudflare's free tier
 
 ```bash
-npm install
-npm test          # 147 tests
-npm run typecheck
+npm install && npm test          # backend, 147 tests
+cd web && npm install && npm run dev   # dashboard on :5173
 ```
 
 ---
@@ -42,7 +36,6 @@ npm run typecheck
 
 | Layer | Choice | Why |
 | --- | --- | --- |
-| Frontend | React + TypeScript | Operator dashboard — designed, not yet built |
 | Runtime | Cloudflare Workers | Edge-deployed, no servers, generous free tier |
 | Database | Cloudflare D1 (SQLite) | Same platform, no connection pooling to manage |
 | Language | TypeScript, strict | |
@@ -188,6 +181,9 @@ src/
     tz.ts       DST-safe timezone conversion
     countries.ts  64 countries: phone, postcode, currency, locale
 test/           147 tests
+web/            React dashboard (Vite)
+  src/pages/    Today, FillSlot, Schedule, Clients, Jobs, Settings, SignIn
+  src/api.ts    typed Worker client
 design/         operator UI screen flow
 ```
 
