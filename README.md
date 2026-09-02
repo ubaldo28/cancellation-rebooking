@@ -1,13 +1,21 @@
 # Cancellation Rebooking
 
-A scheduling backend for solo trades operators — mobile detailers, plumbers,
-barbers — that turns a cancelled appointment back into a booked one.
+A scheduling app for small mobile businesses: car detailers, junk removal,
+trash-can cleaning, pressure washing. They drive to every job, and they don't
+have the margin to buy leads.
+
+React dashboard on Cloudflare Pages, TypeScript API on Cloudflare Workers, D1
+for storage.
+
+**Live: [cancellation-rebooking.pages.dev](https://cancellation-rebooking.pages.dev)**
 
 When a client cancels, the operator loses the slot and usually the revenue. The
-obvious fix is a waitlist, and every booking platform already has one. This does
-something a waitlist can't: it ranks who to offer the slot to by **how far out of
-the operator's way they are**, using the jobs immediately before and after the
-gap as anchors.
+obvious fix is a waitlist, and every booking platform already has one. That
+works when customers come to you. These operators drive, so a waitlist hands
+them a fill forty minutes off their route and the slot stays empty anyway.
+
+This ranks who to offer the slot to by **how far out of the operator's way they
+are**, using the jobs immediately before and after the gap as anchors.
 
 A client who is six weeks overdue but forty minutes across town is a worse fill
 than one who is barely due and three minutes off the route. That trade-off is
@@ -17,17 +25,18 @@ the product.
 
 ## Status
 
-Backend complete and tested. No frontend yet — the operator dashboard is
-designed but not built. Not deployed.
+In active development. Both halves are built and deployed: the React operator
+dashboard is live at the link above and the Worker API behind it is running.
 
 - **114 tests passing**, run against a real SQLite instance executing the actual
   migrations and queries
-- TypeScript `strict` with `noUncheckedIndexedAccess`, zero errors
+- TypeScript `strict` with `noUncheckedIndexedAccess`, zero errors, on both the
+  API and the dashboard
 - Runs entirely within Cloudflare's free tier
 
 ```bash
-npm install && npm test          # backend, 114 tests
-cd web && npm install && npm run dev   # dashboard on :5173
+npm install && npm test                # API, 114 tests
+cd web && npm install && npm run dev    # dashboard on :5173
 ```
 
 ---
@@ -36,14 +45,42 @@ cd web && npm install && npm run dev   # dashboard on :5173
 
 | Layer | Choice | Why |
 | --- | --- | --- |
-| Runtime | Cloudflare Workers | Edge-deployed, no servers, generous free tier |
+| Frontend | **React 18 + React Router 6, built with Vite** | Seven screens, real client-side state and routing. The operator uses this on a phone between jobs, in a van, so it had to be an app, not a page. |
+| Styling | Plain CSS, one stylesheet | No Tailwind, no component library. Nothing here needed one. |
+| API | Cloudflare Workers | Edge-deployed, no servers, generous free tier |
 | Database | Cloudflare D1 (SQLite) | Same platform, no connection pooling to manage |
-| Language | TypeScript, strict | |
+| Hosting | Cloudflare Pages | Dashboard and API on one deploy, same origin |
+| Language | TypeScript, strict, both ends | |
 | Tests | Vitest + `node:sqlite` | Real SQL execution, not mocks |
 
 No ORM. The queries are the interesting part of the system, and hiding them
 behind a query builder would have hidden the cost characteristics that turned
 out to matter most (see *Cost engineering* below).
+
+---
+
+## The operator dashboard
+
+`web/` is a React 18 single-page app, seven screens, all TypeScript:
+
+| Screen | What it does |
+| --- | --- |
+| **Today** | The day's jobs and any gap the cron has detected |
+| **FillSlot** | The core flow — ranked candidates for one gap, and the offer that goes out |
+| **Schedule** | Working hours, time off, upcoming appointments |
+| **Clients** | Recurring clients, their cadence, how overdue each one is |
+| **Jobs** | Open leads: quoted work that never got booked |
+| **Settings** | Country, timezone, currency, locale, messaging mode |
+| **SignIn** | Passwordless — enter an email, get a link |
+
+`src/api.ts` is a hand-written typed client for the Worker. Every route the
+dashboard calls is typed against the same shapes the API returns, so a change to
+a response is a compile error in the UI rather than `undefined` on a screen in
+front of a customer.
+
+Sign-up asks for country **and** timezone separately, with a note under the
+field explaining why: several countries span more than one, and picking the
+country alone would silently put an operator's whole calendar in the wrong hours.
 
 ---
 
@@ -170,21 +207,26 @@ English-speaking operator gets Spanish words with US dates and dollars.
 ## Layout
 
 ```
-migrations/     5 D1 migrations
+web/                    React 18 dashboard, Vite, TypeScript
+  src/App.tsx           routes and shell
+  src/main.tsx          entry
+  src/api.ts            typed Worker client
+  src/pages/            Today, FillSlot, Schedule, Clients, Jobs, Settings, SignIn
+  src/components/       shared UI
+  src/styles.css        all of the styling
+
+migrations/             5 D1 migrations
 src/
-  index.ts      routes, cron, public offer page
+  index.ts              API routes, cron, public offer page
   lib/
-    gaps.ts     gap detection from working hours, appointments, time off
-    rank.ts     candidate scoring — proximity 0.50, readiness 0.35, value 0.15
-    offers.ts   offer lifecycle and the accept race guard
-    geo.ts      offline geocoding + distance cache
-    tz.ts       DST-safe timezone conversion
-    countries.ts  launch markets: phone, postcode, currency, locale
-test/           114 tests
-web/            React dashboard (Vite)
-  src/pages/    Today, FillSlot, Schedule, Clients, Jobs, Settings, SignIn
-  src/api.ts    typed Worker client
-design/         operator UI screen flow
+    gaps.ts             gap detection from working hours, appointments, time off
+    rank.ts             candidate scoring — proximity 0.50, readiness 0.35, value 0.15
+    offers.ts           offer lifecycle and the accept race guard
+    geo.ts              offline geocoding + distance cache
+    tz.ts               DST-safe timezone conversion
+    countries.ts        launch markets: phone, postcode, currency, locale
+test/                   114 tests
+design/                 operator UI screen flow
 ```
 
 ---
