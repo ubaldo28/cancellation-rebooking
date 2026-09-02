@@ -1,15 +1,15 @@
-name = "gapfiller"
+name = "app"
 main = "src/index.ts"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "gapfiller"
-database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
+database_name = "app"
+database_id = "9b7f7e44-b27b-46e0-b7e9-235a6d75f848"
 
 [vars]
-APP_URL = "https://gapfiller.example.com"
+APP_URL = "https://app.slotfill.workers.dev"
 # Distance provider: "estimate" costs nothing and needs no key.
 # Switch to "google" or "mapbox" only when accuracy justifies the bill.
 DISTANCE_PROVIDER = "estimate"
@@ -21,7 +21,7 @@ GEOCODE_PROVIDER = "auto"
 
 # Exact origins allowed to call the API with a session cookie. No wildcards —
 # credentials plus a wildcard would let any site drive an operator's account.
-ALLOWED_ORIGINS = "http://localhost:5173"
+ALLOWED_ORIGINS = "http://localhost:5173,https://cancellation-rebooking.pages.dev"
 
 # Transactional email. Sign-in is impossible without one of these configured;
 # the endpoint returns 503 rather than falling back to something insecure.

@@ -5,9 +5,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:create": "wrangler d1 create gapfiller",
-    "db:migrate:local": "wrangler d1 migrations apply gapfiller --local",
-    "db:migrate": "wrangler d1 migrations apply gapfiller --remote",
+    "db:create": "wrangler d1 create cancellation-rebooking",
+    "db:migrate:local": "wrangler d1 migrations apply cancellation-rebooking --local",
+    "db:migrate": "wrangler d1 migrations apply cancellation-rebooking --remote",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

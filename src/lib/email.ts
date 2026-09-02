@@ -80,7 +80,10 @@ export async function sendEmail(env: Env, m: Email): Promise<EmailResult> {
  *
  * Two independent conditions, both required:
  *   1. AUTH_DEBUG_TOKEN is set as a secret AND the caller presented it.
- *   2. APP_URL is a localhost / *.workers.dev preview, not a real domain.
+ *   2. APP_URL is localhost. NOT *.workers.dev — that used to be treated as a
+ *      preview host, but a workers.dev address is a real, publicly reachable
+ *      deployment. Allowing the echo there would mean anyone who learned the
+ *      debug secret could sign in as any operator on the live site.
  *
  * Either one alone is not enough. Forgetting to unset a flag is the normal
  * way this kind of hole reaches production, so production is identified by
@@ -95,8 +98,7 @@ export function mayEchoSignInLink(env: Env, presentedToken: string | null): bool
   let host: string;
   try { host = new URL(env.APP_URL).hostname; } catch { return false; }
   const isLocal =
-    host === 'localhost' || host === '127.0.0.1' ||
-    host.endsWith('.localhost') || host.endsWith('.workers.dev');
+    host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
   return isLocal;
 }
 
