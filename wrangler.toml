@@ -1,0 +1,43 @@
+name = "gapfiller"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gapfiller"
+database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
+
+[vars]
+APP_URL = "https://gapfiller.example.com"
+# Distance provider: "estimate" costs nothing and needs no key.
+# Switch to "google" or "mapbox" only when accuracy justifies the bill.
+DISTANCE_PROVIDER = "estimate"
+# Geocoding always tries the local postal_codes table first (~100 countries,
+# offline, free). This flag only controls the optional sharper lookups:
+#   "auto" — also use postcodes.io for GB and US Census for US
+#   "none" — table only, zero outbound geocoding calls
+GEOCODE_PROVIDER = "auto"
+
+# Exact origins allowed to call the API with a session cookie. No wildcards —
+# credentials plus a wildcard would let any site drive an operator's account.
+ALLOWED_ORIGINS = "http://localhost:5173"
+
+# Transactional email. Sign-in is impossible without one of these configured;
+# the endpoint returns 503 rather than falling back to something insecure.
+EMAIL_PROVIDER = "none"          # "resend" | "postmark" | "none"
+EMAIL_FROM = "Gap Filler <hello@example.com>"
+
+[triggers]
+crons = ["*/15 * * * *"]
+
+# Secrets — set with: wrangler secret put <NAME>
+#   SESSION_PEPPER      required, random 32+ bytes
+#   EMAIL_API_KEY       required once EMAIL_PROVIDER is set
+#   AUTH_DEBUG_TOKEN    LOCAL DEV ONLY. Never set this on a production deploy.
+#                       Even if set, the sign-in link is only echoed when
+#                       APP_URL is localhost or *.workers.dev.
+#   DISTANCE_API_KEY    only if DISTANCE_PROVIDER is google/mapbox
+#   TWILIO_ACCOUNT_SID  only if an operator uses sms_mode = twilio
+#   TWILIO_AUTH_TOKEN   also required to validate inbound webhook signatures
+#   TWILIO_FROM

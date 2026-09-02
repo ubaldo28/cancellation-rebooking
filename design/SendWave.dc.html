@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: #1b6b4a; text-decoration: none; }
+    a:hover { color: #145038; }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: #fbfaf9; color: #1c1a17; display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="padding: 22px 20px 16px; background: #ffffff; border-bottom: 1px solid #e5e0da; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 21px; font-weight: 700; letter-spacing: -0.02em;">Send from your phone</div>
+    <div style="font-size: 14px; color: #6b6560; line-height: 1.45;">Each one opens your messages app with the text ready. It arrives from your own number, so they know it's you.</div>
+  </div>
+
+  <div style="flex-grow: 1; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; overflow: hidden;">
+
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #6b6560;">{{ sentCount }} of 3 sent</span>
+      <span style="font-size: 12px; color: #6b6560;">Offers expire 14:45</span>
+    </div>
+
+    <sc-for list="{{ people }}" as="p" hint-placeholder-count="3">
+      <div style="{{ p.cardStyle }}">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+            <span style="font-size: 15px; font-weight: 600;">{{ p.name }}</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #6b6560;">{{ p.phone }}</span>
+          </div>
+          <button onClick="{{ p.send }}" style="{{ p.btnStyle }}">
+            <sc-if value="{{ p.sent }}" hint-placeholder-val="{{ false }}">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1b6b4a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+            </sc-if>
+            {{ p.btnLabel }}
+          </button>
+        </div>
+
+        <div style="{{ p.previewStyle }}">{{ p.message }}</div>
+      </div>
+    </sc-for>
+
+    <!-- the cost note: this is why the product needs no carrier registration -->
+    <div style="margin-top: 4px; background: #eaf2ed; border-radius: 10px; padding: 14px; display: flex; gap: 10px; align-items: flex-start;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1b6b4a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; margin-top: 1px;">
+        <circle cx="12" cy="12" r="9"></circle><path d="M12 16v-4M12 8h.01"></path>
+      </svg>
+      <div style="font-size: 13px; line-height: 1.45; color: #1c1a17;">Sending this way costs you nothing and needs no setup. You can switch to automatic sending later in Settings.</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#1b6b4a","options":["#1b6b4a","#1d4e6b","#7a3b6b","#8a4b1b"]}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { sent: { dean: true } };
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#1b6b4a';
+
+    const roster = [
+      { id: 'dean',  name: 'Dean Halliwell',  phone: '+44 7700 900 118',
+        message: "Hi Dean, it's Ash Mobile Detailing. I've had a slot open up: Wed 3 Sep, 10:15–14:45 — £65. Full detail. Want it? gapfill.app/o/k3Xq9\nReply STOP to opt out." },
+      { id: 'aisha', name: 'Aisha Nkemdirim', phone: '+44 7700 900 241',
+        message: "Hi Aisha, it's Ash Mobile Detailing. I've had a slot open up: Wed 3 Sep, 10:15–12:00 — £35. Wash & wax. Want it? gapfill.app/o/m8Twz\nReply STOP to opt out." },
+      { id: 'ryan',  name: 'Ryan Castledine', phone: '+44 7700 900 377',
+        message: "Hi Ryan, it's Ash Mobile Detailing. I've had a slot open up: Wed 3 Sep, 10:15–14:45 — £65. Full detail. Want it? gapfill.app/o/p2Vbn\nReply STOP to opt out." },
+    ];
+
+    const people = roster.map((r) => {
+      const sent = !!this.state.sent[r.id];
+      return {
+        ...r,
+        sent,
+        send: () => this.setState({ sent: { ...this.state.sent, [r.id]: true } }),
+        cardStyle:
+          'background: #ffffff; border: 1px solid #e5e0da; border-radius: 12px; padding: 14px; ' +
+          'display: flex; flex-direction: column; gap: 10px; ' +
+          (sent ? 'opacity: 0.72;' : ''),
+        btnStyle:
+          'min-height: 44px; padding: 0 16px; border-radius: 9px; font-family: inherit; font-size: 14px; ' +
+          'font-weight: 600; display: flex; align-items: center; gap: 6px; white-space: nowrap; ' +
+          (sent
+            ? 'background: #eaf2ed; color: ' + accent + '; border: 1px solid #cfe2d6; cursor: default;'
+            : 'background: ' + accent + '; color: #ffffff; border: 0; cursor: pointer;'),
+        btnLabel: sent ? 'Sent' : 'Send',
+        previewStyle:
+          'font-size: 12.5px; line-height: 1.5; color: #6b6560; background: #faf8f6; ' +
+          'border-radius: 8px; padding: 10px 12px; white-space: pre-line;',
+      };
+    });
+
+    return { people, sentCount: people.filter((p) => p.sent).length };
+  }
+}
+</script>
+</body>
+</html>

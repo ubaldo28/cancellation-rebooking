@@ -1,0 +1,20 @@
+{
+  "name": "gapfiller",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create gapfiller",
+    "db:migrate:local": "wrangler d1 migrations apply gapfiller --local",
+    "db:migrate": "wrangler d1 migrations apply gapfiller --remote",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250801.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^3.90.0"
+  }
+}

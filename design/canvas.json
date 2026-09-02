@@ -1,0 +1,43 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html",      "x": 0,    "y": 0,    "w": 390,  "h": 844, "title": "1 · Today", "is_interactive": false },
+    { "file": "FillSlot.dc.html",  "x": 490,  "y": 0,    "w": 390,  "h": 844, "title": "2 · Fill a slot", "is_interactive": true },
+    { "file": "SendWave.dc.html",  "x": 980,  "y": 0,    "w": 390,  "h": 844, "title": "3 · Send from your phone", "is_interactive": true },
+    { "file": "Schedule.dc.html",  "x": 1470, "y": 0,    "w": 390,  "h": 844, "title": "4 · Schedule" },
+    { "file": "Clients.dc.html",   "x": 0,    "y": 1010, "w": 390,  "h": 844, "title": "5 · Clients" },
+    { "file": "Leads.dc.html",     "x": 490,  "y": 1010, "w": 390,  "h": 844, "title": "6 · Open jobs (break-fix trades)" },
+    { "file": "OfferPage.dc.html", "x": 980,  "y": 1010, "w": 390,  "h": 844, "title": "7 · What the client sees" },
+    { "file": "Desktop.dc.html",   "x": 0,    "y": 2020, "w": 1440, "h": 900, "title": "8 · Desktop" }
+  ],
+  "annotations": [
+    {
+      "id": "flow-note",
+      "x": 0,
+      "y": -150,
+      "w": 880,
+      "text": "The one job this app has: a cancellation just cost the operator four hours.\nScreens 1 to 3 are that recovery, start to finish, in under a minute."
+    },
+    {
+      "id": "reasons-note",
+      "x": 490,
+      "y": 900,
+      "w": 390,
+      "text": "The chips are the differentiator. Nobody else can say \"3 min extra driving\" because nobody else knows where the operator's next job is."
+    },
+    {
+      "id": "cost-note",
+      "x": 980,
+      "y": 900,
+      "w": 390,
+      "text": "Sending from the operator's own phone is what makes this cost £0 and need no carrier registration. Arrives from a number the client recognises."
+    },
+    {
+      "id": "trade-note",
+      "x": 490,
+      "y": 1910,
+      "w": 390,
+      "text": "Same app, plumber instead of detailer. No one is \"overdue\" for a leak, so the fill candidates are open quotes. Anything waiting on parts is dimmed out."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

@@ -1,0 +1,24 @@
+node_modules/
+dist/
+.wrangler/
+
+# Local secrets — never commit these
+.dev.vars
+.env
+.env.*
+
+# Generated seed data (rebuild with scripts/build-postal-codes.mjs)
+seed/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+.DS_Store
+*.log
+
+# Build/distribution artifacts
+*.tar.gz
+design/*.html
+!design/*.dc.html

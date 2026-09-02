@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: #1b6b4a; text-decoration: none; }
+    a:hover { color: #145038; }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<!-- What the client sees when they tap the link in the text. No login, no app. -->
+<div style="width: 390px; height: 844px; background: #fbfaf9; color: #1c1a17; display: flex; align-items: center; justify-content: center; padding: 24px; overflow: hidden;">
+
+  <div style="width: 100%; background: #ffffff; border: 1px solid #e5e0da; border-radius: 14px; padding: 28px; display: flex; flex-direction: column; gap: 0;">
+
+    <div style="font-size: 21px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px;">Hi Dean</div>
+    <div style="font-size: 14px; color: #6b6560; margin-bottom: 22px;">Ash Mobile Detailing has a slot free</div>
+
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 23px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.25; margin-bottom: 6px;">Wed 3 Sep<br>10:15 – 12:15</div>
+    <div style="font-size: 14.5px; color: #6b6560; margin-bottom: 26px;">Full detail · £65</div>
+
+    <button style="height: 54px; border: 0; border-radius: 10px; background: #1b6b4a; color: #ffffff; font-family: inherit; font-size: 16px; font-weight: 600; cursor: pointer; margin-bottom: 10px;">Yes, book me in</button>
+    <button style="height: 54px; border: 1px solid #e5e0da; border-radius: 10px; background: transparent; color: #6b6560; font-family: inherit; font-size: 16px; font-weight: 500; cursor: pointer;">Not this time</button>
+
+    <div style="font-size: 12.5px; color: #a49d96; text-align: center; margin-top: 20px; line-height: 1.45;">First to confirm gets the slot.</div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

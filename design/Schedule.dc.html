@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: #1b6b4a; text-decoration: none; }
+    a:hover { color: #145038; }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: #fbfaf9; color: #1c1a17; display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="padding: 22px 20px 0; display: flex; flex-direction: column; gap: 16px;">
+    <div style="font-size: 27px; font-weight: 700; letter-spacing: -0.02em;">Schedule</div>
+
+    <!-- week strip; the dot marks a day with an unfilled gap -->
+    <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px;">
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 9px 0; border-radius: 9px; background: #ffffff; border: 1px solid #e5e0da; min-height: 62px;">
+        <span style="font-size: 11px; font-weight: 500; color: #6b6560;">Mon</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 16px; font-weight: 600;">1</span>
+        <span style="width: 5px; height: 5px; border-radius: 50%; background: transparent;"></span>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 9px 0; border-radius: 9px; background: #ffffff; border: 1px solid #e5e0da; min-height: 62px;">
+        <span style="font-size: 11px; font-weight: 500; color: #6b6560;">Tue</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 16px; font-weight: 600;">2</span>
+        <span style="width: 5px; height: 5px; border-radius: 50%; background: transparent;"></span>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 9px 0; border-radius: 9px; background: #1c1a17; border: 1px solid #1c1a17; min-height: 62px;">
+        <span style="font-size: 11px; font-weight: 500; color: #a49d96;">Wed</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 16px; font-weight: 600; color: #ffffff;">3</span>
+        <span style="width: 5px; height: 5px; border-radius: 50%; background: #e8935a;"></span>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 9px 0; border-radius: 9px; background: #ffffff; border: 1px solid #e5e0da; min-height: 62px;">
+        <span style="font-size: 11px; font-weight: 500; color: #6b6560;">Thu</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 16px; font-weight: 600;">4</span>
+        <span style="width: 5px; height: 5px; border-radius: 50%; background: transparent;"></span>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 9px 0; border-radius: 9px; background: #ffffff; border: 1px solid #e5e0da; min-height: 62px;">
+        <span style="font-size: 11px; font-weight: 500; color: #6b6560;">Fri</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 16px; font-weight: 600;">5</span>
+        <span style="width: 5px; height: 5px; border-radius: 50%; background: #a8571b;"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- day timeline -->
+  <div style="flex-grow: 1; padding: 20px 20px 0; display: flex; flex-direction: column; gap: 8px; overflow: hidden;">
+
+    <div style="display: flex; gap: 12px;">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500; color: #6b6560; width: 40px; padding-top: 14px;">08:30</div>
+      <div style="flex-grow: 1; background: #ffffff; border: 1px solid #e5e0da; border-left: 3px solid #1b6b4a; border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 4px; min-height: 92px;">
+        <div style="font-size: 15px; font-weight: 600;">Sofia Marchetti</div>
+        <div style="font-size: 13px; color: #6b6560;">Wash &amp; wax · Sale</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #6b6560; margin-top: 2px;">08:30 – 10:00 · £35</div>
+      </div>
+    </div>
+
+    <!-- the open gap: outlined, not filled, so an empty slot reads as empty -->
+    <div style="display: flex; gap: 12px;">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500; color: #a8571b; width: 40px; padding-top: 14px;">10:15</div>
+      <div style="flex-grow: 1; background: #fdf8f3; border: 1.5px dashed #e0b088; border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-height: 168px; justify-content: center;">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 18px; font-weight: 600; color: #a8571b;">4h 30m free</div>
+          <div style="font-size: 13px; color: #8a6a4d; line-height: 1.45;">Marcus Webb cancelled. 3 clients are near your next job.</div>
+        </div>
+        <button style="height: 46px; border: 0; border-radius: 9px; background: #a8571b; color: #ffffff; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Fill this slot</button>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 12px;">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500; color: #6b6560; width: 40px; padding-top: 14px;">15:00</div>
+      <div style="flex-grow: 1; background: #ffffff; border: 1px solid #e5e0da; border-left: 3px solid #1b6b4a; border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 4px; min-height: 92px;">
+        <div style="font-size: 15px; font-weight: 600;">Priya Raman</div>
+        <div style="font-size: 13px; color: #6b6560;">Full detail · Chorlton</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #6b6560; margin-top: 2px;">15:00 – 17:00 · £65</div>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 12px;">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500; color: #6b6560; width: 40px; padding-top: 14px;">17:30</div>
+      <div style="flex-grow: 1; background: #ffffff; border: 1px solid #e5e0da; border-left: 3px solid #1b6b4a; border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 4px; min-height: 78px;">
+        <div style="font-size: 15px; font-weight: 600;">Tom Ackerley</div>
+        <div style="font-size: 13px; color: #6b6560;">Wash &amp; wax · Didsbury</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="border-top: 1px solid #e5e0da; background: #ffffff; padding: 14px 20px 24px;">
+    <button style="height: 50px; width: 100%; border: 1.5px solid #1c1a17; border-radius: 10px; background: #ffffff; color: #1c1a17; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1c1a17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+      Add a job
+    </button>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

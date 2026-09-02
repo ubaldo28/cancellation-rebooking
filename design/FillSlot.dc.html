@@ -1,0 +1,157 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: #1b6b4a; text-decoration: none; }
+    a:hover { color: #145038; }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: #fbfaf9; color: #1c1a17; display: flex; flex-direction: column; overflow: hidden;">
+
+  <!-- gap header -->
+  <div style="padding: 22px 20px 16px; background: #ffffff; border-bottom: 1px solid #e5e0da; display: flex; flex-direction: column; gap: 10px;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1c1a17" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+      <span style="font-size: 15px; font-weight: 500;">Fill this slot</span>
+    </div>
+    <div style="display: flex; align-items: baseline; gap: 10px;">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 600; letter-spacing: -0.01em;">10:15 – 14:45</div>
+      <div style="font-size: 13px; color: #6b6560;">4h 30m</div>
+    </div>
+    <div style="font-size: 13px; color: #6b6560; line-height: 1.4;">Between <strong style="font-weight: 600; color: #1c1a17;">Sale</strong> and <strong style="font-weight: 600; color: #1c1a17;">Chorlton</strong> · 14 min apart if left empty</div>
+  </div>
+
+  <!-- ranked candidates -->
+  <div style="flex-grow: 1; overflow: hidden; display: flex; flex-direction: column;">
+    <div style="padding: 16px 20px 10px; display: flex; align-items: center; justify-content: space-between;">
+      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #6b6560;">Best fits</span>
+      <span style="font-size: 12px; color: #6b6560;">{{ count }} of 5 selected</span>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px; padding: 0 20px;">
+      <sc-for list="{{ people }}" as="p" hint-placeholder-count="4">
+        <div onClick="{{ p.toggle }}" style="{{ p.cardStyle }}">
+          <div style="display: flex; align-items: flex-start; gap: 12px;">
+
+            <div style="{{ p.checkStyle }}">
+              <sc-if value="{{ p.selected }}" hint-placeholder-val="{{ true }}">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+              </sc-if>
+            </div>
+
+            <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 7px; min-width: 0;">
+              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 10px;">
+                <span style="font-size: 16px; font-weight: 600; letter-spacing: -0.01em;">{{ p.name }}</span>
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 600; color: {{ p.priceColor }};">{{ p.price }}</span>
+              </div>
+              <div style="font-size: 13px; color: #6b6560;">{{ p.service }}</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                <span style="{{ p.driveChip }}">{{ p.drive }}</span>
+                <span style="{{ p.dueChip }}">{{ p.due }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- sticky action -->
+  <div style="border-top: 1px solid #e5e0da; background: #ffffff; padding: 14px 20px 24px; display: flex; flex-direction: column; gap: 9px;">
+    <button style="{{ sendStyle }}">{{ sendLabel }}</button>
+    <div style="font-size: 12px; color: #6b6560; text-align: center; line-height: 1.4;">First to confirm gets it. The rest are told it's gone.</div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#1b6b4a","options":["#1b6b4a","#1d4e6b","#7a3b6b","#8a4b1b"]}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { picked: { dean: true, aisha: true, ryan: true } };
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#1b6b4a';
+
+    const chip = (tone) => {
+      const map = {
+        good:    'background: #eaf2ed; color: #1b6b4a;',
+        neutral: 'background: #f2efec; color: #6b6560;',
+        warn:    'background: #fbf0e4; color: #a8571b;',
+      };
+      return 'font-size: 12px; font-weight: 500; padding: 4px 9px; border-radius: 20px; white-space: nowrap; ' + map[tone];
+    };
+
+    // "Late" is measured against the cadence set on the service, and the
+    // last-visit date sits right beside it so the number is never a bare
+    // assertion the operator has to take on trust.
+    const roster = [
+      { id: 'dean',  name: 'Dean Halliwell',  service: 'Full detail · Sale · last done 14 Jul',   price: '£65',
+        drive: '3 min extra driving',  driveTone: 'good',
+        due: '3 weeks late',           dueTone: 'good' },
+      { id: 'aisha', name: 'Aisha Nkemdirim', service: 'Wash & wax · Stretford · last done 25 Jul', price: '£35',
+        drive: '6 min extra driving',  driveTone: 'good',
+        due: '2 weeks late',           dueTone: 'neutral' },
+      { id: 'ryan',  name: 'Ryan Castledine', service: 'Full detail · Chorlton · last done 6 Aug', price: '£65',
+        drive: '8 min extra driving',  driveTone: 'neutral',
+        due: 'due today',              dueTone: 'neutral' },
+      { id: 'marta', name: 'Marta Kowalczyk', service: 'Full detail · Bury · last done 6 Jul',    price: '£65',
+        drive: '22 min extra driving', driveTone: 'warn',
+        due: '4 weeks late',           dueTone: 'good' },
+      { id: 'owen',  name: 'Owen Pryce',      service: 'Interior only · no address on file',      price: '£45',
+        drive: 'no address on file',   driveTone: 'warn',
+        due: 'no repeat set',          dueTone: 'neutral' },
+    ];
+
+    const people = roster.map((r) => {
+      const selected = !!this.state.picked[r.id];
+      return {
+        ...r,
+        selected,
+        toggle: () => this.setState({
+          picked: { ...this.state.picked, [r.id]: !this.state.picked[r.id] },
+        }),
+        cardStyle:
+          'background: #ffffff; border-radius: 12px; padding: 14px; cursor: pointer; ' +
+          'transition: border-color 120ms ease, box-shadow 120ms ease; border: 1.5px solid ' +
+          (selected ? accent : '#e5e0da') + '; ' +
+          (selected ? 'box-shadow: 0 1px 2px rgba(28,26,23,0.05);' : ''),
+        checkStyle:
+          'width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0; margin-top: 1px; ' +
+          'display: flex; align-items: center; justify-content: center; border: 1.5px solid ' +
+          (selected ? accent : '#cfc8c0') + '; background: ' + (selected ? accent : '#ffffff') + ';',
+        priceColor: selected ? accent : '#6b6560',
+        driveChip: chip(r.driveTone),
+        dueChip: chip(r.dueTone),
+      };
+    });
+
+    const count = people.filter((p) => p.selected).length;
+
+    return {
+      people,
+      count,
+      sendLabel: count === 0 ? 'Select someone to send to' : 'Send to ' + count,
+      sendStyle:
+        'height: 52px; width: 100%; border: 0; border-radius: 10px; font-family: inherit; ' +
+        'font-size: 16px; font-weight: 600; ' +
+        (count === 0
+          ? 'background: #efebe6; color: #a49d96; cursor: default;'
+          : 'background: ' + accent + '; color: #ffffff; cursor: pointer;'),
+    };
+  }
+}
+</script>
+</body>
+</html>
