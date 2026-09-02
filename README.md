@@ -1,7 +1,12 @@
 # Cancellation Rebooking
 
-A scheduling backend for solo trades operators — mobile detailers, plumbers,
-barbers — that turns a cancelled appointment back into a booked one.
+A scheduling app for solo mobile operators — car detailers, junk removal, bin
+and trash-can cleaning, pressure washing — that turns a cancelled appointment
+back into a booked one.
+
+These are businesses that drive to the customer and can't afford to buy leads.
+When a slot goes empty, the usual answer is to pay a lead marketplace. This
+fills it from the customer list they already have, for nothing.
 
 When a client cancels, the operator loses the slot and usually the revenue. The
 obvious fix is a waitlist, and every booking platform already has one. This does
@@ -17,8 +22,8 @@ the product.
 
 ## Status
 
-Backend complete and tested. No frontend yet — the operator dashboard is
-designed but not built. Not deployed.
+Backend complete and tested. The React operator dashboard is designed but not
+built yet — that is the next piece of work. Not deployed.
 
 - **147 tests passing**, run against a real SQLite instance executing the actual
   migrations and queries
@@ -37,6 +42,7 @@ npm run typecheck
 
 | Layer | Choice | Why |
 | --- | --- | --- |
+| Frontend | React + TypeScript | Operator dashboard — designed, not yet built |
 | Runtime | Cloudflare Workers | Edge-deployed, no servers, generous free tier |
 | Database | Cloudflare D1 (SQLite) | Same platform, no connection pooling to manage |
 | Language | TypeScript, strict | |
