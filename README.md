@@ -20,13 +20,13 @@ the product.
 Backend complete and tested. No frontend yet — the operator dashboard is
 designed but not built. Not deployed.
 
-- **147 tests passing**, run against a real SQLite instance executing the actual
+- **114 tests passing**, run against a real SQLite instance executing the actual
   migrations and queries
 - TypeScript `strict` with `noUncheckedIndexedAccess`, zero errors
 - Runs entirely within Cloudflare's free tier
 
 ```bash
-npm install && npm test          # backend, 147 tests
+npm install && npm test          # backend, 114 tests
 cd web && npm install && npm run dev   # dashboard on :5173
 ```
 
@@ -179,8 +179,8 @@ src/
     offers.ts   offer lifecycle and the accept race guard
     geo.ts      offline geocoding + distance cache
     tz.ts       DST-safe timezone conversion
-    countries.ts  64 countries: phone, postcode, currency, locale
-test/           147 tests
+    countries.ts  launch markets: phone, postcode, currency, locale
+test/           114 tests
 web/            React dashboard (Vite)
   src/pages/    Today, FillSlot, Schedule, Clients, Jobs, Settings, SignIn
   src/api.ts    typed Worker client
