@@ -15,6 +15,7 @@ import { verifyTwilioSignature } from './lib/twilio';
 import {
   acceptOffer, createOffers, declineOffer, loadOfferByToken, markViewed,
 } from './lib/offers';
+import { claimSlot, slotsNear } from './lib/public';
 import { rankCandidates, type GapRow } from './lib/rank';
 import { addLocalDays, formatTimeRange, localDayStart } from './lib/tz';
 import {
@@ -733,7 +734,7 @@ function page(title: string, inner: string): string {
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
 display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
-.card{width:100%;max-width:26rem;background:color-mix(in srgb,var(--bg) 92%,#fff);
+.card{width:100%;max-width:30rem;background:color-mix(in srgb,var(--bg) 92%,#fff);
 border:1px solid var(--line);border-radius:14px;padding:28px}
 h1{font-size:1.35rem;margin:0 0 4px;letter-spacing:-.01em}
 .biz{color:var(--mut);font-size:.9rem;margin:0 0 20px}
@@ -745,6 +746,20 @@ button{width:100%;padding:14px;border-radius:10px;border:0;font:inherit;font-wei
 .no{background:transparent;color:var(--mut);border:1px solid var(--line)}
 .note{color:var(--mut);font-size:.82rem;margin-top:18px;text-align:center}
 .big{font-size:2.4rem;margin:0 0 10px}
+.find{display:flex;flex-direction:column;gap:12px;margin:18px 0}
+.find label{display:flex;flex-direction:column;gap:6px;font-size:.85rem;color:var(--mut)}
+.find input{font:inherit;font-size:16px;color:var(--fg);background:var(--bg);
+border:1px solid var(--line);border-radius:9px;padding:12px 13px;min-height:48px}
+.slotcard{border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px;
+display:flex;flex-direction:column;gap:8px}
+.slotcard-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.who{font-weight:600}
+.cost{font-weight:650}
+.slotwhen{font-size:1.15rem;font-weight:650;letter-spacing:-.01em}
+.near{font-size:.85rem;font-weight:600;color:var(--accent);
+background:color-mix(in srgb,var(--accent) 12%,transparent);
+padding:5px 10px;border-radius:20px;align-self:flex-start}
+.rule{height:1px;background:var(--line);margin:20px 0}
 </style></head><body><div class="card">${inner}</div></body></html>`;
 }
 
@@ -840,6 +855,119 @@ route('POST', '/o/:token/decline', async ({ req, env, params }) => {
   await declineOffer(env, params.token!, str(b.reason));
   return html(page('No problem', `<h1>No problem</h1>
     <p class="meta">We've taken you off this one. You'll hear about the next slot.</p>`));
+});
+
+
+// ---------------------------------------------------------------------------
+// Public discovery — the neighbourhood page a stranger lands on
+// ---------------------------------------------------------------------------
+function publicPage(title: string, inner: string): string {
+  return page(title, inner);
+}
+
+route('GET', '/near/:slug', async ({ env, params, url }) => {
+  const postcode = url.searchParams.get('postcode');
+  const area = await env.DB.prepare(
+    `SELECT name, slug FROM service_areas WHERE slug = ? AND is_active = 1 LIMIT 1`,
+  ).bind(params.slug).first<{ name: string; slug: string }>();
+  const areaName = area?.name ?? (params.slug ?? '').replace(/-/g, ' ');
+
+  let at = null;
+  if (postcode) {
+    const op = await env.DB.prepare(
+      `SELECT o.country FROM service_areas a JOIN operators o ON o.id = a.operator_id
+        WHERE a.slug = ? LIMIT 1`,
+    ).bind(params.slug).first<{ country: string }>();
+    at = await geocode(env, null, postcode, op?.country ?? 'US');
+  }
+
+  const slots = await slotsNear(env, at, params.slug ?? null);
+
+  const form = `
+    <form method="GET" action="/near/${escapeHtml(params.slug ?? '')}" class="find">
+      <label>Your postcode or ZIP
+        <input name="postcode" value="${escapeHtml(postcode ?? '')}"
+          placeholder="91403" autocomplete="postal-code" required>
+      </label>
+      <button class="yes" type="submit">Show slots near me</button>
+    </form>`;
+
+  const list = slots.length === 0
+    ? `<p class="meta">${postcode
+        ? 'No openings near you in the next few days. Worth checking back — these appear when someone cancels.'
+        : 'Enter your postcode to see which of these are close to you.'}</p>`
+    : slots.map((s) => `
+      <div class="slotcard">
+        <div class="slotcard-top">
+          <span class="who">${escapeHtml(s.business_name)}</span>
+          <span class="cost">${escapeHtml(s.price)}</span>
+        </div>
+        <div class="slotwhen">${escapeHtml(s.when)}</div>
+        <div class="meta">${escapeHtml(s.service_name)}</div>
+        ${s.proximity ? `<div class="near">${escapeHtml(s.proximity)}</div>` : ''}
+        <form method="GET" action="/book/${escapeHtml(s.gap_id)}">
+          ${postcode ? `<input type="hidden" name="postcode" value="${escapeHtml(postcode)}">` : ''}
+          <button class="yes" type="submit">Book this slot</button>
+        </form>
+      </div>`).join('');
+
+  return html(publicPage(`Open slots in ${areaName}`, `
+    <h1>Open slots in ${escapeHtml(areaName)}</h1>
+    <p class="meta">These are real openings in local vans this week. They are
+    cheaper because the van is already coming to your area.</p>
+    ${form}
+    <div class="rule"></div>
+    ${list}`));
+});
+
+route('GET', '/book/:gapId', async ({ env, params, url }) => {
+  const postcode = url.searchParams.get('postcode') ?? '';
+  const slots = await slotsNear(env, null, null, 200);
+  const slot = slots.find((s) => s.gap_id === params.gapId);
+  if (!slot) {
+    return html(publicPage('Gone', `<p class="big">😕</p><h1>That slot has gone</h1>
+      <p class="meta">Someone took it. New ones appear whenever a job cancels.</p>`), 410);
+  }
+  return html(publicPage('Book this slot', `
+    <h1>${escapeHtml(slot.business_name)}</h1>
+    <p class="slot">${escapeHtml(slot.when)}</p>
+    <p class="meta">${escapeHtml(slot.service_name)} · ${escapeHtml(slot.price)}</p>
+    <form method="POST" action="/book/${escapeHtml(params.gapId ?? '')}" class="find">
+      <label>Your name<input name="first_name" required autocomplete="given-name"></label>
+      <label>Mobile number<input name="phone" type="tel" required autocomplete="tel"></label>
+      <label>Address<input name="address_line" autocomplete="street-address"></label>
+      <label>Postcode or ZIP
+        <input name="postcode" value="${escapeHtml(postcode)}" required autocomplete="postal-code">
+      </label>
+      <button class="yes" type="submit">Confirm booking</button>
+    </form>
+    <p class="note">You pay ${escapeHtml(slot.business_name)} directly on the day.</p>`));
+});
+
+route('POST', '/book/:gapId', async ({ req, env, params }) => {
+  const b = await body(req);
+  try {
+    const { slot } = await claimSlot(env, {
+      gapId: params.gapId ?? '',
+      first_name: String(b.first_name ?? ''),
+      phone: String(b.phone ?? ''),
+      email: str(b.email),
+      address_line: str(b.address_line),
+      postcode: str(b.postcode),
+    });
+    return html(publicPage('Booked', `<p class="big">✅</p>
+      <h1>You're booked in</h1>
+      <p class="biz">${escapeHtml(slot.business_name)}</p>
+      <p class="slot">${escapeHtml(slot.when)}</p>
+      <p class="meta">${escapeHtml(slot.service_name)} · ${escapeHtml(slot.price)}</p>
+      <p class="note">They'll be in touch to confirm. Pay them on the day.</p>`));
+  } catch (e) {
+    const msg = e instanceof HttpError ? e.message : 'Could not book that slot.';
+    const code = e instanceof HttpError ? e.status : 400;
+    return html(publicPage('Could not book', `<h1>Could not book</h1>
+      <p class="meta">${escapeHtml(msg)}</p>
+      <a href="/near/" class="note">See other slots</a>`), code);
+  }
 });
 
 // ---------------------------------------------------------------------------
