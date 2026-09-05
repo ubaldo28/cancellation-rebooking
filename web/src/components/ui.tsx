@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 
 export function Icon({ name, size = 20, color = 'currentColor', stroke = 1.8 }: {
-  name: 'clock' | 'calendar' | 'people' | 'list' | 'cog' | 'pin' | 'arrow' | 'tick' | 'plus' | 'back' | 'send';
+  name: 'clock' | 'calendar' | 'people' | 'list' | 'cog' | 'pin' | 'arrow'
+    | 'tick' | 'plus' | 'back' | 'send' | 'search';
   size?: number; color?: string; stroke?: number;
 }) {
   const paths: Record<string, ReactNode> = {
@@ -16,6 +17,7 @@ export function Icon({ name, size = 20, color = 'currentColor', stroke = 1.8 }: 
     plus: <path d="M12 5v14M5 12h14" />,
     back: <path d="m15 18-6-6 6-6" />,
     send: <><path d="M22 2 11 13" /><path d="M22 2l-7 20-4-9-9-4 20-7z" /></>,
+    search: <><circle cx="11" cy="11" r="7" /><path d="m20 20-3.6-3.6" /></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
@@ -41,6 +43,29 @@ export function ErrorNote({ error, onRetry }: { error: string; onRetry?: () => v
     </div>
   );
 }
+
+/**
+ * The rule about contact details, said before somebody types rather than after.
+ *
+ * Word for word what the Worker sends back when it has already taken something
+ * out of a chat message — REDACTION_NOTICE in src/lib/redact.ts. The same
+ * filter now runs over the operator's parts-quote description, and it runs
+ * SILENTLY there: no notice comes back, so a description that loses a phone
+ * number loses it with nobody told. Saying it up front is the only warning
+ * those boxes can give, and saying it in different words from chat would read
+ * as a different rule.
+ */
+export const REDACTION_NOTICE =
+  'Contact details are removed from messages. Keep everything here and you are '
+  + 'covered if anything goes wrong — off the app, neither of you is.';
+
+/**
+ * Rendered above the box it applies to, and wired to it with aria-describedby
+ * so it is read out as part of the field rather than sitting nearby unheard.
+ */
+export const RedactionNotice = ({ id }: { id: string }) => (
+  <p className="faint" id={id} style={{ margin: 0 }}>{REDACTION_NOTICE}</p>
+);
 
 export const initials = (first: string, last?: string | null) =>
   `${first[0] ?? ''}${last?.[0] ?? ''}`.toUpperCase() || first.slice(0, 2).toUpperCase();

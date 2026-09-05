@@ -4,17 +4,21 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "db:create": "wrangler d1 create cancellation-rebooking",
+    "cf": "./scripts/cf.sh",
+    "deploy": "./scripts/cf.sh deploy",
+    "db:create": "./scripts/cf.sh d1 create cancellation-rebooking",
     "db:migrate:local": "wrangler d1 migrations apply cancellation-rebooking --local",
-    "db:migrate": "wrangler d1 migrations apply cancellation-rebooking --remote",
+    "db:migrate": "./scripts/cf.sh d1 migrations apply cancellation-rebooking --remote",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "r2:create": "./scripts/cf.sh r2 bucket create slotfill-photos",
+    "build": "npm --prefix web run build",
+    "ship": "npm test && npm run db:migrate && npm run build && npm run deploy"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250801.0",
+    "@cloudflare/workers-types": "^5.20260831.1",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0",
-    "wrangler": "^3.90.0"
+    "wrangler": "^4.128.0"
   }
 }

@@ -3,11 +3,37 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#fbfaf9" />
-    <title>Cancellation Rebooking</title>
+    <meta name="theme-color" content="#0d1117" />
+    <title>Slotfill — book the van that's already coming</title>
+    <meta name="description" content="Mobile detailers, bin cleaners and pressure washers post the hours a cancellation left open. Book one near you, cheaper, because the van is already on your street." />
+
+    <!--
+      Installable on purpose. On iOS 16.4+ web push only works once the site
+      has been added to the Home Screen, and that requires a real manifest —
+      without it the alerts feature silently does nothing on an iPhone.
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Slotfill" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
+
+    <!--
+      MapLibre GL JS, loaded from a CDN rather than bundled.
+
+      Pinned to a major version because this is a public map on a live site and
+      a silent breaking change is worse than a missed patch. OpenFreeMap serves
+      the tiles: real OpenStreetMap data, no API key, no request limit, and
+      commercial use is allowed. MapLibre renders the required attribution by
+      itself, which is why it is not written into the page.
+    -->
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" />
+    <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
   </head>
   <body>
     <div id="root"></div>

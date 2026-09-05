@@ -1,0 +1,37 @@
+/*
+ * The "nobody is charged anything today" notice.
+ *
+ * Owned by PaymentState.tsx, which imports it, so a page gets the appearance by
+ * rendering the component — the same arrangement as SlotCard and its sheet, and
+ * for the same reason: this notice appears on the checkout, on /covered, on
+ * /help, on /pros, on the trade pages and on the front page, and it must not be
+ * one of those pages' job to remember a stylesheet.
+ *
+ * IT WEARS THE SAME AMBER AS `.sample-note`, deliberately. That is the site's
+ * existing treatment for "this is not what it looks like" — a seeded listing
+ * that is not a real business — and this is the same kind of statement about
+ * the same kind of gap between what a page appears to offer and what is
+ * actually behind it. Amber rather than red because nothing has gone wrong and
+ * nobody needs to act; amber rather than grey because a visitor who skims past
+ * this one has been misled about the only thing on a checkout that matters.
+ */
+.pay-state {
+  margin: 16px 0;
+  padding: 13px 15px;
+  max-width: 66ch;
+  border: 1px solid var(--alert-line);
+  border-radius: var(--r-md);
+  background: var(--alert-soft);
+  color: var(--alert);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* The lead is the sentence somebody reads if they read nothing else, so it is
+   the one thing here in the body ink rather than the amber. */
+.pay-state strong { color: var(--ink); }
+
+/* At the checkout it is the last thing before the button and wants the button's
+   own rhythm rather than the info pages'. Book.tsx passes this class; the rule
+   lives here so both halves of the notice's appearance stay in one file. */
+.pay-state.at-checkout { margin: 0 0 4px; max-width: none; }

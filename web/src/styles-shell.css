@@ -1,0 +1,550 @@
+/*
+ * The shell: the bar at the top of every page, the breadcrumb under it, and
+ * the footer at the bottom. Owned by SiteHeader.tsx, Crumbs.tsx and
+ * SiteFooter.tsx and read by nothing else.
+ *
+ * The visual language is the one the profile and category pages already
+ * settled on, and it is the reference marketplace's: white ground, a lot of
+ * air, hairline --line borders, pill-shaped inputs, and no shadow, tint or
+ * rule anywhere that is not separating two things somebody has to tell apart.
+ * The shell is the least interesting furniture on any page it appears on, and
+ * it is supposed to be — the openings, the profile and the prices are what
+ * the visitor came for, and every gram of weight spent here is taken off
+ * those.
+ *
+ * Mobile-first. Every base rule below is the 360px layout and the min-width
+ * blocks are the only place a wider screen is considered, for the same reason
+ * styles-home.css is written that way: the person this site is built for is
+ * standing outside a house holding a phone.
+ *
+ * On class names: the header keeps `.topbar`, `.wordmark` and `.tlink` from
+ * styles.css so that Discover's dark treatment (`.land-home .topbar` and
+ * friends) keeps applying without being re-derived here, and every rule in
+ * this file that has to beat one of those is written as `.topbar.site-head`
+ * so it wins on specificity rather than on stylesheet order — which, with two
+ * files imported from two different modules, is not something to bet on.
+ * The footer rules are all scoped under `.site-foot` for the same reason:
+ * `.foot-dir`, `.foot-col` and `.foot-n` also exist in styles-home.css, which
+ * loads alongside this file on the front page, and scoping means neither can
+ * disturb the other while both exist. (When Discover stops rendering its own
+ * footer, that copy in styles-home.css is dead and can go.)
+ */
+
+/* ==========================================================================
+   Skip to content
+   ========================================================================== */
+
+/*
+ * The first thing in the tab order on every page, and invisible until it is
+ * focused.
+ *
+ * Without it a keyboard or switch user meets the wordmark, the search field,
+ * its button and three nav pills before reaching a single opening, on every
+ * page, every time — and on the front page there are then eight category
+ * tiles and a rail of neighbourhoods before the first card. That is the
+ * bypass 2.4.1 exists for.
+ *
+ * `position: fixed` and moved off the top of the viewport rather than
+ * `display: none`: a hidden element is not focusable, which would leave the
+ * link in the markup and out of reach of the one input method it is for.
+ * Fixed rather than absolute so it cannot be trapped inside the sticky bar's
+ * stacking context or pushed down the page by it, and so it never takes part
+ * in the header's flex layout in either state.
+ */
+.skip-link {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 100;
+  padding: 12px 18px;
+  border-radius: var(--r-sm);
+  background: var(--ink);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  /* Off-screen, not transparent: it must not be clickable while hidden. */
+  transform: translateY(-250%);
+}
+
+.skip-link:focus { transform: none; }
+.skip-link:hover { color: #fff; }
+
+/* The vivid ring, because the link's own ground is near-black wherever it
+   lands — including on the white pages, since the chip itself is --ink. */
+.skip-link:focus-visible {
+  outline: 2px solid var(--accent-vivid);
+  outline-offset: 2px;
+}
+
+/* The heading the skip link lands on should not be given a focus ring of its
+   own — it is a destination, not a control — but it does need to be reachable,
+   so `main` carries tabindex="-1". Chrome draws its default outline on that. */
+main:focus { outline: none; }
+
+/* ==========================================================================
+   Visually hidden
+   ========================================================================== */
+
+/* The search field's label. It is genuinely there for a screen reader — the
+   placeholder is not a label, it disappears the moment somebody types, and it
+   is not read by every assistive technology. clip-path rather than
+   display:none because a hidden element is not announced at all. */
+.shell-search-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   The bar
+   ========================================================================== */
+
+/*
+ * `.topbar` is flex, space-between, no wrap. The one structural change is the
+ * wrap, which is what lets the search drop to a second row on a phone; the
+ * row gap is what stops the two rows touching when it does.
+ */
+.topbar.site-head {
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.shell-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* Second in the packing order, so it shares row one with the wordmark and
+     the search is pushed to row two. Reversed with the search at 760px. */
+  order: 2;
+}
+
+/* --- the browse pill -----------------------------------------------------
+   An icon and a word, so it can become an icon and no word on a narrow phone
+   without moving, changing size or losing its accessible name. The gap is
+   what disappears at 430px along with the label; without that the pill keeps
+   a stripe of empty space where the word used to be. */
+.site-head .shell-browse {
+  gap: 7px;
+  /* The other pills are text and get their width from their padding. This one
+     would be 17px of icon inside 22px of padding, which is a 39px target in a
+     row of 44px ones. */
+  min-width: 44px;
+  justify-content: center;
+}
+
+.site-head .shell-browse svg { flex: 0 0 auto; }
+
+/*
+ * Row two on a phone: `flex-basis: 100%` cannot share a line with anything,
+ * so the search takes the full width and the wordmark and the nav keep theirs.
+ * flex-grow is 1 and flex-shrink is 0 — it never gives width back.
+ */
+.shell-search {
+  order: 3;
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 3px 3px 13px;
+  border: 1px solid var(--control-line);
+  border-radius: 999px;
+  background: #fff;
+}
+
+/* The ring belongs to the pill, not to the field inside it: the visible
+   control is the whole pill, and an outline drawn around the bare input sits
+   inside the border and reads as a rendering fault. */
+.shell-search:focus-within {
+  border-color: var(--accent);
+  /* Solid, because the 16%-alpha halo this used to draw composited to about
+     1.2:1 against the white bar and was not an indicator anybody could see. */
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+/* Near-black bar on the front page: the dark green ring disappears into it. */
+.land-home .shell-search:focus-within {
+  outline-color: var(--accent-vivid);
+}
+
+.shell-search-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.shell-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 2px 0 4px;
+  border: 0;
+  background: none;
+  border-radius: 999px;
+  color: var(--ink);
+  font-family: inherit;
+  /* 16px exactly. Anything smaller and iOS Safari zooms the page on focus,
+     which on a sticky header leaves the visitor looking at a magnified
+     fragment of the bar with the rest of the site off-screen. */
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.shell-search input:focus { outline: none; }
+.shell-search input::placeholder { color: var(--faint); }
+
+/* Safari draws its own clear button and magnifier inside a search input and
+   they land on top of the ones this pill already has. */
+.shell-search input::-webkit-search-decoration,
+.shell-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.shell-search-go {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.shell-search-go:hover:not(:disabled) { background: var(--accent-ink); }
+
+/* Empty box, nothing to search for. Greyed rather than hidden so the control
+   does not appear and disappear under the thumb as somebody types. */
+.shell-search-go:disabled {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: default;
+}
+
+.shell-search-go:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+/* The dark front page: a green ring on a near-black bar is invisible. */
+.land-home .shell-search-go:focus-visible {
+  outline: 2px solid var(--accent-vivid);
+  outline-offset: 3px;
+}
+
+/* --- narrow phones ------------------------------------------------------
+   Three pills, a wordmark and a search box do not fit on a 360px screen, and
+   the bar is sticky, so the second row costs screen on every scroll of every
+   page. "Sign in" is what gets dropped: it is the businesses' door, a
+   business arriving for the first time comes through "List your van", and the
+   same link sits in the footer of every page. Nothing a customer needs to do
+   is ever hidden here. */
+@media (max-width: 430px) {
+  .site-head .shell-nav-drop { display: none; }
+}
+
+@media (max-width: 560px) {
+  .site-head .tlink { padding: 0 11px; font-size: 13.5px; }
+}
+
+/* --- paying for the fourth pill -----------------------------------------
+   Everything below is the browse pill's rent, and it is written AFTER the
+   560px block on purpose: these rules and that one are the same specificity,
+   so the later block is the one that wins. Putting them above it, which is
+   where they read better, meant `.site-head .tlink` at 560 quietly undoing
+   both of them.
+
+   The pill sheds its ICON here rather than its word, and rather than
+   dropping out of the bar the way "Sign in" does. The catalogue is the one
+   thing a visitor who arrived on a trade page from a search engine cannot
+   otherwise reach, so it has to stay; and of its two halves it is the word
+   that survives being alone, because three horizontal lines is the glyph
+   every phone user has learned means "a menu opens here" and this opens a
+   page of categories.
+
+   The rest of the row pays for it out of the space between things rather
+   than out of any of them: two pixels a side of padding, two off each gap,
+   half a point of type. The height — which is the whole of the 44px target
+   on pills this short — is a floor in styles.css and none of this touches
+   it. Measured at 360px, which is where it is tightest and still one row. */
+@media (max-width: 430px) {
+  .site-head .shell-browse { gap: 0; padding: 0; }
+  .site-head .shell-browse svg { display: none; }
+
+  .site-head .tlink { padding: 0 9px; font-size: 13px; }
+  .site-head .shell-nav { gap: 2px; }
+  .topbar.site-head { column-gap: 8px; }
+}
+
+/* --- below 360px --------------------------------------------------------
+   Under about 360px the wordmark and four controls need more width than
+   there is even after all of the above: the nav wraps and the search is
+   pushed to a THIRD row of a header that is sticky, which costs a fifth of
+   the screen on every page for the whole visit.
+
+   The browse pill is what goes, because it is the only one of the four with
+   an equal alternative on the page: the footer of every page carries the
+   same "Browse by category" directory. "Alert me" and "List your van" have
+   no second door anywhere. */
+@media (max-width: 359px) {
+  .site-head .shell-browse { display: none; }
+}
+
+/* --- one row ------------------------------------------------------------
+   760px is where a 480px search box, the wordmark and three pills stop
+   fighting for the same space. The search moves into the middle and the nav
+   goes back to the end; the DOM order is already wordmark, search, nav, so
+   the tab order at this width needs no help. */
+@media (min-width: 760px) {
+  .shell-search {
+    order: 2;
+    flex: 1 1 auto;
+    max-width: 480px;
+    margin: 0 24px;
+  }
+  .shell-nav { order: 3; gap: 6px; }
+}
+
+/* ==========================================================================
+   The breadcrumb
+   ========================================================================== */
+
+/*
+ * Small, grey, and above the heading. It is a wayfinding aid for somebody who
+ * arrived from a search result and does not yet know what kind of site this
+ * is; it is not navigation anybody uses twice, so it gets the smallest type
+ * on the page and none of the emphasis.
+ */
+.shell-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-bottom: 18px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.shell-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  /* A long service name is allowed to break rather than push the trail wider
+     than the phone it is being read on. */
+  min-width: 0;
+}
+
+.shell-crumbs a { color: var(--muted); text-decoration: none; }
+.shell-crumbs a:hover { color: var(--ink); text-decoration: underline; }
+
+.shell-crumbs a:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* The current page. Not bold — it is the heading immediately underneath that
+   names where you are, and saying it twice in two weights is one too many. */
+.shell-crumbs [aria-current='page'] { color: var(--ink-2); }
+
+.shell-crumb-sep { color: var(--line-strong); }
+
+/* ==========================================================================
+   The footer
+   ========================================================================== */
+
+/*
+ * White, not the dark slab the front page ends on today.
+ *
+ * That dark band was written for one page whose last section was already
+ * dark. This footer now has to sit under the category page, the profile, the
+ * join wizard and the sign-in page, all of which are white, and a near-black
+ * slab arriving under a white page reads as a different site having started.
+ * The background is stated explicitly rather than left transparent because
+ * `.land-home` paints the whole front page --night-1 underneath.
+ */
+.site-foot {
+  background: #fff;
+  border-top: 1px solid var(--line);
+  padding: 34px 0 40px;
+  color: var(--ink-2);
+}
+
+/* --- the four link columns --------------------------------------------- */
+
+/* Two columns at 360px, four by about 700px, and auto-fit rather than a
+   breakpoint because the number that fits is decided by the longest heading,
+   not by any device. */
+.site-foot-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 26px 28px;
+}
+
+.site-foot .foot-col > h2 {
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.site-foot .foot-col ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 9px;
+}
+
+/* Links carry the body ink, not the accent: forty accent-coloured links in a
+   grid is a colour field, and the accent on this site means "open right now"
+   everywhere else. The count, where there is one, sits at the far end of the
+   row, which is what the space-between is for. */
+.site-foot .foot-col a {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.site-foot .foot-col a:hover { color: var(--ink); text-decoration: underline; }
+
+.site-foot .foot-col a:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* A destination that has no page yet. Grey and not underlined on hover, so it
+   is visibly not a link — somebody who presses it and gets nothing has been
+   told twice already, and the alternative is a route that 404s. */
+.site-foot .foot-soon {
+  display: block;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--faint);
+  cursor: default;
+}
+
+.site-foot .foot-n {
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the directory ------------------------------------------------------ */
+
+/* Wider columns than the four above, because these hold place names and
+   service names rather than one or two words, and a name that wraps in the
+   middle is a name somebody has to read twice. */
+.site-foot .foot-dir {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 26px 32px;
+  margin-top: 30px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+}
+
+/* Empty when a page passed neither trades nor areas and the catalogue has not
+   arrived. Without this the rule above draws a stray line across the footer
+   and the padding leaves a gap under it. */
+.site-foot .foot-dir:empty {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* --- the attribution ---------------------------------------------------- */
+
+/*
+ * The last thing on the page, and the smallest. It is here because the
+ * OpenStreetMap and GeoNames licences require it, so it is not allowed to be
+ * decorative and it is not allowed to be unreadable: --muted, not --faint,
+ * which is 2.8:1 on white.
+ */
+.site-foot-legal {
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.site-foot-legal p { margin: 0 0 6px; max-width: 60ch; }
+.site-foot-legal p:last-child { margin-bottom: 0; }
+
+/* The copyright and the three legal links, on one wrapping row. It is the
+   last line of the page and the least interesting, so it gets no separator
+   glyphs between the items — the gap does that job and a row of bullets in
+   12px type is four more things to read. The row gap is generous because
+   these wrap onto two or three lines on a phone and links stacked 4px apart
+   are hard to hit one of on purpose. */
+.site-foot-fine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 20px;
+  /* Wider than the 60ch above: this is a row of short links, not a
+     paragraph, and 60ch wraps it a word at a time on a desktop. */
+  max-width: none;
+  margin-top: 14px;
+}
+
+/* 44px of height without 44px of visible pill: the links sit on their own
+   line and the target extends above and below the text. */
+.site-foot-fine a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.site-foot-fine a:hover { color: var(--ink); }
+
+.site-foot-fine a:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+@media (min-width: 700px) {
+  .site-foot { padding: 48px 0 52px; }
+  .site-foot-cols { gap: 30px 34px; }
+}
+
+@media (max-width: 480px) {
+  .site-foot-cols,
+  .site-foot .foot-dir { gap: 22px; }
+}
+
+/* The only thing in this file that moves. The rest of the site turns its
+   transitions off under this query; the header was simply missed. */
+@media (prefers-reduced-motion: reduce) {
+  .shell-search-go { transition: none; }
+}

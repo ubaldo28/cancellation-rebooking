@@ -1,0 +1,230 @@
+/* ==========================================================================
+   Posting an opening by hand — /app/post
+
+   Read alongside styles.css: every colour, radius and shadow here is one of
+   its tokens. Nothing in this file is used anywhere else, which is why it is
+   a separate stylesheet rather than more lines in the shared one.
+
+   The page is built to be used standing next to a van with one thumb, so the
+   things you tap are large, spaced apart, and none of them are icons on their
+   own.
+   ========================================================================== */
+
+.po-back {
+  gap: 8px;
+  color: var(--ink);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.po-lede {
+  margin: 6px 0 0;
+  max-width: 46ch;
+  line-height: 1.5;
+}
+
+/* A real heading, wearing the same clothes as the .eyebrow labels the rest of
+   the app uses for section titles. Screen readers get the outline; the page
+   looks unchanged. */
+.po-h2 {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* --- groups of choices --------------------------------------------------- */
+.po-set {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--r-md);
+  box-shadow: var(--lift-1);
+  margin: 0;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.po-legend {
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.po-sublabel {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.po-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.po-chip {
+  min-height: 46px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.po-chip:hover { border-color: var(--line-strong); color: var(--ink); }
+
+/* The pressed state is the state, not a decoration: it is read out by
+   aria-pressed and drawn from the same attribute, so the two cannot drift. */
+.po-chip[aria-pressed='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+/* --- a label with its field beside it ------------------------------------ */
+.po-inline {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--ink-2);
+  font-weight: 550;
+}
+
+.po-inline input {
+  width: auto;
+  min-width: 9.5rem;
+  max-width: 12rem;
+  flex-shrink: 0;
+}
+
+/* --- the sentence that says what you are about to post ------------------- */
+.po-window {
+  margin: 0;
+  padding: 14px;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--accent-ink);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+
+.po-warn {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--alert-soft);
+  border: 1px solid var(--alert-line);
+  color: var(--alert);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.po-note { margin: 0; }
+.po-foot { margin: 0; text-align: center; }
+
+.po-picked {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* --- what is already up -------------------------------------------------- */
+.po-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.po-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 14px;
+}
+
+.po-row-body { gap: 3px; min-width: 0; }
+
+.po-row-when {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the receipt --------------------------------------------------------- */
+.po-done {
+  border-color: var(--accent-line);
+  box-shadow: var(--lift-2);
+  border-radius: var(--r-lg);
+  gap: 14px;
+}
+
+.po-done-head { gap: 10px; }
+
+.po-tick {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--accent-ink);
+}
+
+.po-link {
+  font-size: 13px;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+/* --- focus --------------------------------------------------------------- */
+/* Everything on this page can be reached with a keyboard, and every stop is
+   visible. The inputs already carry the shared outline from styles.css. */
+.po-chip:focus-visible,
+.po-row .btn:focus-visible,
+.po-done .btn:focus-visible,
+.po-back:focus-visible,
+.po-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .po-chip { transition: none; }
+}
+
+/* One column of chips gets cramped on the narrowest phones; let the day and
+   length choices breathe rather than wrap mid-word. */
+@media (max-width: 380px) {
+  .po-chip { padding: 0 13px; font-size: 13.5px; }
+  .po-inline { flex-direction: column; align-items: stretch; gap: 6px; }
+  .po-inline input { width: 100%; max-width: none; }
+}

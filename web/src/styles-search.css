@@ -1,0 +1,208 @@
+/*
+ * The search results page. Owned by pages/Search.tsx and read by nothing else.
+ *
+ * The visual language is the one the category page settled on and the profile
+ * uses: white ground, hairline --line rules, a lot of air, and no colour that
+ * is not doing a job. That is not a style choice repeated for its own sake —
+ * this page shows two different kinds of result one under the other, and the
+ * only way somebody can tell a service from an appointment at a glance is if
+ * neither of them is decorated. The trade rows are plain text on white; the
+ * cards below them are the front page's `.slot-card` unchanged. The difference
+ * between the two halves is the shape of the thing, and nothing else.
+ *
+ * The card grid, the "show more" button, the buttons and the `Sample` badge
+ * all come from styles.css, which is loaded globally from main.tsx. Nothing is
+ * restated here, because two copies of `.slot-card` is how the front page and
+ * this page start looking subtly different.
+ */
+
+/*
+ * Wider than `.main`'s 720px, which is set for pages that are a column of
+ * prose or form fields. This one has to hold a grid of 268px cards, and 720px
+ * fits two of them with a gutter left over — the extra 180px buys a third
+ * column on a laptop and costs nothing on a phone, where the grid is one
+ * column at any width.
+ */
+.sr-page { max-width: 900px; }
+
+/* ==========================================================================
+   The heading
+   ========================================================================== */
+
+/*
+ * The heading and its count, with the rule underneath that the category page
+ * puts under its own. It is left-aligned rather than centred: a query can be
+ * long enough to wrap to two lines, and a centred two-line heading with a
+ * quoted string in it is harder to read than a left-aligned one.
+ */
+.sr-head {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+
+.sr-head h1 {
+  font-size: 26px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  /* A query is user text and can be one very long unbroken word. Without this
+     it pushes the page sideways on a phone, which breaks every other page the
+     visitor then navigates to with the same scroll position. */
+  overflow-wrap: anywhere;
+}
+
+/* The breakdown under the count: which part of the number is services and
+   which is appointments, so the total above can be checked against the page. */
+.sr-sub {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* ==========================================================================
+   A section of results
+   ========================================================================== */
+.sr-sec { padding-top: 26px; }
+
+/*
+ * Small, grey and upper case, the same treatment the footer gives its column
+ * headings. These are labels telling you what kind of row follows, not titles
+ * competing with the h1 — there are only two of them and they should be
+ * findable without being read.
+ */
+.sr-h2 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ==========================================================================
+   Matching trades
+   ========================================================================== */
+.sr-trades { list-style: none; margin: 0 0 4px; padding: 0; }
+
+.sr-trades li { border-bottom: 1px solid var(--line); }
+
+/*
+ * The whole row is the link and 56px is the floor rather than the target, the
+ * same as `.cat-row`: a thumb aiming at a service name should never be able to
+ * miss it by landing in the space beside it.
+ */
+.sr-trade {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 56px;
+  padding: 12px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 10px;
+}
+
+.sr-trade:hover { background: var(--accent-soft); color: inherit; }
+
+/* Same fix as `.cat-row`: the tint is 1.1:1 on white and was doing the whole
+   job on its own. The ring is inset so a row at the edge of the list does not
+   have its indicator clipped by the scroll container. */
+.sr-trade:focus-visible {
+  background: var(--accent-soft);
+  color: inherit;
+  outline: 2px solid var(--accent-ink);
+  outline-offset: -2px;
+}
+
+/* Held down on a phone, where there is no hover to confirm the tap landed. */
+.sr-trade:active { background: var(--accent-soft); }
+
+.sr-trade-text { display: grid; gap: 3px; min-width: 0; }
+
+.sr-trade-name { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+
+/* The trade's own hint where it has one, and the category it sits in where it
+   does not. Either way it answers the same question — "is this the right kind
+   of thing?" — which is the question a list of near-identical service names
+   leaves somebody with. */
+.sr-trade-where { font-size: 13px; line-height: 1.45; color: var(--muted); }
+
+/*
+ * The count wears the accent, which everywhere else on this site means "open
+ * right now", and here it means exactly that: appointments counted from the
+ * rows fetched for this page.
+ */
+.sr-trade-n {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 5px 11px;
+}
+
+/* Nothing open is not a smaller number of things open, so it does not get the
+   colour that means open. It is grey, and it is words rather than a nought. */
+.sr-trade-n.none {
+  color: var(--muted);
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   Nothing matched, and nothing was typed
+   ========================================================================== */
+
+/*
+ * Both of these are the same shape — a sentence and two doors — because they
+ * are the same situation from the visitor's side: there is nothing on the
+ * screen to press and they need somewhere to go. They differ only in what the
+ * sentence says, and that difference is the whole point of having two of them:
+ * one of these people made a search that failed and the other has not searched
+ * yet, and telling the second one that their search found nothing would be a
+ * lie about something they did not do.
+ */
+.sr-none { padding: 26px 0 8px; }
+
+.sr-none-p,
+.sr-blank-p {
+  margin: 0 0 20px;
+  max-width: 40em;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* A query is user text; the same wrapping guard as the heading. */
+.sr-none-p strong { overflow-wrap: anywhere; }
+
+.sr-blank { padding: 20px 0 8px; }
+
+.sr-blank h1 {
+  margin: 0 0 10px;
+  font-size: 26px;
+  letter-spacing: -0.02em;
+}
+
+/* Wrapping, not scrolling: on a 360px phone the two buttons do not fit side by
+   side, and a row of controls that has to be scrolled sideways to reach the
+   second one is a control most people never find. */
+.sr-none-do,
+.sr-blank-do {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+@media (max-width: 420px) {
+  .sr-head h1, .sr-blank h1 { font-size: 22px; }
+  .sr-trade { padding: 12px 8px; }
+  .sr-trade-name { font-size: 16px; }
+  /* At this width the count would push the name into a two-line wrap on every
+     row, so it drops under the name instead and the row stays scannable. */
+  .sr-trade { flex-wrap: wrap; }
+  .sr-trade-n { margin-left: auto; }
+}

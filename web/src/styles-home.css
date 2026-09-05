@@ -1,0 +1,647 @@
+/*
+ * The front door's explainer bands: how it works, why book here, and the
+ * localised one-liner. Owned by HowItWorks.tsx and read by nothing else.
+ *
+ * The reference marketplace's home page is a stack of full-width bands, and
+ * the reason it works is restraint rather than decoration: one ground per
+ * band, one heading, one short paragraph, a lot of air, and no rule, shadow
+ * or card anywhere that is not carrying a fact. Everything below is built to
+ * that, so the only thing on the page competing for attention is the openings
+ * list — which is the product.
+ *
+ * Mobile-first throughout. Every base rule is the 360px layout, and the two
+ * min-width blocks at the foot are the only place a wider screen is
+ * considered. That order is not a style preference here: the visitor this
+ * page is written for is standing outside a house on a phone, and a stylesheet
+ * written desktop-first pays for their layout with overrides they download
+ * anyway.
+ *
+ * Grounds alternate, but which band sits where is the page's call, not this
+ * file's — so .hiw and .why-book each paint their own ground and neither
+ * assumes what is above it.
+ */
+
+/* --------------------------------------------------------------------------
+ * Shared band mechanics
+ *
+ * The bands are full-bleed and the content inside them is not, so each has a
+ * wrapper. 1080px matches the .wrap container the rest of the public pages
+ * use, so the headings here line up with the ones above and below instead of
+ * shifting by a few pixels at every band edge.
+ * ----------------------------------------------------------------------- */
+.hiw-wrap,
+.why-book-wrap {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  /* 16px, not 20px, because at 360px the extra 8px comes out of the line
+     length of every paragraph on the page. */
+  padding: 0 16px;
+}
+
+/* --------------------------------------------------------------------------
+ * How it works
+ * ----------------------------------------------------------------------- */
+
+/* A faint tint rather than white. It separates this band from the openings
+   above without a border, and a border across the full width of the page is
+   the thing that makes a long page read as a stack of unrelated sections. */
+.hiw {
+  background: var(--accent-soft);
+  border-top: 1px solid var(--line);
+  padding: 44px 0;
+}
+
+/* Sentence case, and sized to sit under the hero rather than compete with it.
+   clamp so the step below never gets a heading wider than its column. */
+.hiw-title {
+  margin: 0 0 10px;
+  font-size: clamp(24px, 6vw, 32px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+/* 60ch is the widest a paragraph gets on this page. Past that the eye loses
+   the start of the next line, which on the one paragraph that explains the
+   whole product is expensive. */
+.hiw-lede {
+  margin: 0 0 30px;
+  max-width: 60ch;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* Stacked on a phone, and the list markers go: the drawn numbers below are
+   the markers. */
+.hiw-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 30px;
+}
+
+.hiw-step > h3 {
+  margin: 0 0 7px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+
+.hiw-step > p {
+  margin: 0;
+  max-width: 46ch;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* White on the tint, so the numeral reads as a marker in the margin rather
+   than as part of the heading. Tabular figures because these are counted, and
+   fixed dimensions so 1 and 3 sit in circles of the same size. */
+.hiw-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------------------
+ * Why book here
+ *
+ * Three promises, no numbers, no icons. Icons were tried and dropped: a
+ * padlock next to "your number stays private" adds nothing a reader did not
+ * get from the four words, and three of them in a row start to look like a
+ * feature grid on a landing page, which is exactly the register this strip is
+ * trying to stay out of.
+ * ----------------------------------------------------------------------- */
+.why-book {
+  background: #fff;
+  padding: 44px 0;
+}
+
+.why-book-title {
+  margin: 0 0 26px;
+  font-size: clamp(21px, 5vw, 27px);
+  font-weight: 750;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+.why-book-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 26px;
+}
+
+/* The rule sits on top of each item on a phone, where the three are stacked
+   and would otherwise run together as one column of text. On a wide screen
+   the columns separate them on their own and the rule moves to the side —
+   see the min-width block below. */
+.why-book-item {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.why-book-item > h3 {
+  margin: 0 0 7px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+}
+
+.why-book-item > p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------------------------
+ * Wider screens
+ *
+ * 700px, because that is where three columns of this copy stop falling below
+ * roughly 30 characters a line. The breakpoint is set by the text, not by any
+ * device.
+ * ----------------------------------------------------------------------- */
+@media (min-width: 700px) {
+  .hiw-wrap,
+  .why-book-wrap { padding: 0 20px; }
+
+  .hiw { padding: 66px 0; }
+  .why-book { padding: 60px 0; }
+
+  .hiw-steps,
+  .why-book-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 34px;
+  }
+
+  /* Now that the columns are side by side the top rule reads as three
+     disconnected dashes, so it becomes one divider between neighbours and
+     the first item loses it. */
+  .why-book-item {
+    border-top: 0;
+    border-left: 1px solid var(--line);
+    padding: 0 0 0 20px;
+  }
+  .why-book-item:first-child {
+    border-left: 0;
+    padding-left: 0;
+  }
+}
+
+@media (min-width: 1000px) {
+  .hiw { padding: 84px 0; }
+  .hiw-lede { margin-bottom: 40px; }
+  .hiw-steps { gap: 44px; }
+}
+
+/* --------------------------------------------------------------------------
+ * Category tiles
+ * ----------------------------------------------------------------------- */
+/*
+ * The landing page used to render every trade on the site at once as a wall of
+ * expandable groups. This replaces it with one tile per category: eight
+ * choices instead of forty, each with its own picture, and pressing one goes
+ * to that category's page. Two clean levels beat one long one — somebody
+ * wanting their car washed should never read past a mobile bookstore.
+ */
+.cat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.cat-tile {
+  /* Relative so the selected tile's tick has something to sit in. */
+  position: relative;
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+/* SELECTED IS NOT ONLY A COLOUR HERE.
+   This was a hairline changing from grey to green and nothing else, so which
+   tile was chosen was carried entirely by hue: nothing to see for anybody who
+   cannot separate those two. The edge doubles as well, and a tick appears —
+   which is exactly what `.tile.on` does on the trade tiles in styles.css, so
+   "chosen" looks the same on both sets. */
+.cat-tile.on {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.cat-tile.on::after {
+  content: '✓';
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-vivid);
+  color: #06231a;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 24px;
+  text-align: center;
+}
+
+/* 5:3, matching the artwork's viewBox so nothing is cropped off an edge. */
+.cat-tile-art { display: block; aspect-ratio: 5 / 3; }
+.cat-tile-art svg { display: block; width: 100%; height: 100%; }
+
+.cat-tile-body {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.cat-tile-name { font-weight: 600; font-size: 15px; line-height: 1.3; }
+
+/* The count is the reason to press this tile rather than another one, so it
+   stays legible rather than shrinking into decoration. */
+.cat-tile-n { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.cat-active {
+  margin: 14px 0 0;
+  font-size: 14px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 420px) {
+  /* Two across at phone width. One would make the page a scroll marathon and
+     three would make the pictures unreadable. */
+  .cat-tiles { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .cat-tile-name { font-size: 14px; }
+}
+
+/* --------------------------------------------------------------------------
+ * The footer directory used to live here.
+ *
+ * `.foot-dir`, `.foot-col`, `.foot-link` and `.foot-n` were written for the
+ * footer Discover printed inline. That footer is now SiteFooter, which every
+ * page renders and which carries its own rules in styles-shell.css, scoped
+ * under `.site-foot` — so these were forty lines styling markup that no longer
+ * exists. Deleted rather than left behind: dead CSS is worse than dead markup,
+ * because the next person to touch the footer finds two sets of rules for the
+ * same class names and no way to tell which one is live.
+ * ----------------------------------------------------------------------- */
+
+/* --------------------------------------------------------------------------
+ * The ask for a postcode
+ *
+ * The reference marketplace makes the visitor confirm where they are before it
+ * will show a single business. This does not, so this note has to earn its
+ * place next to the list rather than in front of it: quiet ground, no icon, no
+ * colour, one paragraph saying what a postcode buys and a way out that costs
+ * one tap. It is a sentence, not a banner — a banner is the thing people have
+ * been trained to close without reading.
+ * ----------------------------------------------------------------------- */
+.gate {
+  margin: 0 0 14px;
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.gate-p {
+  margin: 0 0 11px;
+  max-width: 62ch;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* The first four words are the question. Everything after them is the reason,
+   and the reason is what most people will not read. */
+.gate-p > strong { color: var(--ink); font-weight: 700; }
+
+.gate-do { display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; }
+
+/* The way out is a real 40px target, not a word to be aimed at with a thumb.
+   Grey rather than ink: declining is the cheaper of the two actions here and
+   it should not read as the recommended one. */
+.gate-do .linkish {
+  min-height: 40px;
+  padding: 0 4px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------------------------
+ * The four bands under the explainers: who these businesses are, what is
+ * covered, where this works, and the ask aimed at the other side of the
+ * market. Rendered by Discover.tsx, in that order, for the reasons set out
+ * where they are rendered.
+ *
+ * They share one set of mechanics — wrapper, heading, lede, tail link — so
+ * that four consecutive bands read as one page rather than four landing
+ * pages stapled together. The class names are `.band-h` and `.band-lede`
+ * rather than the `.band-title` / `.band-sub` already in styles.css because
+ * those two belong to the browse band above and are a different size; two
+ * meanings for one class name in two stylesheets that both load here is how
+ * a page ends up with a heading nobody can explain.
+ *
+ * The grounds alternate --bg, white, tint, night. That last one is the only
+ * band on the page besides the hero that is dark, and it is deliberate: it
+ * is the point where the page stops talking to the customer and starts
+ * talking to the business, and the reader should be able to see that happen
+ * before they read a word of it.
+ * ----------------------------------------------------------------------- */
+.band-wrap {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+.band-h {
+  margin: 0 0 12px;
+  font-size: clamp(22px, 5vw, 29px);
+  font-weight: 750;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+/* 62ch, like the rest of the page's prose. Past that the eye loses the start
+   of the next line, and these are the paragraphs a stranger reads to decide
+   whether the site is telling the truth. */
+.band-lede {
+  margin: 0 0 18px;
+  max-width: 62ch;
+  font-size: 15.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.band-lede:last-of-type { margin-bottom: 22px; }
+
+/* The tail link out of a band. 44px tall without a visible pill: the target
+   extends above and below the text, which is what makes a one-line link at
+   the foot of a band hittable with a thumb. */
+.band-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 22px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.band-more a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* --- who these businesses are ------------------------------------------- */
+.who-band {
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  padding: 44px 0;
+}
+
+/* Two paragraphs, and on a wide screen two columns — the second one is the
+   uncomfortable half and it must not be below the fold while the flattering
+   half is above it. */
+.band-cols {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.band-cols p {
+  margin: 0;
+  max-width: 58ch;
+  font-size: 15.5px;
+  line-height: 1.65;
+  color: var(--ink-3);
+}
+
+/* --- what is covered ----------------------------------------------------- */
+.covered-band {
+  background: #fff;
+  border-top: 1px solid var(--line);
+  padding: 44px 0;
+}
+
+.covered-list {
+  list-style: none;
+  margin: 0 0 22px;
+  padding: 0;
+  display: grid;
+  gap: 20px;
+}
+
+/* The rule sits on top of each item on a phone, where the five are stacked
+   and would otherwise run together as one column of text — the same trick
+   .why-book-item plays, so the two bands read as the same kind of thing. */
+.covered-list > li {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.covered-list h3 {
+  margin: 0 0 6px;
+  font-size: 15.5px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+}
+
+.covered-list p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* --- where this works ---------------------------------------------------- */
+.places-band {
+  background: var(--accent-soft);
+  border-top: 1px solid var(--line);
+  padding: 44px 0;
+}
+
+/* Names, not chips: these are links to real pages and dressing them as
+   filter pills would say they toggle something on this page. The count
+   after each one is the only number in the band and it is counted from the
+   rows above, so it is allowed to be the loudest thing in the row. */
+.places-list {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.places-list a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 13px;
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.places-list a:hover {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.places-n {
+  color: var(--accent-ink);
+  font-size: 13.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the other side of the market ---------------------------------------- */
+
+/* The one dark band on the page that is not the hero. Flat --night-1 rather
+   than the hero's three washes: the hero earns its gradient by being the
+   first thing anybody sees, and repeating it here would make the page look
+   like it had started over. */
+.pro-band {
+  background: var(--night-1);
+  padding: 48px 0;
+  color: var(--on-night-2);
+}
+
+.pro-band .band-h { color: #fff; }
+.pro-band .band-lede { color: var(--on-night-2); }
+
+.band-do {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+  margin: 0;
+}
+
+/* The vivid green on near-black, which is the treatment "List your van"
+   already has in the bar at the top of this page — the same action should
+   not be two different colours 2000px apart. --accent on this ground is
+   4.1:1 as a surface and the white on it 4.6:1: both pass, and both look
+   like a button that has been switched off. */
+.pro-band .btn {
+  background: var(--accent-vivid);
+  color: #06231a;
+  font-weight: 700;
+}
+
+.pro-band .btn:hover { background: #55f0b3; color: #06231a; }
+
+/* The secondary way out of this band, and it must not compete with the
+   button next to it. Underlined rather than coloured, because on this ground
+   the only colour available is the one the button is already using. */
+.band-do-alt {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.band-do-alt:hover { color: var(--accent-vivid); }
+
+/* A dark-green ring is invisible on --night-1, exactly as it is on the hero.
+   Written as a descendant rule so it catches the button and the link without
+   naming either. */
+.pro-band :focus-visible {
+  outline: 2px solid var(--accent-vivid);
+  outline-offset: 3px;
+}
+
+@media (min-width: 700px) {
+  .band-wrap { padding: 0 20px; }
+
+  .who-band,
+  .covered-band,
+  .places-band { padding: 60px 0; }
+  .pro-band { padding: 66px 0; }
+
+  .band-cols { grid-template-columns: repeat(2, 1fr); gap: 34px; }
+
+  /* Three across rather than five: five columns of two sentences is five
+     columns of three-word lines. The last row is left ragged on purpose —
+     stretching two items across the width would make them look like the
+     conclusion rather than the fourth and fifth of five. */
+  .covered-list {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 26px 30px;
+  }
+
+  /* Side by side the top rules read as three disconnected dashes, so they
+     become dividers between neighbours instead — and the first item of each
+     row loses it, because a divider on the left of a column with nothing to
+     its left is a rule hanging in the margin. */
+  .covered-list > li {
+    border-top: 0;
+    border-left: 1px solid var(--line);
+    padding: 0 0 0 20px;
+  }
+  .covered-list > li:nth-child(3n + 1) {
+    border-left: 0;
+    padding-left: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * The card's own rules and the sort-and-filter row used to live here.
+ *
+ * `.slot-more`, `.slot-meta`, `.slot-rate`, `.slot-now`, `.slot-chk`, the
+ * review quotation and the whole `.filt*` family have moved to
+ * styles-slotcard.css, which SlotCard.tsx and SlotFilters.tsx import
+ * themselves. They were never the front page's to own: the trade page and the
+ * search results render the same card, and while these rules sat in this sheet
+ * those pages could only have the plain half of it. A component that carries
+ * its own appearance cannot be dropped onto a page half-styled.
+ *
+ * The skeleton the card is built on — `.slot-grid` and `.slot-card` and the six
+ * elements inside it — was never here either; it is in styles.css, which loads
+ * everywhere. Nothing on the front page has been left without a rule.
+ * ----------------------------------------------------------------------- */

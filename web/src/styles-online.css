@@ -1,0 +1,268 @@
+/* ==========================================================================
+   "Open for work right now": the switch, and the jobs it brings in.
+
+   Its own stylesheet rather than more lines on styles.css, matching how parts,
+   alerts, openings and credentials are already split. Everything already in
+   styles.css — .card, .btn, .chip, .error, .mono, the type scale and every
+   token — is reused as it stands.
+
+   Two rules run through the whole file and neither is cosmetic:
+
+     - The state of the switch has to be readable from a phone lying on a
+       passenger seat. Colour, size and a running clock all say the same thing
+       at once, because an operator who is unsure whether they are live either
+       misses work or gets woken by it.
+     - On a pending job the COUNTDOWN is the biggest thing, not the price.
+       Five minutes is short, and a card that reads like a listing gets read
+       like one. Under a minute it changes colour and stops sharing the line.
+
+   Every selector is doubled with the class it extends (.btn.online-toggle,
+   .chip.warn) rather than written bare: main.tsx imports App before
+   styles.css, so a component sheet lands FIRST in the bundle and a single
+   class would lose to the sheet it is meant to be extending.
+   ========================================================================== */
+
+.online {
+  display: grid;
+  gap: 14px;
+}
+
+/* --------------------------------------------------------------------------
+ * The switch itself
+ * ----------------------------------------------------------------------- */
+.online-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+/* On is a different colour of panel, not a different word in the same one.
+   This is the only state change on the screen that has to survive a glance
+   from a metre away. */
+.online-panel.is-on {
+  border-color: var(--accent-line, var(--line));
+  background: var(--accent-soft);
+}
+
+.online-state {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+/* The three-hour countdown. Large and tabular so the digits do not jitter as
+   they tick — a number that shifts sideways every second reads as unreliable,
+   and this one is the answer to "am I still live". */
+.online-left {
+  font-size: 34px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  color: var(--accent-ink, var(--accent));
+}
+
+.online-sub {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* The three rules, shown only while the switch is off — i.e. before the tap.
+   Told afterwards they are an excuse; told here they are terms. */
+.online-rules {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.online-rules li + li { margin-top: 8px; }
+.online-rules strong { color: var(--ink); font-weight: 650; }
+
+/* Taller than a normal button and full width. This is thumbed one-handed in a
+   van, often without looking straight at it, and a mis-tap either strands the
+   operator offline or leaves them taking work they cannot do. */
+.btn.online-toggle {
+  min-height: 60px;
+  font-size: 16.5px;
+  border-radius: 14px;
+}
+
+/* Turning off is the quiet button on purpose: nothing here should encourage a
+   tap in either direction, and the loud green one belongs to going live. */
+.btn.online-toggle.quiet { border-color: var(--line-strong, var(--line)); }
+
+.online-waiting {
+  margin: 0;
+  padding: 18px 4px;
+  text-align: center;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------------------------
+ * A job that ran out
+ * ----------------------------------------------------------------------- */
+/* Stays until it is dismissed. A card that simply disappears is read as a bug
+   in the app rather than as a job that was lost, and the second reading is the
+   one that gets an operator to answer faster next time. */
+.online-gone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2, transparent);
+}
+
+.online-gone p {
+  margin: 0;
+  flex: 1 1 220px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.online-gone strong { color: var(--ink); font-weight: 650; }
+
+/* --------------------------------------------------------------------------
+ * A pending job
+ * ----------------------------------------------------------------------- */
+.req {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+/* The last minute. Warm rather than red: this is a job going away, not an
+   error, and an operator who reads the card as a fault stops to work out what
+   broke instead of tapping Accept. */
+.req.is-urgent {
+  border-color: var(--alert-line, var(--line));
+  background: var(--alert-bg, transparent);
+}
+
+.req-top { margin-bottom: 2px; }
+
+/*
+ * The single most important element in this file. It is set larger than the
+ * price on purpose: a job accepted at 5:01 pays nothing, so the number that
+ * decides whether the tap is worth making has to be the one the eye lands on
+ * first. Tabular figures keep it from twitching as it counts down.
+ */
+.req-clock {
+  font-size: 44px;
+  font-weight: 750;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.req-clock.is-urgent { color: var(--alert); }
+
+/* A slow breath, not a flash. Enough to catch peripheral vision in a moving
+   van; not enough to make the digits hard to read while it happens. */
+@media (prefers-reduced-motion: no-preference) {
+  .req-clock.is-urgent { animation: req-clock-pulse 1s ease-in-out infinite alternate; }
+}
+
+@keyframes req-clock-pulse {
+  from { opacity: 1; }
+  to   { opacity: 0.55; }
+}
+
+.req-clock-label {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.req.is-urgent .req-clock-label { color: var(--alert); font-weight: 600; }
+
+.req-who { font-size: 16px; font-weight: 650; line-height: 1.3; }
+.req-what { font-size: 14px; color: var(--muted); line-height: 1.4; }
+
+/* Label above value on a phone, two columns as soon as there is room. Four
+   facts squeezed into two narrow columns on a 360px screen wrap into an
+   unreadable staircase, and this card is read in about two seconds. */
+.req-facts {
+  margin: 8px 0 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px 14px;
+}
+
+.req-facts dt {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-top: 8px;
+}
+
+.req-facts dt:first-of-type { padding-top: 0; }
+.req-facts dd { margin: 0; font-size: 14.5px; line-height: 1.4; }
+
+.req-price { font-weight: 700; font-size: 17px; }
+
+.req-note {
+  margin: 10px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.req-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+/* Both are full thumb targets. Accept is the loud one here — unlike a quote,
+   this tap costs the operator nothing and losing the job to a fiddly button is
+   the expensive outcome. */
+.req-actions .btn {
+  flex: 1 1 auto;
+  min-height: 52px;
+}
+
+.req-foot {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------------------------
+ * Phones
+ * ----------------------------------------------------------------------- */
+/* Buttons stack rather than sit side by side under about 420px: two 44px
+   targets sharing a narrow row put Accept and Not this one a thumb-width
+   apart, which is how a job gets declined by accident. */
+@media (max-width: 420px) {
+  .req-actions .btn { flex: 1 1 100%; }
+  .req-clock { font-size: 40px; }
+  .online-left { font-size: 30px; }
+}
+
+@media (min-width: 480px) {
+  .req-facts { grid-template-columns: 5.5rem minmax(0, 1fr); gap: 8px 14px; }
+  .req-facts dt, .req-facts dt:first-of-type { padding-top: 3px; }
+}

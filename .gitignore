@@ -1,28 +1,25 @@
-node_modules/
-dist/
-.wrangler/
-
-# Local secrets — never commit these
-.dev.vars
+# There was no .gitignore here at all, and the two things that would have been
+# committed first are the two that must never be.
+#
+#   .env        scripts/cf.sh sources it for CLOUDFLARE_API_TOKEN, which is a
+#               credential for the whole account.
+#   .wrangler/  holds the local D1 database, which after any real use is a file
+#               full of customers' names, addresses and coordinates.
 .env
 .env.*
-
-# Generated seed data (rebuild with scripts/build-postal-codes.mjs)
-seed/
-
-# Local databases
-*.db
-*.sqlite
-*.sqlite3
-
-.DS_Store
+!web/.env.production
+.wrangler/
+node_modules/
+web/dist/
 *.log
 
-# Build/distribution artifacts
-*.tar.gz
-design/*.html
-!design/*.dc.html
+# Build and tool output. `tsc -b` writes the buildinfo next to web/tsconfig.json
+# and it is a cache keyed to one machine's absolute paths; seed/ is what
+# scripts/build-postal-codes.mjs generates, and a single country's file runs to
+# hundreds of megabytes of SQL.
+web/tsconfig.tsbuildinfo
+seed/
 
-# React app
-web/node_modules/
-web/dist/
+# Vite writes a timestamped copy of the config beside it on every run and
+# does not always clean them up.
+vitest.config.ts.timestamp-*.mjs

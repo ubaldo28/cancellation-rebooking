@@ -1,0 +1,415 @@
+/*
+ * The seven long-form pages: Covered, Safety, For pros, About, Terms, Privacy
+ * and Help.
+ *
+ * These are the pages somebody reads rather than uses. Nobody arrives at a
+ * privacy policy to be delighted, and nobody arrives at "what is covered"
+ * feeling relaxed — they arrive part way through a problem, looking for one
+ * sentence, and every ornament between them and that sentence is a cost. So
+ * the whole of this file is a reading column and a heading scale, and there is
+ * no card, no gradient, no illustration and no accent block anywhere in it.
+ *
+ * Three rules it is built on:
+ *
+ *   MEASURE. Prose is capped at about 66 characters and headings a little
+ *   wider. That is the whole layout. A 900px paragraph on a laptop is the most
+ *   common reason a page like this goes unread.
+ *
+ *   ONE ACCENT, USED TWICE. The site's green is reserved for links and for
+ *   focus, exactly as it is everywhere else. The warm --alert tones appear
+ *   only on the block that says what we do NOT do, because that block is the
+ *   most useful thing on several of these pages and it must not read as a
+ *   footnote.
+ *
+ *   NOTHING NEW AT 375px. Every rule below either works at that width already
+ *   or is written mobile-first and widened later. The one element that cannot
+ *   reflow — the cancellation ladder, which is a real table — scrolls inside
+ *   its own container so the page body never does.
+ *
+ * Everything is prefixed .info- so it cannot collide with the trade, profile,
+ * category or shell stylesheets, all of which share a document with it.
+ *
+ * Colours are the tokens from styles.css and nothing else. --ink-2 and --ink-3
+ * carry the body copy and --muted the asides, all of which clear 4.5:1 on
+ * every ground painted here; --accent-ink carries links at 7.04:1 on white.
+ * The global :focus-visible floor in styles.css draws every focus ring, so
+ * nothing below removes an outline.
+ */
+
+/* Wider than .main's 720 so the heading and the table have room, while the
+   prose stays at its own measure a few rules down. */
+.info-page { max-width: 760px; }
+
+/* --------------------------------------------------------------------------
+ * Head
+ * ----------------------------------------------------------------------- */
+.info-head { padding: 8px 0 4px; }
+
+.info-head h1 {
+  margin: 0;
+  font-size: clamp(28px, 5.2vw, 38px);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.info-lede {
+  margin: 14px 0 0;
+  max-width: 62ch;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* The dated "this is a plain-language description and no lawyer has read it"
+   line on Terms and Privacy. It is deliberately at the top and deliberately
+   not styled as a warning: it is a fact about the document, and dressing it as
+   an alarm would train people to skip it. */
+.info-stamp {
+  margin: 22px 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--control-line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.info-stamp p { margin: 0; }
+.info-stamp p + p { margin-top: 8px; }
+.info-stamp b { color: var(--ink); }
+
+/* A value nobody has supplied yet, marked so it cannot be mistaken for one
+   that has been. Square brackets in the text as well as the styling, because
+   a colour alone is not a way of saying anything. */
+.info-ph {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border: 1px dashed var(--control-line);
+  border-radius: 4px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+ * Contents
+ *
+ * Only the two long documents carry one. A list of links to the sections of a
+ * page is worth its space at nine sections and is noise at three.
+ * ----------------------------------------------------------------------- */
+.info-toc {
+  margin: 26px 0 0;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.info-toc h2 {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.info-toc ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 7px;
+}
+.info-toc a { font-size: 15px; line-height: 1.4; }
+
+/* --------------------------------------------------------------------------
+ * Links inside running text
+ *
+ * WHY THESE ARE UNDERLINED WHEN THE REST OF THE SITE'S LINKS ARE NOT. styles.css
+ * sets `a { text-decoration: none }` globally, which is right for a page of
+ * cards and chips: there a link is an object with edges and nobody could
+ * mistake it for a sentence. It is wrong in the middle of a paragraph. These
+ * are the long-form pages, their links sit inside prose, and --accent-ink
+ * against --ink-2 is 1.78:1. Each of those colours clears 4.5:1 against the
+ * page, which is what the note at the top of this file was checking; neither
+ * of them was ever checked against the OTHER, and 1.78:1 is nowhere near the
+ * 3:1 that WCAG 1.4.1 asks for between a link and the words around it. That
+ * criterion exists for exactly this: a difference of 1.78:1 is no difference
+ * at all to a reader who does not see the green, and with no underline there
+ * was nothing else to see.
+ *
+ * So colour stops being the only signal. An underline survives every kind of
+ * colour vision, greyscale printing and a forced high-contrast mode, and it
+ * costs a page of prose nothing.
+ *
+ * Scoped to text, deliberately. The contents list at the top of Terms and
+ * Privacy is a list whose every item is a link and reads as one already, and
+ * the row at the foot of each page is separated links rather than a sentence
+ * with links in it. Neither is a link in a text block, so neither is
+ * underlined here.
+ * ----------------------------------------------------------------------- */
+.info-head p a,
+.info-sec p a,
+.info-list a,
+.info-a a,
+.info-not a,
+.info-foot a {
+  text-decoration: underline;
+  /* Clear of the descenders, rather than striking through the tail of every
+     "y" and "g" that happens to fall inside a link. */
+  text-underline-offset: 0.12em;
+}
+
+/* --------------------------------------------------------------------------
+ * Sections
+ * ----------------------------------------------------------------------- */
+.info-sec {
+  margin: 38px 0 0;
+  padding: 24px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+/* The first section after the head does not need a rule as well as the space
+   the head already gives it. */
+.info-sec.first { border-top: 0; padding-top: 0; margin-top: 28px; }
+
+.info-sec h2 {
+  margin: 0;
+  font-size: clamp(20px, 3.2vw, 24px);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  /* Anchored sections: a jump from the contents list must not put the heading
+     under the sticky bar at the top of the app. */
+  scroll-margin-top: 72px;
+}
+
+.info-sec h3 {
+  margin: 26px 0 0;
+  font-size: 16px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.info-sec p {
+  margin: 12px 0 0;
+  max-width: 66ch;
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--ink-2);
+}
+
+.info-sec p.note {
+  font-size: 14.5px;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------------------------
+ * Lists
+ *
+ * Marker outside the text block so a wrapped line stays aligned with the line
+ * above it, which is the one thing that makes a long list of clauses scannable.
+ * ----------------------------------------------------------------------- */
+.info-list {
+  margin: 14px 0 0;
+  padding: 0 0 0 20px;
+  max-width: 66ch;
+  display: grid;
+  gap: 10px;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.info-list li { padding-left: 2px; }
+.info-list li::marker { color: var(--muted); }
+.info-list strong { color: var(--ink); }
+
+/* A list of terms and what each one means: the shape most of Privacy takes. */
+.info-defs {
+  margin: 16px 0 0;
+  max-width: 66ch;
+  display: grid;
+  gap: 16px;
+}
+.info-def { display: grid; gap: 4px; }
+.info-def dt {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--ink);
+  line-height: 1.35;
+}
+.info-def dd {
+  margin: 0;
+  font-size: 15.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* --------------------------------------------------------------------------
+ * What we do NOT do
+ *
+ * The most valuable block on several of these pages, so it is given weight
+ * rather than tucked away. Warm ground, warm rule, ordinary ink: the point is
+ * "read this", not "something has gone wrong".
+ * ----------------------------------------------------------------------- */
+.info-not {
+  margin: 20px 0 0;
+  padding: 18px 18px 20px;
+  border: 1px solid var(--alert-line);
+  border-radius: var(--r-md);
+  background: var(--alert-bg);
+}
+.info-not h3 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  /* --alert on --alert-bg is 5.6:1, so this label is real text and not a
+     decorative flourish that happens to contain words. */
+  color: var(--alert);
+}
+.info-not .info-list { margin-top: 12px; color: var(--ink-2); }
+.info-not p { color: var(--ink-2); }
+
+/* --------------------------------------------------------------------------
+ * The ladder
+ *
+ * A real table, because it is one: three columns of figures that only mean
+ * anything read across a row. It is the only element on these pages that
+ * cannot reflow to 375px, so it scrolls inside its own box and the page never
+ * scrolls sideways. tabindex on the scroller is what lets a keyboard reach a
+ * horizontally scrolling region at all.
+ * ----------------------------------------------------------------------- */
+.info-scroll {
+  margin: 18px 0 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.info-scroll:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+
+.info-table {
+  width: 100%;
+  min-width: 460px;
+  border-collapse: collapse;
+  font-size: 14.5px;
+}
+.info-table caption {
+  caption-side: top;
+  padding: 14px 16px 0;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.info-table th,
+.info-table td {
+  padding: 12px 16px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+  line-height: 1.45;
+}
+.info-table thead th {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.info-table tbody th {
+  font-weight: 600;
+  color: var(--ink);
+}
+.info-table td {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.info-table tbody tr:last-child th,
+.info-table tbody tr:last-child td { border-bottom: 0; }
+
+/* --------------------------------------------------------------------------
+ * Questions and answers
+ *
+ * The same disclosure pattern the trade page uses, restated here rather than
+ * imported, because styles-trade.css is loaded on a different route and these
+ * pages must not depend on which page somebody visited first.
+ * ----------------------------------------------------------------------- */
+.info-qs { margin: 16px 0 0; display: grid; gap: 0; }
+
+.info-q { border-bottom: 1px solid var(--line); }
+.info-q:first-child { border-top: 1px solid var(--line); }
+
+.info-q > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 15px 2px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink);
+  list-style: none;
+}
+.info-q > summary::-webkit-details-marker { display: none; }
+.info-q > summary::before {
+  content: '+';
+  flex: none;
+  width: 1em;
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--muted);
+}
+.info-q[open] > summary::before { content: '–'; }
+.info-q > summary:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: -2px; }
+.info-q > summary:hover { color: var(--accent-ink); }
+
+.info-a {
+  margin: 0 0 16px;
+  padding-left: calc(1em + 10px);
+  max-width: 66ch;
+  font-size: 15.5px;
+  line-height: 1.65;
+  color: var(--ink-2);
+}
+.info-a + .info-a { margin-top: 10px; }
+
+/* --------------------------------------------------------------------------
+ * The way out
+ * ----------------------------------------------------------------------- */
+.info-do {
+  margin: 20px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.info-foot {
+  margin: 44px 0 0;
+  padding: 20px 0 8px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.info-foot p { margin: 0; max-width: 66ch; }
+.info-foot p + p { margin-top: 10px; }
+
+/* --------------------------------------------------------------------------
+ * Wider than a phone
+ *
+ * Everything above is the small-screen layout. This is the only breakpoint,
+ * and it does one thing: puts the contents list into two columns once there is
+ * room for two columns of it.
+ * ----------------------------------------------------------------------- */
+@media (min-width: 620px) {
+  .info-toc ol { grid-template-columns: 1fr 1fr; gap: 8px 24px; }
+  .info-head { padding-top: 14px; }
+}

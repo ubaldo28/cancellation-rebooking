@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, money, type Client, type Lead } from '../api';
 import { useOperator } from '../App';
+import Sheet from '../components/Sheet';
 import { Empty, ErrorNote, Icon, Spinner } from '../components/ui';
+import { useDocumentTitle } from '../lib/title';
 
-const URGENCY = ['', 'Whenever', 'Soon', 'Normal', 'Urgent', 'Urgent'];
+/**
+ * Urgency 1–5 as the operator reads it. Index 0 is deliberately absent: a lead
+ * with no urgency set falls through to "Normal" below rather than printing an
+ * empty chip, which is what the old empty string at index 0 did — `??` only
+ * catches undefined, so `''` was rendered as a chip with nothing in it.
+ */
+const URGENCY = [undefined, 'Whenever', 'Soon', 'Normal', 'Urgent', 'Urgent'];
 
 export default function Jobs() {
+  useDocumentTitle('Open jobs');
   const op = useOperator();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -35,8 +44,12 @@ export default function Jobs() {
       <header className="page-head">
         <div className="spread">
           <h1>Open jobs</h1>
+          {/* --accent-ink, not --accent: the bright accent is 4.24:1 on the
+              page ground, which is under the 4.5:1 this 15px text needs.
+              --accent-ink is 6.27:1 on the same ground and is the colour every
+              link on the site already uses. */}
           {total > 0 && (
-            <span className="mono" style={{ fontWeight: 600, color: 'var(--accent)' }}>
+            <span className="mono" style={{ fontWeight: 600, color: 'var(--accent-ink)' }}>
               {money(total, op)}
             </span>
           )}
@@ -132,20 +145,8 @@ function AddLead({ clients, onClose, onDone }: {
   }
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(28,26,23,0.4)',
-      display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50,
-    }} onClick={onClose}>
-      <form className="stack" onClick={(e) => e.stopPropagation()} onSubmit={submit}
-        style={{
-          background: 'var(--bg)', width: '100%', maxWidth: 520,
-          borderRadius: '16px 16px 0 0', padding: 20, maxHeight: '90vh', overflowY: 'auto',
-        }}>
-        <div className="spread">
-          <h2>Log a quote</h2>
-          <button type="button" className="btn quiet sm" onClick={onClose}>Close</button>
-        </div>
-
+    <Sheet title="Log a quote" onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
         {error && <div className="error">{error}</div>}
 
         {clients.length === 0 ? (
@@ -201,6 +202,6 @@ function AddLead({ clients, onClose, onDone }: {
           </>
         )}
       </form>
-    </div>
+    </Sheet>
   );
 }

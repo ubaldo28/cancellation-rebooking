@@ -1,12 +1,97 @@
 name = "app"
 main = "src/index.ts"
+# Pinned on purpose. wrangler login stores ONE machine-wide credential and
+# will happily deploy to whatever account the browser was last signed into.
+# With this set, a command run under any other account fails instead.
+# Corathemovement@gmail.com's Account.
+account_id = "5e08c8ea00fcdc2aa700d10b43bb4d21"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
 
+# The dashboard is served by this same Worker, on this same origin.
+#
+# It used to live on cancellation-rebooking.pages.dev while the API sat on
+# workers.dev. That makes the session cookie third-party, and Safari blocks
+# those outright while Chrome is phasing them out — so the dashboard could
+# never stay signed in. One origin removes the problem instead of working
+# around it, and CORS stops mattering for the app's own requests.
+[assets]
+directory = "./web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+# Every request goes to the Worker first, including the ones the assets binding
+# ends up answering.
+#
+# This used to be the list of paths the Worker owns, with everything else
+# served straight from the bucket. That is cheaper, and it also meant the
+# Worker never saw the request for / — so no response header it sets could
+# reach the page anybody actually looks at. Headers that cover the API and miss
+# the site are not security headers, and framing the SPA is the entire phishing
+# attack, so the Worker now sees everything and hands the static paths back to
+# env.ASSETS itself. WORKER_PATHS in src/index.ts carries the old list and is
+# what still makes a mistyped /api/thing answer JSON rather than the React app.
+#
+# /auth/verify is deliberately not in that list: the magic link lands on the
+# React app, which posts the token to /api/auth/verify. Treating it as the
+# Worker's would 404 the one link people arrive on.
+#
+# The search-facing pages are server-rendered on purpose: a crawler must get
+# the openings and the prices in the first response, not after running
+# JavaScript. That is /near, /near/*, /los-angeles, /browse/:category,
+# /s/:trade, /cost/:trade, /p/:slug, /sitemap.xml and /robots.txt. Each of
+# those except the last two also has a matching React route in web/src/App.tsx,
+# because React mounts over the rendered HTML rather than replacing it — delete
+# one side and the page draws and then vanishes.
+run_worker_first = true
+# /c/:token, /a, /a/:token, /join, /browse, /cost, /search, /signin,
+# /auth/verify, the footer's information pages and /app/* have no Worker route
+# and fall through to the SPA. Only /book/* is the Worker's among the pages a
+# customer posts from, because posting the form has to write to the database
+# before anything is rendered.
+#
+# /sw.js, /manifest.webmanifest and /icon.svg are real files under web/public
+# and are served by the assets binding. A service worker delivered as text/html
+# fails silently and push never arrives, so check its content type after a
+# deploy rather than assuming.
+
+# Where a van's live position lives.
+#
+# One object per operator, holding the current fix in memory and overwriting
+# it. A position ping is then a memory update, not a database write — which is
+# the difference between roughly 150 million D1 writes a month at ten thousand
+# vans and almost none. Storage is touched about once every five minutes purely
+# so an evicted object does not make a van vanish mid-journey.
+[[durable_objects.bindings]]
+name = "VAN"
+class_name = "VanTracker"
+
+# SQLite-backed is the only kind the Workers Free plan allows.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["VanTracker"]
+
 [[d1_databases]]
 binding = "DB"
-database_name = "app"
+database_name = "cancellation-rebooking"
 database_id = "9b7f7e44-b27b-46e0-b7e9-235a6d75f848"
+
+# Photos of an operator's finished work. A stranger deciding whether to let
+# someone into their driveway looks at pictures, not at a price list.
+#
+# COMMENTED OUT until R2 is switched on for this account. R2 is off by default
+# and a binding to a bucket that does not exist fails the whole deploy, which
+# would block the rest of the site over a feature nothing depends on yet.
+# The Worker treats env.PHOTOS as optional: the two photo routes answer 503
+# and everything else works.
+#
+# To turn it on:
+#   1. Cloudflare dashboard -> R2 Object Storage -> enable it for the account
+#   2. npm run r2:create
+#   3. uncomment the three lines below, then npm run deploy
+#
+# [[r2_buckets]]
+# binding = "PHOTOS"
+# bucket_name = "slotfill-photos"
 
 [vars]
 APP_URL = "https://app.slotfill.workers.dev"
@@ -21,12 +106,14 @@ GEOCODE_PROVIDER = "auto"
 
 # Exact origins allowed to call the API with a session cookie. No wildcards —
 # credentials plus a wildcard would let any site drive an operator's account.
-ALLOWED_ORIGINS = "http://localhost:5173,https://cancellation-rebooking.pages.dev"
+ALLOWED_ORIGINS = "http://localhost:5173,https://app.slotfill.workers.dev"
 
 # Transactional email. Sign-in is impossible without one of these configured;
 # the endpoint returns 503 rather than falling back to something insecure.
 EMAIL_PROVIDER = "none"          # "resend" | "postmark" | "none"
-EMAIL_FROM = "Gap Filler <hello@example.com>"
+EMAIL_FROM = "Bookings <hello@example.com>"
+# "on" publishes a no-sign-in demo account at /demo, rebuilt on every visit.
+DEMO_MODE = "on"
 
 [triggers]
 crons = ["*/15 * * * *"]
@@ -36,8 +123,65 @@ crons = ["*/15 * * * *"]
 #   EMAIL_API_KEY       required once EMAIL_PROVIDER is set
 #   AUTH_DEBUG_TOKEN    LOCAL DEV ONLY. Never set this on a production deploy.
 #                       Even if set, the sign-in link is only echoed when
-#                       APP_URL is localhost or *.workers.dev.
+#                       APP_URL is localhost. *.workers.dev is a real public
+#                       deployment and is deliberately NOT trusted here.
 #   DISTANCE_API_KEY    only if DISTANCE_PROVIDER is google/mapbox
 #   TWILIO_ACCOUNT_SID  only if an operator uses sms_mode = twilio
 #   TWILIO_AUTH_TOKEN   also required to validate inbound webhook signatures
 #   TWILIO_FROM
+#   VAPID_PUBLIC_KEY    Web Push. Without all three, push is simply off: the
+#   VAPID_PRIVATE_KEY   alerts UI hides itself and nothing throws.
+#   VAPID_SUBJECT       mailto: or https: URL. Push services reject anything else.
+#                       NEVER rotate these once browsers have subscribed —
+#                       every subscription is bound to the public key and would
+#                       go silently dead.
+#   TURNSTILE_SECRET    Cloudflare Turnstile, in front of the four public forms
+#                       a script can use to cost somebody money: placing an
+#                       order, asking a working operator for a job now, opening
+#                       a conversation, and creating a standing alert.
+#
+#                       NOT SET ANYWHERE YET, WHICH MEANS THE FORMS ARE NOT
+#                       PROTECTED YET. While it is absent the check is skipped
+#                       outright and those endpoints behave exactly as they did
+#                       before it was added — deliberate, so this ships and
+#                       runs locally without a key, but do not read the code
+#                       existing as the protection being on. It comes on the
+#                       day this is set, and not before.
+#
+#                       Its public half is a build-time variable for the front
+#                       end, not a secret and not read here:
+#                         VITE_TURNSTILE_SITE_KEY=... npm run build
+#                       Both come from the same Turnstile widget in the
+#                       dashboard, and setting one without the other is handled
+#                       (see src/lib/turnstile.ts) but is not a state to sit in.
+#
+#   STRIPE_WEBHOOK_SECRET
+#                       The signing secret (whsec_...) for the Stripe webhook
+#                       endpoint at /webhooks/stripe.
+#
+#                       NOT SET ANYWHERE YET either, but the consequence is the
+#                       OPPOSITE of Turnstile's and the difference is
+#                       deliberate. Turnstile absent means the check steps
+#                       aside and the forms are as open as they were before it
+#                       existed. This absent means the endpoint answers 503 and
+#                       processes nothing at all: it will one day mark jobs
+#                       paid and reverse fees, and there is no version of that
+#                       worth running unauthenticated "for now". A missing
+#                       secret here fails closed, on purpose.
+#                       See src/lib/payments.ts.
+#
+#   ADMIN_EMAILS        Comma-separated operator emails allowed to work the
+#                       moderation queue at /api/admin/*. A secret rather than
+#                       a [vars] entry because it is the entire access-control
+#                       list for reading other people's disputes and
+#                       suspending businesses, and [vars] is committed to this
+#                       file. Unset means nobody, which is the right default.
+#                       Every use of those routes is recorded in admin_actions
+#                       — see src/lib/audit.ts.
+#
+# NOTHING SENSITIVE BELONGS IN [vars] ABOVE. Everything in that block is
+# committed to this repository and is readable in the Cloudflare dashboard by
+# anybody with access to the account. The values there are deliberately all
+# switches and public URLs: which distance provider to use, which origins may
+# send a cookie, whether the demo is on. If a value would matter in a leaked
+# copy of this file, it is a secret and goes through `wrangler secret put`.

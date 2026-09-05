@@ -37,11 +37,10 @@ export const COUNTRIES: Record<string, CountryInfo> = {
   // Launch markets only. Adding a country back means adding its row here and
   // its locale below — nothing else in the app is country-specific.
   US: { iso2: 'US', name: 'United States', dial: '+1', trunk: '1', minNational: 10, maxNational: 10, currency: 'USD', defaultTimezone: 'America/New_York', multiTimezone: true, postalPattern: /^\d{5}(\d{4})?$/ },
-  CA: { iso2: 'CA', name: 'Canada', dial: '+1', trunk: '1', minNational: 10, maxNational: 10, currency: 'CAD', defaultTimezone: 'America/Toronto', multiTimezone: true, postalPattern: /^[A-Z]\d[A-Z]\d[A-Z]\d$/ },
-  GB: { iso2: 'GB', name: 'United Kingdom', dial: '+44', trunk: '0', minNational: 9, maxNational: 10, currency: 'GBP', defaultTimezone: 'Europe/London', postalPattern: /^[A-Z]{1,2}\d[A-Z\d]?\d[A-Z]{2}$/ },
-  IE: { iso2: 'IE', name: 'Ireland', dial: '+353', trunk: '0', minNational: 7, maxNational: 9, currency: 'EUR', defaultTimezone: 'Europe/Dublin', postalPattern: /^[A-Z]\d{2}[A-Z\d]{4}$/ },
-  AU: { iso2: 'AU', name: 'Australia', dial: '+61', trunk: '0', minNational: 9, maxNational: 9, currency: 'AUD', defaultTimezone: 'Australia/Sydney', multiTimezone: true, postalPattern: /^\d{4}$/ },
-  NZ: { iso2: 'NZ', name: 'New Zealand', dial: '+64', trunk: '0', minNational: 8, maxNational: 10, currency: 'NZD', defaultTimezone: 'Pacific/Auckland', postalPattern: /^\d{4}$/ },
+  // Only the United States. Canada, the UK, Ireland, Australia and New Zealand
+  // were removed deliberately: every one of them carries its own licensing,
+  // consumer-protection and data rules, and testing in one state is worth more
+  // than being nominally available in six countries nobody has validated.
 };
 
 export const COUNTRY_LIST = Object.values(COUNTRIES)
@@ -79,8 +78,29 @@ export function isValidPostcode(raw: string | null, iso2: string): boolean {
  * customers read a foreign date format — which was the bug this replaces.
  */
 export const LOCALES: Record<string, string> = {
-  US: 'en-US', CA: 'en-CA', GB: 'en-GB', IE: 'en-IE', AU: 'en-AU', NZ: 'en-NZ',
+  US: 'en-US',
 };
+
+/**
+ * California only, while this is being tested.
+ *
+ * The whole product depends on drive time between real addresses, and that is
+ * only meaningful where there are enough businesses to be near somebody. One
+ * state's worth of density beats a thin scattering across the country, and it
+ * keeps the licensing rules the site has to enforce down to one set.
+ *
+ * California ZIP codes run 90001-96162 with no gaps that matter here. This is
+ * a launch gate, not a geography lesson: it is checked where an operator sets
+ * up a service area, and nowhere else.
+ */
+export const LAUNCH_STATE = 'California';
+
+export function isLaunchArea(postcode: string | null | undefined): boolean {
+  const digits = (postcode ?? '').replace(/\D/g, '').slice(0, 5);
+  if (digits.length !== 5) return false;
+  const n = Number(digits);
+  return n >= 90001 && n <= 96162;
+}
 
 /**
  * Formatting locale. Country decides the conventions; language, when known,

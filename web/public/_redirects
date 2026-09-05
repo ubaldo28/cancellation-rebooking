@@ -1,1 +1,6 @@
-/*  /index.html  200
+# Intentionally empty.
+#
+# This used to hold `/*  /index.html  200`, the SPA fallback Cloudflare Pages
+# needs. The app is now served by the Worker instead, which rejects that rule
+# as an infinite loop and does the same job through
+# not_found_handling = "single-page-application" in wrangler.toml.

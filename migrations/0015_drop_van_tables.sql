@@ -1,0 +1,39 @@
+-- Positions left the database, on purpose.
+--
+-- Migration 0014 built van_positions and van_trail carefully: one row per
+-- operator, upserted, trimmed, never a log. That was the right shape for the
+-- wrong storage. Every position ping still wrote to D1, and a ping arrives on
+-- a TIMER rather than when a person does something -- a van pinging every 30
+-- seconds is ~2,880 writes a day, and ten thousand vans is roughly 150 million
+-- database writes a month. It was the largest single cost in the system, and
+-- it was being paid to overwrite a value that is stale within the minute and
+-- that nobody reads twice.
+--
+-- The live position is not a record. It is mutable per-vehicle state, read far
+-- more often than it needs to be durable, and losing it costs one missing dot
+-- until the next ping thirty seconds later. That is precisely what a Durable
+-- Object is for, so it now lives in one -- src/do/van.ts, one object per
+-- operator, addressed by idFromName(operator_id). A ping overwrites a field in
+-- memory and writes nothing durable; the object snapshots itself to its own
+-- storage every few minutes only so an eviction cannot make a van vanish from
+-- a customer's screen mid-journey.
+--
+-- So these two tables have no writer and no reader left. Dropping them is not
+-- housekeeping: a table that is no longer maintained but still readable is a
+-- trap -- the next person to find van_positions would reasonably believe the
+-- row in it is where the van is, and it would be wherever the van was on the
+-- day this shipped. And what these rows hold is a named individual's
+-- whereabouts, which is the last thing to keep lying around unmaintained.
+--
+-- Nothing is migrated across. There is nothing worth migrating: every row here
+-- is a position from before this deploy, and the first ping after it replaces
+-- the only one that matters.
+--
+-- The trail index goes with its table.
+DROP TABLE IF EXISTS van_trail;
+DROP TABLE IF EXISTS van_positions;
+
+-- operators.share_location STAYS. It is consent, not a position: it changes
+-- only when the operator changes it, it must survive everything, and
+-- customerView() still reads it from D1 on every customer request -- before it
+-- asks the Durable Object anything. It is the gate that has to be durable.

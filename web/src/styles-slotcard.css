@@ -1,0 +1,377 @@
+/*
+ * The listing card, and the row of controls that sits above a grid of them.
+ *
+ * Owned by SlotCard.tsx and SlotFilters.tsx, which import it themselves — a
+ * page gets all of this by rendering the components and not by remembering to
+ * name a stylesheet. That is the whole reason the file exists: these rules used
+ * to live in styles-home.css, so the front page was the only page where a card
+ * could grow a rating or a review line and have it come out looking like
+ * anything. The two components travel with their appearance now.
+ *
+ * WHAT IS NOT HERE. The card's skeleton — `.slot-grid`, `.slot-card` and the
+ * six elements inside it — stays in styles.css, where it has always been. It is
+ * loaded on every page from main.tsx, several other pages lean on it, and the
+ * grid around the cards is the page's business rather than the card's. This
+ * file is only the half that was stranded on the front page.
+ *
+ * Both sections below share one file rather than two because the controls are
+ * not a general-purpose filter bar: they exist to narrow a grid of these cards,
+ * they are shown on exactly the pages that render them, and the availability
+ * dot on the toggle is deliberately the same green as the "Open now" marker on
+ * the card. Splitting them would mean two files that must be changed together.
+ */
+
+/* --------------------------------------------------------------------------
+ * Sort and filter
+ *
+ * A single wrapping row above the list. Native <select> throughout rather than
+ * drawn menus: the visitor this page is written for is on a phone, and the
+ * platform's own picker is bigger, faster and more familiar than anything that
+ * could be built here — and it is the one control that already works with
+ * every assistive technology without help.
+ *
+ * Every control in this row is conditional in the markup. There is deliberately
+ * no disabled state to style, because a control this list cannot answer for is
+ * not rendered at all.
+ * ----------------------------------------------------------------------- */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+/* Label and field in one pill, so the row reads as a set of settings rather
+   than as a form somebody has to fill in. The label is a real <label> wrapping
+   its own control — no ids to keep in step, nothing to get out of step. */
+.filt {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 6px 0 13px;
+  border: 1px solid var(--control-line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+/* The <select> inside drops its own outline, so the pill has to carry the
+   focus indicator. A solid ring, not the 16%-alpha halo this used to have:
+   that composited to roughly #d4e7e0 on white, which is a 1.2:1 difference
+   nobody sees. */
+.filt:focus-within {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+.filt-lab { font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+
+.filt select {
+  border: 0;
+  background: none;
+  padding: 0 4px 0 0;
+  min-height: 38px;
+  max-width: 46vw;
+  font-family: inherit;
+  /* 16px, because anything smaller makes iOS Safari zoom the page when the
+     picker opens and leaves the visitor looking at a magnified fragment of a
+     list they were reading a moment ago. */
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.filt select:focus { outline: none; }
+
+/* The one filter that is a switch rather than a menu, and it looks like the
+   neighbourhood chips above it on purpose: same shape, same size, same
+   pressed-is-ink treatment, because it does the same kind of job. */
+.filt-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 15px;
+  border: 1px solid var(--control-line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 13.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.filt-toggle:hover { border-color: var(--line-strong); color: var(--ink); }
+
+/* The dot is the same green that means "open right now" on the cards below,
+   and it stays lit whether the filter is on or off: it is describing what the
+   button is about, not whether it is pressed. */
+.filt-toggle::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.filt-toggle.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+.filt-toggle.on::before { background: var(--accent-vivid); }
+
+/* Not a pill. It is the way out of the row, not another setting in it. */
+.filt-clear {
+  border: 0;
+  background: none;
+  padding: 0 6px;
+  min-height: 40px;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--accent-ink);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.filt-clear:hover { color: var(--accent); }
+
+.filt-applied {
+  margin: -4px 0 12px;
+  max-width: 68ch;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .filt-toggle { transition: none; }
+}
+
+/* --------------------------------------------------------------------------
+ * What a card says about the business
+ *
+ * The reference marketplace's listing cards carry the rating, the number of
+ * jobs done, whether the person is available now, and a line of the last
+ * review; ours carried a price and a name. Everything below is that missing
+ * half, on the strict condition that every one of them disappears when the
+ * business does not have it. A grid of cards is read by scanning, and a
+ * placeholder is indistinguishable from a fact at scanning speed.
+ *
+ * Density is the whole constraint here. The card sits in a 268px-minimum grid
+ * and a visitor sees six of them at once on a laptop; a card that grows by
+ * 40px shows them four. So the type is 12px, the rows are tight, and none of
+ * these ever wraps to a second line if it can help it.
+ * ----------------------------------------------------------------------- */
+
+/* --------------------------------------------------------------------------
+ * The photograph
+ *
+ * A column that only exists on a card that has one. `.slot-card` in styles.css
+ * is `grid-template-columns: minmax(0, 1fr) auto` — the text and the price — and
+ * `.has-photo` puts a fixed 56px column in front of it and moves the four named
+ * children one column right. Nothing else is touched: `.slot-more` and
+ * `.slot-foot` are `grid-column: 1 / -1` either way, so they still span the
+ * whole card and the flexible row that pins the Book buttons to the bottom of
+ * every card in a row is still the one holding the slack.
+ *
+ * 56px SQUARE IS THE WHOLE DESIGN. The three rows the image spans — service,
+ * time, business — come to about 58px with the card's own 2px row gaps, so a
+ * 56px picture fits inside height the card already had and the grid gets no
+ * taller. That was the constraint: this file's own note says a card that grows
+ * by 40px turns six visible cards into four, and a photograph is not worth two
+ * cards.
+ * ----------------------------------------------------------------------- */
+.slot-card.has-photo { grid-template-columns: 56px minmax(0, 1fr) auto; }
+
+.slot-card.has-photo .slot-svc,
+.slot-card.has-photo .slot-when { grid-column: 2; }
+
+.slot-card.has-photo .slot-price { grid-column: 3; }
+
+/* The business name takes the price's column as well as its own, because the
+   price is only two rows deep and row three under it is empty. Without this
+   the name line loses exactly the width the photograph took — 222px to 152px
+   on a 335px card — and the first thing to fall off the end of it is the
+   SAMPLE badge, which exists so a seeded listing is never mistaken for a real
+   business and is worth more than the two words of a name it sits after.
+   Spanning gets the line to 235px, which is wider than it was before there was
+   a photograph at all. */
+.slot-card.has-photo .slot-biz { grid-column: 2 / -1; }
+
+.slot-photo {
+  grid-column: 1;
+  grid-row: 1 / span 3;
+  align-self: start;
+  width: 56px;
+  height: 56px;
+  /* The photographs are whatever shape the operator uploaded. `cover` crops to
+     the square rather than squashing a van into one, and the centre of a photo
+     of finished work is the work. */
+  object-fit: cover;
+  border-radius: 10px;
+  /* Under the image, not behind a gap: a photo still loading, or one that fails
+     to load at all, leaves a tile the same size and colour as the card's own
+     panels rather than a white hole the size of a missing picture. */
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+/* One wrapper holding the new rows, taking a single cell of the card's grid.
+   The card is `grid-template-rows: auto auto auto 1fr` with the footer pinned
+   to the bottom of that last flexible row, so anything added as a sibling
+   would take the slack and unpin the Book buttons from each other. */
+.slot-more {
+  grid-column: 1 / -1;
+  align-self: start;
+  min-width: 0;
+  margin-top: 7px;
+  display: grid;
+  gap: 5px;
+}
+
+.slot-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 9px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+/* The rating is the only number in this strip anybody is comparing between
+   cards, so it is the only one in the body ink. */
+.slot-rate {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* One star, not five. Five drawn stars at 12px is a row of grey lozenges
+   nobody can count, and the number next to it is the thing being read anyway. */
+.slot-star { color: #1a7f4b; font-size: 12.5px; }
+
+.slot-rate-n { font-weight: 600; color: var(--muted); }
+
+.slot-fact { min-width: 0; }
+
+/* Screen readers only. "★ 4.8 (37)" is unambiguous to somebody looking at it
+   and is read aloud as two bare numbers, so the two missing words are supplied
+   here rather than spelled out on a card with no room for them. */
+
+/* PINNED TO THE CARD, NOT LEFT WHERE IT FELL. An absolutely positioned box is
+   clipped by an `overflow: hidden` ancestor only when that ancestor is also its
+   containing block, and `.slot-biz` is not positioned — so the hidden word
+   inside the SAMPLE badge kept the static position it would have had on an
+   untruncated line, roughly sixty pixels past the right edge of a 375px screen,
+   and gave the whole document a sideways scroll on the front page and in search
+   results. `.slot-card` is the containing block, `left`/`top` take the box out
+   of the flow's coordinates altogether, and a screen reader reads the DOM
+   rather than the geometry — so nothing about how it is announced changes. */
+.slot-card { position: relative; }
+
+.slot-sr {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* THE AVAILABILITY MARKER.
+   Everything else on this card is about a slot later in the week; this is
+   about a van that is switched on now, and it is the strongest reason on the
+   page to press one card rather than the one beside it. So it is the only
+   thing in the strip with a fill, a border and the accent — which on this site
+   means exactly one thing and is spent nowhere else. */
+.slot-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 11.5px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.slot-now::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0, 135, 90, 0.15);
+}
+
+/* The card edge picks it up too, so a switched-on business is findable by
+   glance in a grid of thirty without reading a word of any of them. */
+.slot-card.is-live { border-color: var(--accent-line); }
+
+/* A check was run. Grey and unadorned, because a badge with a tick in it reads
+   as this site vouching for what the check came back with, and it is not a
+   trade licence either. */
+.slot-chk {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* One line of the newest review. Cut with an ellipsis rather than clamped to
+   two lines: two lines is 34px on every card that has a review and none on the
+   cards that do not, and a grid whose rows are all different heights is harder
+   to scan than a grid that says slightly less. */
+.slot-quote {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.slot-quote-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: italic;
+}
+
+/* Never cut. An unattributed quotation is worth less than no quotation, so the
+   name holds its width and the review gives way. */
+.slot-quote-by {
+  flex: 0 0 auto;
+  font-weight: 650;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* The dash belongs to the attribution, not to the review, so it travels with
+   the name when the review is cut short. A non-breaking space keeps the two
+   from ever being separated. */
+.slot-quote-by::before { content: '—\00a0'; color: var(--faint); }

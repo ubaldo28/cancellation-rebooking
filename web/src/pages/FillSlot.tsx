@@ -6,10 +6,12 @@ import {
 } from '../api';
 import { useOperator } from '../App';
 import { Empty, ErrorNote, Icon, Spinner } from '../components/ui';
+import { useDocumentTitle } from '../lib/title';
 
 const key = (c: Candidate) => `${c.kind}:${c.client_id}:${c.lead_id ?? ''}`;
 
 export default function FillSlot() {
+  useDocumentTitle('Fill this slot');
   const { gapId = '' } = useParams();
   const op = useOperator();
   const navigate = useNavigate();
@@ -79,7 +81,7 @@ export default function FillSlot() {
   return (
     <>
       <header className="page-head">
-        <Link to="/" className="row" style={{ gap: 8, color: 'var(--ink)', marginBottom: 8 }}>
+        <Link to="/app" className="row" style={{ gap: 8, color: 'var(--ink)', marginBottom: 8 }}>
           <Icon name="back" size={20} stroke={1.9} />
           <span style={{ fontWeight: 500 }}>Fill this slot</span>
         </Link>
@@ -149,8 +151,22 @@ export default function FillSlot() {
               <p className="faint" style={{ textAlign: 'center', margin: 0 }}>
                 First to confirm gets it. The rest are told it's gone.
               </p>
-              <button className="btn quiet block sm"
-                onClick={async () => { await api.dismissGap(gapId); navigate('/'); }}>
+              {/* Nothing caught the rejection here, so a dismiss that failed
+                  left an unhandled promise in the console and the operator on
+                  a page that had not changed and had not said why. The error
+                  box above already has a Try again next to it. */}
+              <button className="btn quiet block sm" disabled={sending}
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      await api.dismissGap(gapId);
+                      navigate('/app');
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message
+                        : 'Could not leave this slot empty.');
+                    }
+                  })();
+                }}>
                 Leave this slot empty
               </button>
             </div>
@@ -194,7 +210,12 @@ function SendWave({ offers, sent, setSent, gap }: {
       <main className="main stack">
         <div className="spread">
           <span className="eyebrow">{sent.size} of {offers.length} sent</span>
-          {gap && <span className="muted">Expires {timeRange(gap.starts_at, gap.starts_at, op).split(', ')[1]}</span>}
+          {/* The slot these messages are about. It used to read "Expires" and
+              then the second comma-separated field of a time range whose two
+              ends were the same instant — which came out as a bare date and
+              was not an expiry of anything. Nothing in the offer payload
+              carries an expiry, so the honest thing to print is the slot. */}
+          {gap && <span className="muted">{timeRange(gap.starts_at, gap.ends_at, op)}</span>}
         </div>
 
         {offers.map((o) => {
@@ -223,7 +244,7 @@ function SendWave({ offers, sent, setSent, gap }: {
           to automatic sending later in Settings.
         </div>
 
-        <Link to="/" className="btn ghost block">Done</Link>
+        <Link to="/app" className="btn ghost block">Done</Link>
       </main>
     </>
   );

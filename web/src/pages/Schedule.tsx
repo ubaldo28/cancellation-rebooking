@@ -6,10 +6,13 @@ import {
 } from '../api';
 import { useOperator } from '../App';
 import { ErrorNote, Icon, Spinner } from '../components/ui';
+import { useDocumentTitle } from '../lib/title';
+import { addDays, epochInZone, todayIn } from '../lib/zone';
 
 const DAY = 86400;
 
 export default function Schedule() {
+  useDocumentTitle('Schedule');
   const op = useOperator();
   const [offset, setOffset] = useState(0);           // days from today
   const [appts, setAppts] = useState<Appointment[]>([]);
@@ -18,11 +21,22 @@ export default function Schedule() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const dayStart = useCallback(() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return Math.floor(d.getTime() / 1000) + offset * DAY;
-  }, [offset]);
+  /**
+   * WHOSE MIDNIGHT THIS IS.
+   *
+   * It used to be the browser's: `new Date()` with the hours zeroed is midnight
+   * wherever the phone is standing, and the heading beside it was then formatted
+   * in the operator's own zone. For a Los Angeles operator opening the app after
+   * five in the afternoon those are different days, so the page fetched one day
+   * and named another — and there is no worse screen to be a day out on than the
+   * one an operator reads to find out where they are meant to be. Both the
+   * window and the label are now built from the same calendar date in the
+   * operator's zone.
+   */
+  const tz = op?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const dateFor = useCallback((by: number) => addDays(todayIn(tz), by), [tz]);
+  const dayStart = useCallback(
+    () => epochInZone(dateFor(offset), '00:00', tz), [dateFor, offset, tz]);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -62,10 +76,18 @@ export default function Schedule() {
     ...gaps.map((g) => ({ kind: 'gap' as const, at: g.starts_at, gap: g })),
   ].sort((x, y) => x.at - y.at);
 
-  const label = new Intl.DateTimeFormat(
+  /**
+   * The day `by` days from today, named. Used by the heading and both arrows.
+   *
+   * Read back at noon UTC: a calendar date has no time of day, and any other
+   * hour rolls it to the day before or after somewhere in the world.
+   */
+  const dayLabel = (by: number) => new Intl.DateTimeFormat(
     op ? `${op.language}-${op.country}` : 'en-US',
-    { timeZone: op?.timezone, weekday: 'long', day: 'numeric', month: 'short' },
-  ).format(new Date(dayStart() * 1000));
+    { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'short' },
+  ).format(new Date(`${dateFor(by)}T12:00:00Z`));
+
+  const label = dayLabel(offset);
 
   return (
     <>
@@ -74,14 +96,21 @@ export default function Schedule() {
       </header>
 
       <main className="main stack">
+        {/* Both arrows are an icon and nothing else, and the icon is
+            aria-hidden, so without a label they were announced as "button" —
+            two of them, either side of a date, with no way to tell which way
+            each one goes. The label names the day it moves to rather than the
+            direction, because "previous" is meaningless read on its own. */}
         <div className="spread">
-          <button className="btn quiet sm" onClick={() => setOffset((o) => o - 1)}>
+          <button className="btn quiet sm" aria-label={`Go to ${dayLabel(offset - 1)}`}
+            onClick={() => setOffset((o) => o - 1)}>
             <Icon name="back" size={16} color="var(--muted)" />
           </button>
           <span style={{ fontWeight: 600 }}>
             {offset === 0 ? 'Today' : label}
           </span>
-          <button className="btn quiet sm" onClick={() => setOffset((o) => o + 1)}>
+          <button className="btn quiet sm" aria-label={`Go to ${dayLabel(offset + 1)}`}
+            onClick={() => setOffset((o) => o + 1)}>
             <Icon name="arrow" size={16} color="var(--muted)" />
           </button>
         </div>
@@ -107,7 +136,7 @@ export default function Schedule() {
                   <span style={{ fontSize: 13, color: '#8a6a4d' }}>Someone cancelled</span>
                 )}
               </div>
-              <Link to={`/gaps/${r.gap.id}`} className="btn alert sm block">Fill this slot</Link>
+              <Link to={`/app/gaps/${r.gap.id}`} className="btn alert sm block">Fill this slot</Link>
             </div>
           </div>
         ) : (

@@ -1,4 +1,5 @@
 import { countryFromE164, getCountry } from './countries';
+import { findCardData, mayContainPan } from './cardscan';
 
 export const now = () => Math.floor(Date.now() / 1000);
 
@@ -47,16 +48,55 @@ export class HttpError extends Error {
   }
 }
 
-export const json = (data: unknown, status = 200, headers: HeadersInit = {}) =>
-  new Response(JSON.stringify(data), {
+/**
+ * The last gate a card number would have to pass to reach a browser.
+ *
+ * Every JSON response in the product is built here, which is the only reason
+ * this is worth doing at all: a check on one endpoint is a check somebody has
+ * to remember, and this one cannot be forgotten by a route that has not been
+ * written yet. It is the third of the three guards described in
+ * ./payments.ts — ingress, storage, egress — and the only one that would catch
+ * a value that got into the database before any of them existed.
+ *
+ * Two stages, because this runs on every response and the fast one has to be
+ * fast: a single regex pass over the string JSON.stringify has already
+ * produced, and only on a hit does the full field-aware walk run to tell a
+ * card apart from a long phone number. In the ordinary case that is one regex
+ * over a string that had to be built anyway.
+ *
+ * A hit is a 500 and not a redaction. Quietly masking it would leave whatever
+ * put a PAN in the database sitting there, working, with nobody told.
+ */
+export const json = (data: unknown, status = 200, headers: HeadersInit = {}) => {
+  const serialised = JSON.stringify(data);
+  if (serialised !== undefined && mayContainPan(serialised)) {
+    const hit = findCardData(data);
+    if (hit) {
+      // The path, never the value: a log line holding the card would be the
+      // same leak in a different place.
+      console.error(`card data blocked from a response: ${hit.kind} at ${hit.path}`);
+      return new Response(
+        JSON.stringify({
+          error: 'Something went wrong.', code: 'card_data_blocked',
+        }),
+        { status: 500, headers: { 'content-type': 'application/json; charset=utf-8' } },
+      );
+    }
+  }
+  return new Response(serialised, {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8', ...headers },
   });
+};
 
-export const html = (body: string, status = 200) =>
+export const html = (body: string, status = 200, headers: HeadersInit = {}) =>
   new Response(body, {
     status,
-    headers: { 'content-type': 'text/html; charset=utf-8', 'referrer-policy': 'no-referrer' },
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'referrer-policy': 'no-referrer',
+      ...headers,
+    },
   });
 
 export const badRequest = (m: string, code?: string) => new HttpError(400, m, code);

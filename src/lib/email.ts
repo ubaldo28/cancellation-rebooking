@@ -1,4 +1,5 @@
 import type { Env } from '../types';
+import { timingSafeEqual } from './util';
 
 /**
  * Transactional email.
@@ -93,7 +94,11 @@ export function mayEchoSignInLink(env: Env, presentedToken: string | null): bool
   const debugToken = env.AUTH_DEBUG_TOKEN;
   if (!debugToken || !presentedToken) return false;
   if (debugToken.length < 16) return false;         // refuse a guessable token
-  if (presentedToken !== debugToken) return false;
+  // Constant time: `!==` on a secret returns as soon as it finds a differing
+  // byte, so the time it takes to say no measures how much of the token the
+  // caller already has, and a caller who can measure that can extend a guess
+  // one character at a time until it is the whole secret.
+  if (!timingSafeEqual(presentedToken, debugToken)) return false;
 
   let host: string;
   try { host = new URL(env.APP_URL).hostname; } catch { return false; }

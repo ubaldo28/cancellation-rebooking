@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, lateLabel, shortDate, type Client, type Service } from '../api';
 import { useOperator } from '../App';
+import Sheet from '../components/Sheet';
 import { Empty, ErrorNote, Icon, Spinner, initials } from '../components/ui';
+import { useDocumentTitle } from '../lib/title';
 
 type Filter = 'late' | 'all' | 'no_consent';
 
 export default function Clients() {
+  useDocumentTitle('Clients');
   const op = useOperator();
   const [filter, setFilter] = useState<Filter>('late');
   const [clients, setClients] = useState<Client[]>([]);
@@ -121,7 +124,7 @@ const Tab = ({ on, onClick, children }: {
 }) => (
   <button onClick={onClick} className="chip"
     style={{
-      minHeight: 36, padding: '8px 14px', cursor: 'pointer', border: 0,
+      minHeight: 44, padding: '0 14px', cursor: 'pointer', border: 0,
       background: on ? 'var(--ink)' : 'var(--surface)',
       color: on ? '#fff' : 'var(--muted)',
       boxShadow: on ? 'none' : 'inset 0 0 0 1px var(--line)',
@@ -164,21 +167,8 @@ function AddClient({ services, onClose, onDone }: {
   }
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(28,26,23,0.4)',
-      display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50,
-    }} onClick={onClose}>
-      <form className="stack" onClick={(e) => e.stopPropagation()} onSubmit={submit}
-        style={{
-          background: 'var(--bg)', width: '100%', maxWidth: 520,
-          borderRadius: '16px 16px 0 0', padding: 20,
-          maxHeight: '90vh', overflowY: 'auto',
-        }}>
-        <div className="spread">
-          <h2>Add a client</h2>
-          <button type="button" className="btn quiet sm" onClick={onClose}>Close</button>
-        </div>
-
+    <Sheet title="Add a client" onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
         {error && <div className="error">{error}</div>}
 
         <div className="field-row">
@@ -225,6 +215,6 @@ function AddClient({ services, onClose, onDone }: {
           {busy ? 'Saving…' : 'Add client'}
         </button>
       </form>
-    </div>
+    </Sheet>
   );
 }

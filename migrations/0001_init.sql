@@ -107,6 +107,14 @@ CREATE INDEX        idx_sessions_operator ON sessions (operator_id, expires_at);
 
 -- ---------------------------------------------------------------------------
 -- 3. Locations — for premises and hybrid operators
+--
+-- NOTHING IN THE APP CREATES A ROW HERE YET. Every operator shipped so far is
+-- mobile, and postOpening is the only code that touches this table: it checks
+-- that a location_id handed to it belongs to the caller. So `is_primary` and
+-- its unique index are unreachable rather than broken — there is no second
+-- location to be primary among. Left in place because the premises case is the
+-- reason the table exists and dropping a column costs a migration against a
+-- live database; do not read the index as evidence that the feature works.
 -- ---------------------------------------------------------------------------
 CREATE TABLE locations (
   id           TEXT PRIMARY KEY,
@@ -167,6 +175,12 @@ CREATE TABLE services (
   max_duration_seconds  INTEGER,
 
   price_cents           INTEGER NOT NULL DEFAULT 0,
+  -- "from $60" rather than "$60". NOT WIRED: nothing writes this and nothing
+  -- reads it, so every price in the product is shown as an exact figure. That
+  -- is the honest reading of the data as it stands — a price marked "from"
+  -- while the checkout charges the flat number would be worse than not having
+  -- the flag at all. Building it means the operator's price form, the public
+  -- pages, the SSR pages in seo.ts and the cost guides all changing together.
   is_price_from         INTEGER NOT NULL DEFAULT 0 CHECK (is_price_from IN (0,1)),
 
   -- NULL cadence = non-recurring (break-fix). Drives the overdue list.
@@ -310,6 +324,10 @@ CREATE TABLE appointments (
                    CHECK (source IN ('manual','import','gap_fill','online')),
   filled_offer_id TEXT,      -- integrity enforced in the Worker (circular FK)
 
+  -- The id this appointment carries in whatever system it was imported from,
+  -- and the unique index below is what makes re-running an import idempotent.
+  -- NOT WIRED: source = 'import' is in the CHECK above but no importer exists,
+  -- so this is always NULL today.
   external_id    TEXT,
   notes          TEXT,
   created_at     INTEGER NOT NULL,

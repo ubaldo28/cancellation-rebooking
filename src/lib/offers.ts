@@ -211,7 +211,12 @@ export async function acceptOffer(env: Env, raw: string) {
   if (offer.expires_at != null && offer.expires_at <= t) {
     throw conflict('This offer has expired.', 'offer_expired');
   }
-  if (offer.gap_status === 'filled') {
+  // Any status but 'open' or 'offering' means the opening is gone, not only
+  // 'filled'. An 'expired' gap — withdrawn by the operator, or dropped by a
+  // detection pass because the calendar filled up another way — used to sail
+  // through this check and still book an appointment on top of whatever now
+  // occupies that hour.
+  if (!['open', 'offering'].includes(offer.gap_status)) {
     throw conflict('Sorry — that slot has just been taken.', 'slot_taken');
   }
   if (offer.starts_at <= t) {
@@ -227,16 +232,23 @@ export async function acceptOffer(env: Env, raw: string) {
         WHERE id=? AND status IN ('sent','delivered','viewed','queued')`,
     ).bind(t, t, offer.offer_id),
 
+    // Conditional on the opening still being for sale, so a lost race writes
+    // no appointment at all rather than one this function then has to
+    // apologise for. The batch is a transaction, but a transaction commits
+    // what its statements matched — an unguarded INSERT inside it still lands.
     env.DB.prepare(
       `INSERT INTO appointments
          (id, operator_id, client_id, service_id, lead_id, starts_at, ends_at,
           is_mobile, address_line, postcode, lat, lng, status, price_cents,
           source, filled_offer_id, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'scheduled', ?, 'gap_fill', ?, ?, ?)`,
+       SELECT ?,?,?,?,?,?,?,?,?,?,?,?, 'scheduled', ?, 'gap_fill', ?, ?, ?
+        WHERE EXISTS (SELECT 1 FROM gaps
+                       WHERE id = ? AND status IN ('open','offering'))`,
     ).bind(
       apptId, offer.operator_id, offer.client_id, offer.service_id, offer.lead_id,
       offer.starts_at, endsAt, 1, offer.address_line, offer.postcode,
       offer.lat, offer.lng, offer.quoted_price_cents, offer.offer_id, t, t,
+      offer.gap_id,
     ),
 
     env.DB.prepare(
@@ -258,7 +270,12 @@ export async function acceptOffer(env: Env, raw: string) {
 
   try {
     const res = await env.DB.batch(statements);
-    if ((res[0]?.meta.changes ?? 0) === 0) {
+    // Both guards, not just the offer's. The gap read above is a separate round
+    // trip, so the opening can be filled or withdrawn between it and this
+    // batch; the appointment INSERT sits between the two guarded statements and
+    // is not itself conditional, so without this check the loser of that race
+    // walks away with an appointment on an hour somebody else already has.
+    if ((res[0]?.meta.changes ?? 0) === 0 || (res[2]?.meta.changes ?? 0) === 0) {
       throw conflict('Sorry — that slot has just been taken.', 'slot_taken');
     }
   } catch (err) {

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Slotfill">
+  <rect width="512" height="512" rx="112" fill="#0d1117"/>
+  <circle cx="256" cy="222" r="74" fill="#16e08e"/>
+  <path d="M256 96c-70 0-126 56-126 126 0 92 108 190 121 201a8 8 0 0 0 10 0c13-11 121-109 121-201 0-70-56-126-126-126Zm0 178a52 52 0 1 1 0-104 52 52 0 0 1 0 104Z" fill="#16e08e" opacity=".35"/>
+</svg>

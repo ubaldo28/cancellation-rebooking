@@ -1,0 +1,763 @@
+/*
+ * The trade landing page and the cost guide.
+ *
+ * These two pages are the ones a stranger arrives on from a search engine, so
+ * they are built the way the profile and category pages are: white ground,
+ * generous space, hairline rules between things somebody has to tell apart,
+ * and the single green accent used only where something is live or actionable.
+ * There is no ornament here at all. A person who lands on "what does a mobile
+ * car wash cost" wants a number and a reason to trust it; every pixel spent on
+ * decoration is a pixel spent between them and that.
+ *
+ * Both pages reuse the shared shell from styles.css -- .land, .topbar, .main,
+ * .btn -- and the listing reuses .slot-grid / .slot-card unchanged, so an
+ * appointment card here is byte-for-byte the same object as one on the front
+ * page. That is deliberate: the two pages must not look like two products.
+ *
+ * Everything below is prefixed .tr- so it cannot collide with the category or
+ * profile stylesheets, which are loaded on other routes but share a document.
+ */
+
+/* Wider than the category page (640px) because this one carries a card grid,
+   and narrower than the landing page because it is still mostly prose. */
+.tr-page { max-width: 900px; }
+
+/* --------------------------------------------------------------------------
+ * Head
+ * ----------------------------------------------------------------------- */
+.tr-head { padding-bottom: 20px; }
+
+/*
+ * The counted line above the heading.
+ *
+ * The reference marketplace prints this as a heading of its own standing above
+ * the page title, which reads well and leaves the document with an h2 before
+ * its h1. This is a paragraph in the same position: identical to look at, and
+ * it leaves no hole in the outline. Small and green so it reads as evidence
+ * rather than as the first half of the title.
+ */
+.tr-eyebrow {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.tr-head h1 {
+  font-size: clamp(26px, 4.4vw, 34px);
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+}
+
+/* The place name is the one word in the heading that changes once a postcode
+   is in, so it is marked rather than left to be re-read. */
+.tr-head h1 em { font-style: normal; color: var(--accent-ink); }
+
+.tr-sub {
+  margin: 12px 0 0;
+  max-width: 56ch;
+  font-size: 15.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* --------------------------------------------------------------------------
+ * The stat line
+ *
+ * Three counts, and nothing here is written down anywhere -- every figure is
+ * counted from the rows the page is about to render, so none of it can go
+ * stale or be wrong. The row sits on rules top and bottom because it is the
+ * page's evidence and it should read as a separate register from the prose.
+ * ----------------------------------------------------------------------- */
+.tr-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 34px;
+  margin: 22px 0 0;
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.tr-stat { display: grid; gap: 2px; }
+
+.tr-stat b {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.tr-stat span { font-size: 13px; color: var(--muted); }
+
+/* --------------------------------------------------------------------------
+ * Postcode
+ *
+ * One pill: the field and the button share a rounded container so it reads as
+ * a search rather than a form to be filled in. Same behaviour as the front
+ * page's finder, restyled for a white ground instead of the dark hero.
+ * ----------------------------------------------------------------------- */
+.tr-find { margin: 22px 0 0; }
+
+.tr-find-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.tr-finder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 430px;
+  padding: 5px 6px 5px 14px;
+  background: var(--surface);
+  border: 1px solid var(--control-line);
+  border-radius: 999px;
+}
+
+/* The field inside drops its own outline further down, so the pill carries the
+   indicator. A border recolour on its own was the only thing marking focus
+   here, and swapping one mid-tone hairline for another is not something a
+   keyboard user can be expected to spot. */
+.tr-finder:focus-within {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+.tr-finder-pin { display: inline-flex; color: var(--faint); flex: 0 0 auto; }
+
+.tr-finder input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  padding: 12px 0;
+}
+
+.tr-finder input:focus { outline: none; }
+
+.tr-finder button {
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tr-finder button:hover:not(:disabled) { background: var(--accent-ink); }
+.tr-finder button:disabled { background: var(--line-strong); color: var(--surface); cursor: default; }
+
+/* Where we decided they are, and the way back out of that decision. */
+.tr-located {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.tr-located button {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.tr-warn { margin: 10px 0 0; font-size: 14px; color: var(--alert); }
+
+/* --------------------------------------------------------------------------
+ * Sections
+ * ----------------------------------------------------------------------- */
+.tr-sec { margin-top: 40px; }
+
+.tr-sec > h2 {
+  font-size: 21px;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+  margin-bottom: 4px;
+}
+
+.tr-sec-sub {
+  margin: 0 0 18px;
+  max-width: 60ch;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------------------------
+ * Nothing open
+ *
+ * A trade with nothing listed is ordinary traffic, not an error: openings only
+ * exist because a job cancelled, so a trade can be empty all morning and full
+ * by the afternoon. It gets a sentence and something to do, and it never gets
+ * a fabricated listing to fill the space.
+ * ----------------------------------------------------------------------- */
+.tr-empty {
+  padding: 26px 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+/* Two ranks, one size. The empty state inside a section is an h2 under that
+   section's own h2; the "we do not have this trade" branch is an h1, because
+   there that box IS the page and a document whose first heading is an h2 has
+   a level missing. The element states the rank, this rule states the scale,
+   and the box looks the same either way. */
+.tr-empty h1,
+.tr-empty h2 { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
+
+.tr-empty p {
+  margin: 10px 0 18px;
+  max-width: 54ch;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.tr-empty-do { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* --------------------------------------------------------------------------
+ * FAQs
+ *
+ * <details> rather than a scripted accordion: it opens without JavaScript, it
+ * is already in the accessibility tree as a disclosure, and the browser's own
+ * find-in-page can open it. The marker is replaced with a sign that flips,
+ * because the default triangle sits at a different size in every engine.
+ * ----------------------------------------------------------------------- */
+.tr-faq { border-top: 1px solid var(--line); }
+
+.tr-q { border-bottom: 1px solid var(--line); }
+
+.tr-q > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 60px;
+  padding: 16px 4px;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  cursor: pointer;
+  list-style: none;
+}
+
+.tr-q > summary::-webkit-details-marker { display: none; }
+
+.tr-q > summary::after {
+  content: '+';
+  flex: 0 0 auto;
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--faint);
+}
+
+.tr-q[open] > summary::after { content: '–'; }
+
+.tr-q > summary:hover { color: var(--accent-ink); }
+
+.tr-q > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+.tr-a {
+  margin: 0;
+  padding: 0 4px 20px;
+  max-width: 62ch;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--ink-3);
+}
+
+/* --------------------------------------------------------------------------
+ * The cost guide's integrity note
+ *
+ * This is the most important sentence on the cost guide and the only reason
+ * that page is allowed to exist: it says the figures are what businesses here
+ * are asking today, not a national survey we do not have. It is set apart so
+ * it cannot be skimmed past with the prose.
+ * ----------------------------------------------------------------------- */
+.tr-note {
+  margin: 22px 0 0;
+  padding: 16px 18px;
+  border: 1px solid var(--accent-line);
+  border-left-width: 4px;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  max-width: 64ch;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* --------------------------------------------------------------------------
+ * Cost guide: the pinned price banner
+ *
+ * The range and what it is for, kept in view while the page is read. It pins
+ * itself only from 760px up, which is where styles-shell.css puts the site
+ * bar's search back on the first row and the bar becomes one row of known
+ * height (14px + 44px + 14px + a hairline). Below that the bar wraps to two
+ * rows whose height depends on what is in it, and a banner pinned under a
+ * moving target would end up sitting over the page's own words on the screen
+ * with the least room to spare -- so on a phone it is an ordinary block at the
+ * top of the page and scrolls away like everything else.
+ *
+ * It holds no link, button or field, so there is nothing in it for the
+ * keyboard to land on or get caught in.
+ * ----------------------------------------------------------------------- */
+.tr-pricebar {
+  margin: 0 0 4px;
+  padding: 10px 0;
+  background: var(--bg);
+}
+
+.tr-pricebar-in {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 11px 16px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+}
+
+.tr-pricebar-in b {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.tr-pricebar-mid {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--accent-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The last part is the sentence that keeps the two numbers honest -- how many
+   listings they came from and whose they are -- so it wraps to its own line
+   rather than being cut off. */
+.tr-pricebar-where {
+  flex: 1 1 100%;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+@media (min-width: 760px) {
+  .tr-pricebar {
+    position: sticky;
+    /* Clear of the one-row site bar (73px) with a couple of pixels to spare.
+       The map column in styles.css pins itself the same way. */
+    top: 73px;
+    z-index: 5;
+  }
+
+  .tr-pricebar-where { flex: 0 1 auto; }
+}
+
+/* The banner covers the top of the page while it is pinned, so anything the
+   contents list jumps to has to stop below it rather than under it. */
+@media (min-width: 760px) {
+  /* The site bar (73px) plus the banner's own height with its label wrapped
+     to a second line, plus a little air. Measured rather than guessed: the
+     contents list jumps to these headings and a heading that lands underneath
+     the banner is a link that appears not to have worked. */
+  .tr-page :where(h2, h3)[id] { scroll-margin-top: 200px; }
+}
+
+/*
+ * Where the reference marketplace prints an author and a date.
+ *
+ * Nobody edits this page, so there is no date to print. This says the true
+ * version of the same thing and is styled as the quiet aside it is.
+ */
+.tr-asof {
+  margin: 10px 0 0;
+  max-width: 60ch;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------------------------
+ * Cost guide: the contents list
+ *
+ * A <nav> with a heading, so it is a landmark somebody can jump to rather than
+ * a list of links floating in the middle of the page. The links are 44px tall
+ * for the same reason every other run of text links here is.
+ * ----------------------------------------------------------------------- */
+.tr-toc ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+}
+
+.tr-toc a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 10px;
+  font-size: 14.5px;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.tr-toc a:hover { color: var(--accent-ink); }
+
+/* --------------------------------------------------------------------------
+ * Cost guide: how booking one works
+ *
+ * A real <ol>, because these are three steps in an order, and the number is
+ * the list's own rather than a character typed into the markup.
+ * ----------------------------------------------------------------------- */
+.tr-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: step;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.tr-steps li {
+  counter-increment: step;
+  display: grid;
+  gap: 5px;
+}
+
+.tr-steps li h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* The number is decoration in front of a heading whose list already carries
+   the order, so it is drawn by CSS rather than typed into the words. */
+.tr-steps li h3::before {
+  content: counter(step);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 700;
+  vertical-align: 2px;
+}
+
+.tr-steps li span { font-size: 14.5px; line-height: 1.6; color: var(--ink-3); }
+
+/* A heading inside a section that already has one -- the neighbourhood list
+   under "Find X near you". Smaller than the section heading and bigger than
+   the prose, so the outline reads the way the markup says it does. */
+.tr-sub-h {
+  margin: 26px 0 12px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* --------------------------------------------------------------------------
+ * Cost guide: the three headline prices
+ * ----------------------------------------------------------------------- */
+.tr-prices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.tr-price {
+  display: grid;
+  gap: 4px;
+  padding: 20px 18px;
+  background: var(--surface);
+}
+
+.tr-price b {
+  font-size: clamp(24px, 4vw, 30px);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+
+/* The middle figure is the one a reader should carry away, so it is the only
+   one wearing the accent. */
+.tr-price.mid b { color: var(--accent-ink); }
+
+.tr-price span { font-size: 13px; color: var(--muted); }
+
+/* --------------------------------------------------------------------------
+ * Cost guide: every listed service
+ *
+ * A real table, because it is real tabular data and a screen reader should be
+ * told so. It scrolls inside itself on a phone rather than pushing the page
+ * sideways.
+ * ----------------------------------------------------------------------- */
+.tr-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+.tr-table {
+  width: 100%;
+  min-width: 460px;
+  border-collapse: collapse;
+  font-size: 14.5px;
+}
+
+.tr-table th,
+.tr-table td {
+  text-align: left;
+  padding: 13px 12px 13px 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.tr-table thead th {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-top: 0;
+}
+
+.tr-table td.tr-num,
+.tr-table th.tr-num {
+  text-align: right;
+  padding-right: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tr-table td.tr-num { font-weight: 700; }
+
+.tr-svc-n { display: block; margin-top: 3px; font-size: 12.5px; color: var(--muted); font-weight: 400; }
+
+/* --------------------------------------------------------------------------
+ * What changes the price
+ * ----------------------------------------------------------------------- */
+.tr-drivers { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+
+.tr-driver h3 { margin: 0 0 6px; font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
+
+.tr-driver p { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--ink-3); }
+
+/* A driver is a short essay now rather than one sentence, and paragraphs that
+   touch read as one wall. Only the gap between them is set here; the first
+   paragraph keeps sitting tight under its heading. */
+.tr-driver p + p { margin-top: 11px; }
+
+/* --------------------------------------------------------------------------
+ * The cross-link to the other page of the pair
+ *
+ * A whole-row link, the way the category rows are, so a thumb aimed anywhere
+ * inside it lands on the target.
+ * ----------------------------------------------------------------------- */
+.tr-cross {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 34px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: inherit;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.tr-cross:hover { color: inherit; border-color: var(--line-strong); box-shadow: var(--lift-2); }
+
+.tr-cross-t { display: grid; gap: 3px; min-width: 0; }
+
+.tr-cross-t b { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
+
+.tr-cross-t span { font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+
+.tr-cross-go { flex: 0 0 auto; font-size: 20px; color: var(--faint); }
+
+/* --------------------------------------------------------------------------
+ * A grid of counted tiles
+ *
+ * Used three times over now — the neighbourhoods this trade is open in, the
+ * related cost guides, and the trades with the most open — because all three
+ * are the same object: a name, a number counted from the rows in hand, and a
+ * link somewhere narrower. It is a grid rather than the wrapped run of text
+ * links used for sibling trades below. Those are an escape hatch for somebody
+ * who took a wrong turn and are meant to read as an afterthought; these are a
+ * real onward step, and each carries a count that has to line up with the
+ * counts beside it to be worth reading at all. A tile also makes the whole row
+ * the hit area, which the text links only manage by being 48px tall.
+ * ----------------------------------------------------------------------- */
+.tr-areas,
+.tr-tiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+/* The count sits under the name rather than beside it. Side by side, a
+   two-word neighbourhood — Sherman Oaks, Woodland Hills — wrapped inside a
+   220px tile and left the row of tiles at three different heights, which is
+   the one thing a grid of counts must not do: the whole point of laying them
+   out together is that they can be compared at a glance. */
+.tr-areas a,
+.tr-tiles a {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  /* The same floor the category rows use: this is a phone target first. */
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.tr-areas a:hover,
+.tr-tiles a:hover { border-color: var(--line-strong); color: var(--accent-ink); }
+
+.tr-area-name,
+.tr-tile-name {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* The count is the evidence, so it is quiet but never cut: a tile that says
+   "Sherman Oaks" and then trails off has lost the only fact on it. */
+.tr-area-n,
+.tr-tile-n {
+  font-size: 12.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tr-areas-foot,
+.tr-sec-foot { margin: 14px 0 0; font-size: 13.5px; }
+
+.tr-areas-foot a,
+.tr-sec-foot a { color: var(--accent-ink); text-underline-offset: 3px; }
+
+/* --------------------------------------------------------------------------
+ * The other trades in this category
+ * ----------------------------------------------------------------------- */
+.tr-else {
+  border-top: 1px solid var(--line);
+  padding-top: 24px;
+  margin-top: 40px;
+}
+
+.tr-else > h2 { margin: 0 0 8px; font-size: 16px; letter-spacing: -0.01em; }
+
+.tr-else-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+/* 48px tall even though these read as plain text links: they are the escape
+   hatch for somebody who landed on the wrong trade, and a fiddly tap target is
+   the last thing that person needs. */
+.tr-else-list a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: 0 10px;
+  font-size: 15px;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.tr-else-list a:hover { color: var(--accent); }
+
+.tr-n { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* --------------------------------------------------------------------------
+ * Foot
+ * ----------------------------------------------------------------------- */
+.tr-foot {
+  border-top: 1px solid var(--line);
+  margin-top: 44px;
+  padding: 22px 0 40px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.tr-foot p { margin: 0 0 6px; max-width: 62ch; }
+
+/* --------------------------------------------------------------------------
+ * Phone
+ * ----------------------------------------------------------------------- */
+@media (max-width: 560px) {
+  .tr-stats { gap: 16px 26px; }
+  .tr-stat b { font-size: 21px; }
+  .tr-finder { max-width: none; }
+  .tr-sec { margin-top: 32px; }
+  .tr-empty { padding: 22px 18px; }
+  .tr-empty-do .btn { width: 100%; }
+}
+
+/* Same as every other sheet here: nothing on these two pages needs to move
+   for them to work, and the cross-link card was the one rule left animating. */
+@media (prefers-reduced-motion: reduce) {
+  .tr-cross { transition: none; }
+}

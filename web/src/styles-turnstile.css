@@ -1,0 +1,22 @@
+/* The Turnstile field.
+   Deliberately almost nothing: the widget draws itself inside an iframe whose
+   dimensions Cloudflare owns, so any rule here that tried to lay it out would
+   be fighting a box it cannot see into. What is left is the space around it
+   and the note underneath. */
+.turnstile { margin: 4px 0 2px; }
+
+/* The note is a live region, which is why it is in the document even when it
+   has nothing to say rather than being conditionally rendered: a region that
+   appears at the same instant it gets its text is often not announced, because
+   the browser has nothing to notice a change against. Empty, with no margin
+   above and no content, it occupies nothing — so there is no hole under the
+   widget on the ordinary path where the check simply passes.
+
+   No `:empty { display: none }` for the same reason. Hiding it would take it
+   back out of the accessibility tree between announcements and put us exactly
+   where the always-present version was written to avoid. */
+.turnstile-note {
+  margin: 0; font-size: 12.5px; line-height: 1.45;
+  color: var(--alert); font-weight: 550;
+}
+.turnstile-note:not(:empty) { margin-top: 8px; }

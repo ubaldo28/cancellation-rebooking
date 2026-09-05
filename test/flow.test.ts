@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { makeEnv } from './d1';
+import { ALL_MIGRATIONS, makeEnv } from './d1';
 import type { Env, Operator } from '../src/types';
 import { detectGaps } from '../src/lib/gaps';
 import { lateLabel, rankCandidates, type GapRow } from '../src/lib/rank';
@@ -9,11 +9,8 @@ import { pickLang, STOP_WORDS, START_WORDS } from '../src/lib/messages';
 import { buildMessage } from '../src/lib/offers';
 import { newId, now, toE164 } from '../src/lib/util';
 
-const MIGRATION = [
-  new URL('../migrations/0001_init.sql', import.meta.url).pathname,
-  new URL('../migrations/0005_language.sql', import.meta.url).pathname,
-];
-const TZ = 'Europe/London';
+const MIGRATION = ALL_MIGRATIONS;
+const TZ = 'America/Los_Angeles';
 
 let env: Env;
 let op: Operator;
@@ -30,9 +27,9 @@ async function seed(opts: Partial<Operator> = {}) {
        discount_percent,plan,created_at,updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).bind(
-    id, 'a@x.com', 'Shine Mobile', TZ, 'GB', 'GBP',
+    id, 'a@x.com', 'Shine Mobile', TZ, 'US', 'USD',
     opts.location_mode ?? 'mobile', opts.fill_model ?? 'both', 'device',
-    51.5074, -0.1278,
+    34.0522, -118.2437,
     opts.min_gap_seconds ?? 3600, opts.max_detour_seconds ?? 900, opts.buffer_seconds ?? 900,
     5400, 3, opts.min_notice_seconds ?? 3600, 604800, 0, 'active', t, t,
   ).run();
@@ -104,13 +101,48 @@ async function openGap(): Promise<GapRow> {
   return rows.results![0]!;
 }
 
+describe('an empty day is not a gap to fill', () => {
+  it('flags a day with no jobs, and does not flag a hole between jobs', async () => {
+    await seed();
+    // One working day with two jobs and a real hole between them. Every other
+    // day in range stays empty, which is the case being separated out.
+    const dayStart = futureLocal(9);
+    await addAppt(dayStart, dayStart + 2 * 3600, 34.0548, -118.2378);
+    await addAppt(dayStart + 6 * 3600, dayStart + 8 * 3600, 34.0648, -118.2454);
+
+    await detectGaps(env, op, now(), 7);
+    const rows = await env.DB.prepare(
+      `SELECT starts_at, ends_at, fills_whole_day FROM gaps
+        WHERE operator_id = ? AND status = 'open' ORDER BY starts_at`,
+    ).bind(op.id).all<{ starts_at: number; ends_at: number; fills_whole_day: number }>();
+
+    const all = rows.results ?? [];
+    const holes = all.filter((r) => r.fills_whole_day === 0);
+    const emptyDays = all.filter((r) => r.fills_whole_day === 1);
+
+    expect(holes.length).toBeGreaterThan(0);
+    expect(emptyDays.length).toBeGreaterThan(0);
+
+    // The hole sits inside the day that has jobs, and never spans the whole
+    // 09:00-17:00 window.
+    for (const h of holes) {
+      expect(h.starts_at).toBeGreaterThanOrEqual(dayStart);
+      expect(h.ends_at - h.starts_at).toBeLessThan(8 * 3600);
+    }
+    // No flagged day overlaps the day that has jobs.
+    for (const e of emptyDays) {
+      expect(e.starts_at >= dayStart + 8 * 3600 || e.ends_at <= dayStart).toBe(true);
+    }
+  });
+});
+
 describe('gap detection', () => {
   beforeEach(async () => { await seed(); });
 
   it('finds the hole between two jobs, with buffers applied', async () => {
     const nine = futureLocal(9);
-    await addAppt(nine, nine + 3600, 51.50, -0.12);              // 09:00–10:00
-    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 51.52, -0.10); // 15:00–16:00
+    await addAppt(nine, nine + 3600, 34.0448, -118.2378);              // 09:00–10:00
+    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0648, -118.2228); // 15:00–16:00
 
     const res = await detectGaps(env, op, nine, 1);
     expect(res.created).toBeGreaterThan(0);
@@ -123,15 +155,15 @@ describe('gap detection', () => {
     // 10:00 job end + 15 min buffer = 10:15 ; 15:00 job start - 15 min = 14:45
     expect(mid!.starts_at).toBe(nine + 3600 + 900);
     expect(mid!.ends_at).toBe(nine + 6 * 3600 - 900);
-    expect(mid!.prev_lat).toBeCloseTo(51.50, 4);
-    expect(mid!.next_lat).toBeCloseTo(51.52, 4);
+    expect(mid!.prev_lat).toBeCloseTo(34.0448, 4);
+    expect(mid!.next_lat).toBeCloseTo(34.0648, 4);
     expect(mid!.baseline_drive_seconds).toBeGreaterThan(0);
   });
 
   it('ignores holes shorter than min_gap_seconds', async () => {
     const nine = futureLocal(9);
-    await addAppt(nine, nine + 3600, 51.5, -0.12);
-    await addAppt(nine + 4600, nine + 8200, 51.5, -0.12);   // only ~17 min apart
+    await addAppt(nine, nine + 3600, 34.0448, -118.2378);
+    await addAppt(nine + 4600, nine + 8200, 34.0448, -118.2378);   // only ~17 min apart
     await detectGaps(env, op, nine, 1);
     const gaps = await env.DB.prepare(
       `SELECT * FROM gaps WHERE operator_id=? AND starts_at > ? AND ends_at < ?`,
@@ -141,7 +173,7 @@ describe('gap detection', () => {
 
   it('is idempotent — re-running does not duplicate gaps', async () => {
     const nine = futureLocal(9);
-    await addAppt(nine, nine + 3600, 51.5, -0.12);
+    await addAppt(nine, nine + 3600, 34.0448, -118.2378);
     await detectGaps(env, op, nine, 3);
     const first = await env.DB.prepare(`SELECT COUNT(*) AS n FROM gaps`).first<{ n: number }>();
     await detectGaps(env, op, nine, 3);
@@ -173,10 +205,10 @@ describe('candidate ranking', () => {
 
   it('prefers the nearby overdue client over the distant one', async () => {
     const nine = futureLocal(9);
-    await addAppt(nine, nine + 3600, 51.5074, -0.1278);
-    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 51.5100, -0.1200);
-    await addClient({ id: 'near', name: 'Nina', phone: '+447700900001', lat: 51.5090, lng: -0.1240, dueDaysAgo: 10 });
-    await addClient({ id: 'far', name: 'Fred', phone: '+447700900002', lat: 51.7000, lng: -0.4000, dueDaysAgo: 40 });
+    await addAppt(nine, nine + 3600, 34.0522, -118.2437);
+    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
+    await addClient({ id: 'near', name: 'Nina', phone: '+18185550001', lat: 34.0538, lng: -118.2408, dueDaysAgo: 10 });
+    await addClient({ id: 'far', name: 'Fred', phone: '+18185550002', lat: 34.2448, lng: -118.4482, dueDaysAgo: 40 });
 
     await detectGaps(env, op, nine, 1);
     const gap = await openGap();
@@ -191,15 +223,15 @@ describe('candidate ranking', () => {
 
   it('excludes clients without consent, opted out, or already booked', async () => {
     const nine = futureLocal(9);
-    await addAppt(nine, nine + 3600, 51.5074, -0.1278);
-    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 51.5100, -0.1200);
+    await addAppt(nine, nine + 3600, 34.0522, -118.2437);
+    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
 
-    await addClient({ id: 'ok', name: 'Ok', phone: '+447700900010', lat: 51.509, lng: -0.124, dueDaysAgo: 5 });
-    await addClient({ id: 'noconsent', name: 'No', phone: '+447700900011', lat: 51.509, lng: -0.124, dueDaysAgo: 5, consent: false });
-    await addClient({ id: 'optout', name: 'Out', phone: '+447700900012', lat: 51.509, lng: -0.124, dueDaysAgo: 5 });
+    await addClient({ id: 'ok', name: 'Ok', phone: '+18185550010', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5 });
+    await addClient({ id: 'noconsent', name: 'No', phone: '+18185550011', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5, consent: false });
+    await addClient({ id: 'optout', name: 'Out', phone: '+18185550012', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5 });
     await env.DB.prepare(`UPDATE clients SET opted_out_at=? WHERE id='optout'`).bind(now()).run();
-    await addClient({ id: 'booked', name: 'Booked', phone: '+447700900013', lat: 51.509, lng: -0.124, dueDaysAgo: 5 });
-    await addAppt(nine + 30 * 86400, nine + 30 * 86400 + 3600, 51.509, -0.124, 'booked');
+    await addClient({ id: 'booked', name: 'Booked', phone: '+18185550013', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5 });
+    await addAppt(nine + 30 * 86400, nine + 30 * 86400 + 3600, 34.0538, -118.2408, 'booked');
 
     await detectGaps(env, op, nine, 1);
     const ranked = await rankCandidates(env, op, await openGap());
@@ -212,9 +244,9 @@ describe('candidate ranking', () => {
 
   it('drops candidates whose job plus travel will not fit the gap', async () => {
     const nine = futureLocal(9);
-    await addAppt(nine, nine + 3600, 51.5074, -0.1278);
-    await addAppt(nine + 3600 + 900 + 5400 + 900, nine + 3600 + 900 + 5400 + 1800, 51.5074, -0.1278);
-    await addClient({ id: 'toolong', name: 'Long', phone: '+447700900020', lat: 51.5074, lng: -0.1278, dueDaysAgo: 5 });
+    await addAppt(nine, nine + 3600, 34.0522, -118.2437);
+    await addAppt(nine + 3600 + 900 + 5400 + 900, nine + 3600 + 900 + 5400 + 1800, 34.0522, -118.2437);
+    await addClient({ id: 'toolong', name: 'Long', phone: '+18185550020', lat: 34.0522, lng: -118.2437, dueDaysAgo: 5 });
     await detectGaps(env, op, nine, 1);
     const gap = await openGap();
     const ranked = await rankCandidates(env, op, gap);
@@ -224,9 +256,9 @@ describe('candidate ranking', () => {
 
   it('surfaces open job leads for break-fix trades', async () => {
     const nine = futureLocal(9);
-    await addAppt(nine, nine + 3600, 51.5074, -0.1278);
-    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 51.5100, -0.1200);
-    await addClient({ id: 'lead_client', name: 'Priya', phone: '+447700900030', lat: 51.509, lng: -0.124 });
+    await addAppt(nine, nine + 3600, 34.0522, -118.2437);
+    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
+    await addClient({ id: 'lead_client', name: 'Priya', phone: '+18185550030', lat: 34.0538, lng: -118.2408 });
 
     await env.DB.prepare(
       `INSERT INTO job_leads (id,operator_id,client_id,service_id,title,quoted_price_cents,
@@ -243,9 +275,9 @@ describe('candidate ranking', () => {
 
   it('hides leads that are waiting on parts', async () => {
     const nine = futureLocal(9);
-    await addAppt(nine, nine + 3600, 51.5074, -0.1278);
-    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 51.5100, -0.1200);
-    await addClient({ id: 'lc', name: 'Sam', phone: '+447700900031', lat: 51.509, lng: -0.124 });
+    await addAppt(nine, nine + 3600, 34.0522, -118.2437);
+    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
+    await addClient({ id: 'lc', name: 'Sam', phone: '+18185550031', lat: 34.0538, lng: -118.2408 });
     await env.DB.prepare(
       `INSERT INTO job_leads (id,operator_id,client_id,service_id,title,estimated_duration_seconds,
          parts_required,parts_ready,urgency,status,created_at,updated_at)
@@ -260,10 +292,10 @@ describe('candidate ranking', () => {
   it('ranks a premises operator on cadence alone, ignoring geography', async () => {
     await seed({ location_mode: 'premises' });
     const nine = futureLocal(9);
-    await addAppt(nine, nine + 3600, 51.5074, -0.1278);
-    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 51.51, -0.12);
-    await addClient({ id: 'a', name: 'A', phone: '+447700900040', lat: 51.509, lng: -0.124, dueDaysAgo: 2 });
-    await addClient({ id: 'b', name: 'B', phone: '+447700900041', lat: 55.9, lng: -3.2, dueDaysAgo: 60 });
+    await addAppt(nine, nine + 3600, 34.0522, -118.2437);
+    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
+    await addClient({ id: 'a', name: 'A', phone: '+18185550040', lat: 34.0538, lng: -118.2408, dueDaysAgo: 2 });
+    await addClient({ id: 'b', name: 'B', phone: '+18185550041', lat: 37.7749, lng: -122.4194, dueDaysAgo: 60 });
 
     await detectGaps(env, op, nine, 1);
     const gap = await openGap();
@@ -279,12 +311,12 @@ describe('offer lifecycle', () => {
 
   async function setupOffers(count = 2) {
     const nine = futureLocal(9);
-    await addAppt(nine, nine + 3600, 51.5074, -0.1278);
-    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 51.5100, -0.1200);
+    await addAppt(nine, nine + 3600, 34.0522, -118.2437);
+    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
     for (let i = 0; i < count; i++) {
       await addClient({
-        id: `c${i}`, name: `C${i}`, phone: `+44770090010${i}`,
-        lat: 51.509 + i * 0.001, lng: -0.124, dueDaysAgo: 10 - i,
+        id: `c${i}`, name: `C${i}`, phone: `+1818555010${i}`,
+        lat: 34.0538 + i * 0.001, lng: -118.2408, dueDaysAgo: 10 - i,
       });
     }
     await detectGaps(env, op, nine, 1);
@@ -297,7 +329,7 @@ describe('offer lifecycle', () => {
   it('creates offers, marks the gap offering, and logs a message each', async () => {
     const { gap, offers } = await setupOffers(2);
     expect(offers.length).toBe(2);
-    expect(offers[0]!.send.ios).toMatch(/^sms:\+44/);
+    expect(offers[0]!.send.ios).toMatch(/^sms:\+1/);
     expect(offers[0]!.message).toContain('Reply STOP');
     expect(offers[0]!.url).toContain('/o/');
 
@@ -379,9 +411,9 @@ describe('offer lifecycle', () => {
 
 describe('timezone handling', () => {
   it('keeps 09:00 local at 09:00 across a DST boundary', () => {
-    // 2027-03-28 is the UK spring-forward date.
-    const before = fromLocal(TZ, 2027, 3, 27, 9 * 60);
-    const after = fromLocal(TZ, 2027, 3, 29, 9 * 60);
+    // 2027-03-14 is the US spring-forward date.
+    const before = fromLocal(TZ, 2027, 3, 13, 9 * 60);
+    const after = fromLocal(TZ, 2027, 3, 15, 9 * 60);
     expect(toLocal(before, TZ).minuteOfDay).toBe(540);
     expect(toLocal(after, TZ).minuteOfDay).toBe(540);
     // 47 hours of real time, not 48 — the clock lost an hour in between.
@@ -399,12 +431,12 @@ describe('timezone handling', () => {
 });
 
 describe('phone normalisation', () => {
-  it('normalises UK numbers and rejects rubbish', () => {
-    expect(toE164('07700 900123', 'GB')).toBe('+447700900123');
-    expect(toE164('+44 7700 900123', 'GB')).toBe('+447700900123');
-    expect(toE164('(555) 010-1234', 'US')).toBe('+15550101234');
-    expect(toE164('12345', 'GB')).toBeNull();
-    expect(toE164('not a phone', 'GB')).toBeNull();
+  it('normalises US numbers and rejects rubbish', () => {
+    expect(toE164('(818) 555-0123', 'US')).toBe('+18185550123');
+    expect(toE164('1-818-555-0123', 'US')).toBe('+18185550123');
+    expect(toE164('+1 818 555 0123', 'US')).toBe('+18185550123');
+    expect(toE164('12345', 'US')).toBeNull();
+    expect(toE164('not a phone', 'US')).toBeNull();
   });
 });
 
@@ -435,12 +467,12 @@ describe('late labels are measured from the due date, not the last visit', () =>
   it('says so plainly when a client has no repeat cadence at all', async () => {
     await seed();
     const nine = futureLocal(9);
-    await addAppt(nine, nine + 3600, 51.5074, -0.1278);
-    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 51.51, -0.12);
+    await addAppt(nine, nine + 3600, 34.0522, -118.2437);
+    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
     // No default_service_id, so no cadence, so no due date.
     await env.DB.prepare(
       `INSERT INTO clients (id,operator_id,first_name,phone_e164,lat,lng,sms_consent,sms_consent_at,created_at,updated_at)
-       VALUES ('nocad',?,'Owen','+447700900500',51.509,-0.124,1,?,?,?)`,
+       VALUES ('nocad',?,'Owen','+18185550500',34.0538,-118.2408,1,?,?,?)`,
     ).bind(op.id, now(), now(), now()).run();
     await detectGaps(env, op, nine, 1);
     const ranked = await rankCandidates(env, op, await openGap());

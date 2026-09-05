@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { makeEnv } from './d1';
 import type { Env } from '../src/types';
 import {
-  COUNTRIES, COUNTRY_LIST, countryFromE164, formatMoney, getCountry,
-  isValidPostcode, normalisePostcode, ZERO_DECIMAL,
+  COUNTRIES, COUNTRY_LIST, countryFromE164, formatMoney, getCountry, isLaunchArea,
+  isValidPostcode, LAUNCH_STATE, normalisePostcode, ZERO_DECIMAL,
 } from '../src/lib/countries';
 import { LOCALES, localeFor } from '../src/lib/countries';
 import { formatTimeRange } from '../src/lib/tz';
@@ -16,7 +16,7 @@ const M2 = new URL('../migrations/0002_postal_codes.sql', import.meta.url).pathn
 describe('country table integrity', () => {
   it('ships exactly the launch markets', () => {
     expect(COUNTRY_LIST.map((c) => c.iso2).sort())
-      .toEqual(['AU', 'CA', 'GB', 'IE', 'NZ', 'US']);
+      .toEqual(['US']);
   });
 
   it('every entry is internally consistent', () => {
@@ -39,80 +39,154 @@ describe('country table integrity', () => {
   });
 });
 
-describe('phone normalisation across markets', () => {
+describe('phone normalisation', () => {
   const cases: Array<[string, string, string | null]> = [
-    ['GB', '07700 900123', '+447700900123'],
-    ['GB', '+44 7700 900123', '+447700900123'],
-    ['GB', '447700900123', '+447700900123'],
-    ['GB', '0044 7700 900123', '+447700900123'],
-    ['US', '(555) 010-1234', '+15550101234'],
-    ['US', '1-555-010-1234', '+15550101234'],
-    ['CA', '604 555 0123', '+16045550123'],
-    ['IE', '086 123 4567', '+353861234567'],
-    ['AU', '0412 345 678', '+61412345678'],
-    ['NZ', '021 123 456', '+6421123456'],
-    // rejections
-    ['GB', '12345', null],
-    ['GB', 'not a phone', null],
-    ['US', '555 010 12', null],
+    // Every shape an operator actually types a US number in. A number that
+    // fails to normalise is an offer that never arrives.
+    ['US', '(818) 555-0123', '+18185550123'],
+    ['US', '818-555-0123', '+18185550123'],
+    ['US', '818.555.0123', '+18185550123'],
+    ['US', '818 555 0123', '+18185550123'],
+    ['US', '8185550123', '+18185550123'],
+    // Long-distance trunk prefix — how it is dialled, and how CRMs export it.
+    ['US', '1-818-555-0123', '+18185550123'],
+    ['US', '1 (818) 555-0123', '+18185550123'],
+    // Already international, spaced or not.
+    ['US', '+1 818 555 0123', '+18185550123'],
+    ['US', '+18185550123', '+18185550123'],
+    // Rejections. A US national number is exactly ten digits, so one digit
+    // short or one digit long is not a number we can text.
+    ['US', '818 555 012', null],
+    ['US', '818 555 01234', null],
+    ['US', '555 0123', null],
+    ['US', '12345', null],
+    ['US', '818 5XX 0123', null],
+    ['US', 'not a phone', null],
+    ['US', '', null],
   ];
 
   for (const [country, input, expected] of cases) {
-    it(`${country}: ${input} -> ${expected ?? 'null'}`, () => {
+    it(`${country}: ${input || '(empty)'} -> ${expected ?? 'null'}`, () => {
       expect(toE164(input, country)).toBe(expected);
     });
   }
 
   it('passes through a valid international number from an unlisted country', () => {
-    // +263 (Zimbabwe) is not in the table; the shape is still valid E.164.
-    expect(toE164('+263771234567', 'GB')).toBe('+263771234567');
+    // +263 (Zimbabwe) is not in the table; the shape is still valid E.164, and
+    // a number we cannot check is better sent than silently dropped.
+    expect(toE164('+263771234567', 'US')).toBe('+263771234567');
   });
 
   it('rejects an international number that is too short for its country', () => {
-    expect(toE164('+4477009', 'GB')).toBeNull();
+    // Right country code, six national digits: E.164-shaped but undialable.
+    expect(toE164('+1818555', 'US')).toBeNull();
+  });
+});
+
+describe('country from an E.164 number', () => {
+  it('identifies a US number', () => {
+    expect(countryFromE164('+18185550123')?.iso2).toBe('US');
   });
 
-  it('identifies the country from an E.164 number', () => {
-    expect(countryFromE164('+447700900123')?.iso2).toBe('GB');
-    expect(countryFromE164('+15550101234')?.iso2).toBe('US');
-    expect(countryFromE164('+61412345678')?.iso2).toBe('AU');
+  it('returns null for a number outside the launch market', () => {
+    // Nothing but +1 is in the table now, so there is no country to resolve
+    // these to. Null is the honest answer; a wrong guess would pick the
+    // currency and date format for someone else's customer.
+    expect(countryFromE164('+447700900123')).toBeNull();
+    expect(countryFromE164('+61412345678')).toBeNull();
+    expect(countryFromE164('+353861234567')).toBeNull();
+  });
+
+  it('cannot tell the rest of the +1 plan apart from the US', () => {
+    // +1 is shared across the North American plan, so a Vancouver number reads
+    // as US. Recorded rather than fixed: nothing downstream branches on it,
+    // and guessing by area code would be a worse kind of wrong.
+    expect(countryFromE164('+16045550123')?.iso2).toBe('US');
   });
 });
 
 describe('postcode validation', () => {
-  const valid: Array<[string, string]> = [
-    ['GB', 'SW1A 1AA'], ['GB', 'm1 1ae'],
-    ['US', '90210'], ['US', '90210-1234'],
-    ['CA', 'K1A 0B1'],
-    ['AU', '2000'], ['NZ', '6011'],
-    ['IE', 'D02 AF30'],
-  ];
-  for (const [c, p] of valid) {
-    it(`${c} accepts ${p}`, () => expect(isValidPostcode(p, c)).toBe(true));
+  const valid = ['90210', '94103', '10001', '90210-1234', '902101234', ' 90210 '];
+  for (const p of valid) {
+    it(`US accepts ${p}`, () => expect(isValidPostcode(p, 'US')).toBe(true));
   }
 
-  const invalid: Array<[string, string]> = [
-  ];
-  for (const [c, p] of invalid) {
-    it(`${c} rejects ${p}`, () => expect(isValidPostcode(p, c)).toBe(false));
+  // A US ZIP is five digits, or five plus four. Six or seven is a typo, and a
+  // typo that geocodes to nothing means no coordinates and no ranking.
+  const invalid = ['9021', '902101', '9021012', '90210-12', 'ABCDE', ''];
+  for (const p of invalid) {
+    it(`US rejects ${p || '(empty)'}`, () => expect(isValidPostcode(p, 'US')).toBe(false));
   }
+
+  it('rejects a missing postcode rather than treating it as valid', () => {
+    expect(isValidPostcode(null, 'US')).toBe(false);
+  });
 
   it('rejects a postcode for a country we do not ship to', () => {
     expect(isValidPostcode('75001', 'FR')).toBe(false);
     expect(getCountry('FR')).toBeNull();
+    // The UK was a market once. A British postcode left in an imported client
+    // row must not still validate against a country we no longer have.
+    expect(getCountry('GB')).toBeNull();
+    expect(isValidPostcode('SW1A 1AA', 'GB')).toBe(false);
   });
 
   it('normalises to the shape GeoNames stores', () => {
-    expect(normalisePostcode('sw1a 1aa')).toBe('SW1A1AA');
-    expect(normalisePostcode('K1A-0B1')).toBe('K1A0B1');
+    expect(normalisePostcode('90210-1234')).toBe('902101234');
+    expect(normalisePostcode(' 94103 ')).toBe('94103');
+  });
+});
+
+describe('the California launch gate', () => {
+  it('says which state it gates on', () => {
+    expect(LAUNCH_STATE).toBe('California');
+  });
+
+  const inside = ['90001', '90210', '92101', '94103', '95814', '96162'];
+  for (const z of inside) {
+    it(`admits ${z}`, () => expect(isLaunchArea(z)).toBe(true));
+  }
+
+  it('admits the exact first and last ZIP of the range', () => {
+    // An off-by-one on either edge silently shuts a whole city out of signup,
+    // and nothing else in the app would report it.
+    expect(isLaunchArea('90001')).toBe(true);
+    expect(isLaunchArea('96162')).toBe(true);
+  });
+
+  it('refuses the ZIP immediately either side of the range', () => {
+    expect(isLaunchArea('89999')).toBe(false);
+    expect(isLaunchArea('96163')).toBe(false);
+  });
+
+  const outside = ['10001', '00501', '73301', '89999', '96163'];
+  for (const z of outside) {
+    it(`refuses ${z}`, () => expect(isLaunchArea(z)).toBe(false));
+  }
+
+  it('reads the ZIP out of a longer string instead of failing on it', () => {
+    // ZIP+4 and 'CA 90210' both turn up in imported rows; only the first five
+    // digits decide, so both are Californian.
+    expect(isLaunchArea('90210-1234')).toBe(true);
+    expect(isLaunchArea('CA 90210')).toBe(true);
+  });
+
+  it('refuses anything that is not five digits of ZIP', () => {
+    expect(isLaunchArea(null)).toBe(false);
+    expect(isLaunchArea(undefined)).toBe(false);
+    expect(isLaunchArea('')).toBe(false);
+    expect(isLaunchArea('   ')).toBe(false);
+    expect(isLaunchArea('9021')).toBe(false);
+    expect(isLaunchArea('abcde')).toBe(false);
   });
 });
 
 describe('currency formatting', () => {
   it('formats minor units correctly per currency', () => {
-    expect(formatMoney(6500, 'GBP')).toContain('65');
-    expect(formatMoney(6500, 'EUR')).toContain('65');
     expect(formatMoney(6500, 'USD')).toContain('65');
+    // Not a launch currency, but formatMoney is handed whatever the operator
+    // row holds and must not assume dollars.
+    expect(formatMoney(6500, 'EUR')).toContain('65');
   });
 
   it('does not divide zero-decimal currencies by 100', () => {
@@ -121,7 +195,7 @@ describe('currency formatting', () => {
     expect(jpy).toContain('4,500');
     expect(jpy).not.toContain('45.00');
     expect(ZERO_DECIMAL.has('JPY')).toBe(true);
-    expect(ZERO_DECIMAL.has('GBP')).toBe(false);
+    expect(ZERO_DECIMAL.has('USD')).toBe(false);
   });
 
   it('falls back rather than throwing on an unknown currency', () => {
@@ -135,11 +209,10 @@ describe('offline postal geocoding', () => {
   async function seedPostcodes() {
     env = makeEnv([M1, M2]) as unknown as Env;
     const rows: Array<[string, string, string, number, number]> = [
-      ['GB', 'SW1A1AA', 'Westminster', 51.50100, -0.14200],
-      ['GB', 'M11AE', 'Manchester', 53.47800, -2.24200],
       ['US', '90210', 'Beverly Hills', 34.09010, -118.40650],
-      ['AU', '2000', 'Sydney', -33.86880, 151.20930],
-      ['IE', 'D02', 'Dublin 2', 53.33800, -6.25100],
+      ['US', '94103', 'San Francisco', 37.77280, -122.41060],
+      ['US', '95814', 'Sacramento', 38.58160, -121.49440],
+      ['US', '10001', 'New York', 40.75080, -73.99700],
     ];
     for (const [cc, pc, place, lat, lng] of rows) {
       await env.DB.prepare(
@@ -149,31 +222,30 @@ describe('offline postal geocoding', () => {
     }
   }
 
-  it('resolves postcodes with no network call, in several countries', async () => {
+  it('resolves postcodes with no network call', async () => {
     await seedPostcodes();
-    for (const [pc, cc, lat] of [
-      ['SW1A 1AA', 'GB', 51.501], ['90210', 'US', 34.0901],
-      ['2000', 'AU', -33.8688],
+    for (const [pc, lat] of [
+      ['90210', 34.0901], ['94103', 37.7728], ['95814', 38.5816],
     ] as const) {
-      const p = await geocode(env, null, pc as string, cc as string);
-      expect(p, `${cc} ${pc}`).toBeTruthy();
+      const p = await geocode(env, null, pc, 'US');
+      expect(p, pc).toBeTruthy();
       expect(p!.source).toBe('table');
-      expect(p!.lat).toBeCloseTo(lat as number, 3);
+      expect(p!.lat).toBeCloseTo(lat, 3);
     }
   });
 
-  it('falls back to a prefix match for partial-code countries', async () => {
+  it('falls back to a shorter stored code when the client typed more', async () => {
     await seedPostcodes();
-    // Ireland publishes only routing keys in the open data; the full Eircode
-    // will not match exactly, but the routing key still places the client.
-    const p = await geocode(env, null, 'D02 AF30', 'IE');
+    // The table holds five-digit ZIPs; people write ZIP+4 on a form. Walking
+    // the input down still places them in Beverly Hills.
+    const p = await geocode(env, null, '90210-1234', 'US');
     expect(p).toBeTruthy();
-    expect(p!.lat).toBeCloseTo(53.338, 3);
+    expect(p!.lat).toBeCloseTo(34.0901, 3);
   });
 
   it('returns null rather than guessing when the postcode is unknown', async () => {
     await seedPostcodes();
-    expect(await geocode(env, null, 'ZZ99ZZ', 'GB')).toBeNull();
+    expect(await geocode(env, null, '99999', 'US')).toBeNull();
   });
 
   it('returns nothing for a country we do not ship to', async () => {
@@ -181,54 +253,63 @@ describe('offline postal geocoding', () => {
     expect(await geocode(env, null, '00000', 'FR')).toBeNull();
   });
 
-  it('is case and whitespace insensitive', async () => {
+  it('is insensitive to the spacing people type', async () => {
     await seedPostcodes();
-    const a = await geocode(env, null, 'm1 1ae', 'GB');
-    const b = await geocode(env, null, 'M11AE', 'GB');
+    const a = await geocode(env, null, ' 90210 ', 'US');
+    const b = await geocode(env, null, '90210', 'US');
     expect(a!.lat).toBe(b!.lat);
   });
 });
 
 describe('partial-postcode matching, both directions', () => {
-  it('matches when the operator typed only the outward code', async () => {
+  it('matches when the operator typed only the five-digit ZIP', async () => {
     const env = makeEnv([M1, M2]) as unknown as Env;
     await env.DB.prepare(
       `INSERT INTO postal_codes (country_code,postal_code,place_name,lat,lng,accuracy)
-       VALUES ('GB','SW1A1AA','Westminster',51.501,-0.142,6)`).run();
-    const p = await geocode(env, null, 'SW1A', 'GB');
+       VALUES ('US','902101234','Beverly Hills',34.0901,-118.4065,6)`).run();
+    const p = await geocode(env, null, '90210', 'US');
     expect(p).toBeTruthy();
-    expect(p!.lat).toBeCloseTo(51.501, 3);
+    expect(p!.lat).toBeCloseTo(34.0901, 3);
   });
 
   it('does not match an unrelated code that merely shares two characters', async () => {
     const env = makeEnv([M1, M2]) as unknown as Env;
     await env.DB.prepare(
       `INSERT INTO postal_codes (country_code,postal_code,place_name,lat,lng,accuracy)
-       VALUES ('GB','SW1A1AA','Westminster',51.501,-0.142,6)`).run();
-    expect(await geocode(env, null, 'SW', 'GB')).toBeNull();
+       VALUES ('US','902101234','Beverly Hills',34.0901,-118.4065,6)`).run();
+    expect(await geocode(env, null, '90', 'US')).toBeNull();
   });
 });
 
-describe('no country is privileged over any other', () => {
-  it('formats the same instant correctly for each market, not one of them', () => {
+describe('formatting follows the operator, never a hardcoded default', () => {
+  it('formats the same instant differently in two US timezones', () => {
+    // The US is multiTimezone: the default zone is an onboarding starting
+    // value, not a truth, and an operator who never picks their own works the
+    // wrong hours.
+    expect(getCountry('US')!.multiTimezone).toBe(true);
     const t = Date.UTC(2026, 8, 3, 9, 15) / 1000;
-    const seen = new Map<string, string>();
-    for (const iso of ['GB', 'US', 'CA', 'IE', 'AU', 'NZ']) {
-      const c = getCountry(iso)!;
-      const out = formatTimeRange(t, t + 7200, c.defaultTimezone, localeFor(iso));
-      expect(out.length).toBeGreaterThan(0);
-      seen.set(iso, out);
-    }
-    // If every locale produced identical text, the locale is being ignored —
-    // which is exactly the bug where everyone got British formatting.
-    expect(new Set(seen.values()).size).toBeGreaterThan(1);
+    const east = formatTimeRange(t, t + 7200, 'America/New_York', localeFor('US'));
+    const west = formatTimeRange(t, t + 7200, 'America/Los_Angeles', localeFor('US'));
+    expect(east.length).toBeGreaterThan(0);
+    expect(west.length).toBeGreaterThan(0);
+    // Identical text for two zones means the zone is being ignored.
+    expect(east).not.toBe(west);
   });
 
-  it('gives each country its own locale, never a single global default', () => {
+  it('keeps US conventions while the language changes the words', () => {
+    // A Spanish-speaking client in Phoenix wants es-US: US date order and
+    // dollars, Spanish month names. Not es-MX, and not en-US.
     expect(localeFor('US')).toBe('en-US');
-    expect(localeFor('CA')).toBe('en-CA');
-    expect(localeFor('GB')).toBe('en-GB');
-    expect(localeFor('AU')).toBe('en-AU');
+    expect(localeFor('US', 'es')).toBe('es-US');
+    const t = Date.UTC(2026, 8, 3, 9, 15) / 1000;
+    const en = formatTimeRange(t, t + 7200, 'America/Los_Angeles', localeFor('US'));
+    const es = formatTimeRange(t, t + 7200, 'America/Los_Angeles', localeFor('US', 'es'));
+    expect(es).not.toBe(en);
+  });
+
+  it('falls back rather than inventing a locale it does not have', () => {
+    expect(localeFor(null)).toBe('en-US');
+    expect(localeFor('FR')).toBe('en-US');
     // Every supported country must have one — no silent fallback for a market
     // we claim to support.
     for (const c of COUNTRY_LIST) {
@@ -236,15 +317,9 @@ describe('no country is privileged over any other', () => {
     }
   });
 
-  it('renders money in each country own currency and convention', () => {
-    const cases: Array<[string, string]> = [
-    ];
-    for (const [iso, cur] of cases) {
-      const out = formatMoney(6500, cur, localeFor(iso));
-      expect(out, `${iso}`).toBeTruthy();
-      expect(out).not.toBe('');
-    }
-    // Japanese yen must not be divided by 100 just because sterling is.
+  it('renders money in the operator currency and convention', () => {
+    expect(formatMoney(6500, 'USD', localeFor('US'))).toMatch(/\$\s?65/);
+    // Japanese yen must not be divided by 100 just because dollars are.
     expect(formatMoney(4500, 'JPY', localeFor('JP'))).toContain('4,500');
   });
 

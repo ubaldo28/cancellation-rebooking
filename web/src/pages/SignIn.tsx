@@ -1,9 +1,47 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError, type Country } from '../api';
 import { useSession } from '../App';
+import Crumbs from '../components/Crumbs';
+import SiteFooter from '../components/SiteFooter';
+import SiteHeader from '../components/SiteHeader';
+import { useDocumentTitle } from '../lib/title';
 
 type Stage = 'form' | 'sent' | 'verifying';
+
+/**
+ * The frame around the sign-in card.
+ *
+ * This page had no chrome of any kind: a centred card on an otherwise empty
+ * screen, linked from the header of every other page and offering no way back
+ * off it except the browser's back button. Signing in is the businesses' door,
+ * and most people who open it are customers who took the wrong one — so this
+ * is precisely the page that needed a way out and was the only one without it.
+ *
+ * `.centre` sizes itself with `min-height: 100%`, which resolved against the
+ * page when it was the only thing on it and resolves against nothing now that
+ * it is a flex item. `flex: 1` is what keeps the card vertically centred in
+ * whatever room is left between the header and the footer.
+ */
+function Shell({ children }: { children: ReactNode }) {
+  return (
+    <div className="land">
+      <SiteHeader />
+      <main className="centre" id="main" tabIndex={-1}
+        style={{ flex: 1, flexDirection: 'column' }}>
+        {/* Wrapped in `.auth` so the trail starts at the same left edge as the
+            card below it rather than floating at the centre of the viewport;
+            `.auth` is the width the card is. */}
+        <div className="auth">
+          <Crumbs items={[{ label: 'Sign in' }]} />
+        </div>
+        {children}
+      </main>
+      <SiteFooter />
+    </div>
+  );
+}
 
 export default function SignIn() {
   const [params] = useSearchParams();
@@ -12,6 +50,7 @@ export default function SignIn() {
   const token = params.get('token');
 
   const [stage, setStage] = useState<Stage>(token ? 'verifying' : 'form');
+  useDocumentTitle(stage === 'sent' ? 'Check your email' : 'Sign in');
   const [email, setEmail] = useState('');
   const [business, setBusiness] = useState('');
   const [country, setCountry] = useState('US');
@@ -22,7 +61,7 @@ export default function SignIn() {
   const [devLink, setDevLink] = useState<string | null>(null);
 
   useEffect(() => {
-    if (operator) navigate('/', { replace: true });
+    if (operator) navigate('/app', { replace: true });
   }, [operator, navigate]);
 
   useEffect(() => {
@@ -42,7 +81,13 @@ export default function SignIn() {
   useEffect(() => {
     if (!token) return;
     api.verify(token)
-      .then(async () => { await refresh(); navigate('/', { replace: true }); })
+      .then(async () => {
+        await refresh();
+        // A brand-new operator has nothing set up yet. Dropping them into an
+        // empty dashboard is how someone decides the product does nothing.
+        const { services } = await api.services().catch(() => ({ services: [] }));
+        navigate(services.length === 0 ? '/join' : '/app', { replace: true });
+      })
       .catch((e) => {
         setError(e instanceof ApiError ? e.message : 'That link did not work.');
         setStage('form');
@@ -70,15 +115,20 @@ export default function SignIn() {
     }
   }
 
+  // Deliberately bare. This is not a page, it is a redirect being carried out:
+  // the token is consumed and the browser leaves for /app or /join. Drawing a
+  // header and a footer here would flash a whole site's furniture on screen for
+  // the half second before it is thrown away, and the footer would fire a
+  // catalogue request for a page nobody will still be on when it answers.
   if (stage === 'verifying') {
     return <div className="centre"><div className="auth stack">Signing you in…</div></div>;
   }
 
   if (stage === 'sent') {
     return (
-      <div className="centre">
+      <Shell>
         <div className="auth card stack">
-          <h2>Check your email</h2>
+          <h1 className="as-h2">Check your email</h1>
           <p className="muted">
             We sent a sign-in link to <strong>{email}</strong>. It works once and
             expires in 15 minutes.
@@ -96,15 +146,15 @@ export default function SignIn() {
             Use a different email
           </button>
         </div>
-      </div>
+      </Shell>
     );
   }
 
   return (
-    <div className="centre">
+    <Shell>
       <form className="auth card stack" onSubmit={submit}>
         <div>
-          <h2>Sign in</h2>
+          <h1 className="as-h2">Sign in</h1>
           <p className="muted" style={{ marginTop: 4, marginBottom: 0 }}>
             No password. We email you a link.
           </p>
@@ -149,7 +199,29 @@ export default function SignIn() {
         <button className="btn block" type="submit" disabled={busy || !email.trim()}>
           {busy ? 'Sending…' : 'Email me a link'}
         </button>
+
+        <div className="rule" />
+
+        <button type="button" className="btn ghost block" disabled={busy}
+          onClick={async () => {
+            setBusy(true); setError(null);
+            try {
+              await api.startDemo();
+              await refresh();
+              navigate('/app', { replace: true });
+            } catch (e) {
+              setError(e instanceof ApiError ? e.message : 'The demo is not available.');
+            } finally {
+              setBusy(false);
+            }
+          }}>
+          Look around without signing up
+        </button>
+        <p className="faint" style={{ textAlign: 'center', margin: 0 }}>
+          Opens a sample detailing business in Los Angeles with a cancelled job
+          to fill. Nothing you do in it is kept.
+        </p>
       </form>
-    </div>
+    </Shell>
   );
 }

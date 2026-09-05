@@ -1,15 +1,10 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { makeEnv } from './d1';
+import { ALL_MIGRATIONS, makeEnv } from './d1';
 import worker from '../src/index';
 import type { Env } from '../src/types';
 import { newId, now } from '../src/lib/util';
 
-const MIGRATIONS = [
-  new URL('../migrations/0001_init.sql', import.meta.url).pathname,
-  new URL('../migrations/0002_postal_codes.sql', import.meta.url).pathname,
-  new URL('../migrations/0003_hardening.sql', import.meta.url).pathname,
-  new URL('../migrations/0004_scan_budget.sql', import.meta.url).pathname,
-];
+const MIGRATIONS = ALL_MIGRATIONS;
 
 const BASE = 'https://gap.test';
 let env: Env;
@@ -433,6 +428,57 @@ describe('Twilio webhooks reject unsigned requests', () => {
     const res = await post('/webhooks/twilio/status',
       { MessageSid: 'SM1', MessageStatus: 'delivered' }, 'anything');
     expect(res.status).toBe(403);
+  });
+
+  /**
+   * A failed offer records WHY it failed.
+   *
+   * messages.error_code has existed since the first migration and nothing was
+   * writing it, so every failure looked identical in the log — and the two
+   * kinds are not the same thing: 30003/30005 mean the handset is unreachable
+   * and that number should stop being offered to, while 30001 means we were
+   * throttled and the next one will go.
+   */
+  it('records the Twilio error code on a failed message, and none on a good one', async () => {
+    const signedPost = async (fields: Record<string, string>) => {
+      const payload = `${BASE}/webhooks/twilio/status`
+        + Object.keys(fields).sort().map((k) => k + fields[k]).join('');
+      const key = await crypto.subtle.importKey(
+        'raw', new TextEncoder().encode('test-auth-token'),
+        { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+      const buf = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+      return post('/webhooks/twilio/status', fields,
+        btoa(String.fromCharCode(...new Uint8Array(buf))));
+    };
+
+    const op = await env.DB.prepare(`SELECT id FROM operators LIMIT 1`).first<any>();
+    const t = now();
+    for (const [id, sid] of [['m-bad', 'SM-bad'], ['m-good', 'SM-good']]) {
+      await env.DB.prepare(
+        `INSERT INTO messages (id,operator_id,direction,channel,to_address,body,
+           status,provider,provider_sid,created_at,updated_at)
+         VALUES (?,?, 'out','sms','+447700900001','hello','sent','twilio',?,?,?)`,
+      ).bind(id, op.id, sid, t, t).run();
+    }
+
+    expect((await signedPost({
+      MessageSid: 'SM-bad', MessageStatus: 'failed', ErrorCode: '30003',
+    })).status).toBe(204);
+    expect((await signedPost({
+      MessageSid: 'SM-good', MessageStatus: 'delivered',
+    })).status).toBe(204);
+
+    const bad = await env.DB.prepare(
+      `SELECT status, error_code FROM messages WHERE id='m-bad'`).first<any>();
+    expect(bad.status).toBe('failed');
+    expect(bad.error_code).toBe('30003');
+
+    // A delivered message must not carry a code — the column is the reason a
+    // send failed, not a field filled in on every callback.
+    const good = await env.DB.prepare(
+      `SELECT status, error_code FROM messages WHERE id='m-good'`).first<any>();
+    expect(good.status).toBe('delivered');
+    expect(good.error_code).toBeNull();
   });
 });
 

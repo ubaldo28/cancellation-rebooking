@@ -1,26 +1,128 @@
-/* Palette carried over from the customer-facing offer page the Worker serves,
-   so the operator app and the page their clients see feel like one product. */
+/* ==========================================================================
+   Slotfill design tokens.
+
+   One scale, used everywhere. The old palette was warm greys and a forest
+   green borrowed from a receipt; it read as paperwork. This one is built
+   around a single idea: the map is the product, so ink is near-black with a
+   blue cast to sit under it, and one electric green marks the thing that is
+   available right now. Nothing else competes for that colour.
+   ========================================================================== */
 :root {
-  --bg: #fbfaf9;
-  --surface: #ffffff;
-  --ink: #1c1a17;
-  --muted: #6b6560;
-  --faint: #a49d96;
-  --line: #e5e0da;
-  --accent: #1b6b4a;
-  --accent-soft: #eaf2ed;
-  --accent-line: #cfe2d6;
-  --alert: #a8571b;
-  --alert-soft: #fbf0e4;
-  --alert-line: #e0b088;
-  --alert-bg: #fdf8f3;
-  --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* --- ground and ink --- */
+  --bg:            #f6f7f9;
+  --surface:       #ffffff;
+  --surface-2:     #f0f2f5;
+  --ink:           #0d1117;
+  --ink-2:         #2c3440;
+  --muted:         #5c6572;
+  /* Was #949cab, which is 2.76:1 on white and 2.58:1 on --bg — under half the
+     4.5:1 that body text owes. It carries timestamps, hints, counts and the
+     footer's unbuilt destinations: all of it small, all of it real text, none
+     of it exempt. #666f7c is 5.09:1 on white, 4.74:1 on --bg and 4.53:1 on
+     --surface-2, so it passes on every ground it is actually painted on. It
+     sits closer to --muted than the old value did, which is the honest cost:
+     a tone that reads as "quieter" and a tone that reads as "unreadable" are
+     not far apart, and only one of them is allowed. */
+  --faint:         #666f7c;
+  --line:          #e3e7ec;
+  --line-strong:   #cdd4dd;
+  /* The border of something you operate, as opposed to a hairline between two
+     things you read. --line is 1.24:1 on white and --line-strong 1.49:1, which
+     is fine for a divider — decoration is exempt — and not fine for the edge
+     that tells somebody where a text field or a filter pill begins. 1.4.11
+     wants 3:1 for that edge; this is 3.41:1 on white and 3.18:1 on --bg.
+     Used ONLY on controls. Cards, rules and section dividers keep --line, so
+     the page's weight is unchanged everywhere it was not a legibility problem. */
+  --control-line:  #828c9a;
+
+  /* --- the one accent: open right now --- */
+  --accent:        #00875a;
+  --accent-ink:    #006644;
+  --accent-soft:   #e8f7f0;
+  --accent-line:   #a8e3ca;
+  --accent-vivid:  #16e08e;
+
+  /* --- attention, not alarm --- */
+  --alert:         #b54708;
+  --alert-soft:    #fef3e6;
+  --alert-line:    #f2c68f;
+  --alert-bg:      #fffaf4;
+
+  /* --- map surfaces --- */
+  --map-ink:       #0d1117;
+
+  /* --- type --- */
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* --- elevation --- */
+  --lift-1: 0 1px 2px rgba(13, 17, 23, 0.05);
+  --lift-2: 0 4px 12px -4px rgba(13, 17, 23, 0.12), 0 1px 2px rgba(13, 17, 23, 0.05);
+  --lift-3: 0 24px 48px -24px rgba(13, 17, 23, 0.35), 0 2px 6px -2px rgba(13, 17, 23, 0.1);
+
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+
+  /* --- added for the landing page -----------------------------------------
+     Additive only. Every token above keeps the value the operator app and the
+     other public pages were built against. */
+  --ink-3:         #414b59;   /* body copy: 7:1 on the hero ground */
+  --hero-1:        #ffffff;
+  --hero-2:        #eaeef4;
+  --wash-1:        rgba(22, 224, 142, 0.13);
+
+  /* --- the landing page's dark bands --------------------------------------
+     Additive too. Every token above keeps the value the operator app, the
+     alerts stylesheet and the other public pages were built against; nothing
+     outside Discover reads the ones below. */
+  --night-1:       #071019;   /* the deepest ground: hero foot, page foot */
+  --night-2:       #0b1a29;
+  --night-3:       #10283c;   /* the lightest the hero gradient ever gets */
+  --on-night-2:    #c5d5e4;   /* 6:1 on the lightest part of the hero wash */
+  --night-line:    rgba(255, 255, 255, 0.14);
+  --tint-1:        #e9f5ef;   /* the "how it works" band */
+  --tint-2:        #daeee4;
 }
 
 * { box-sizing: border-box; }
 
 html, body, #root { height: 100%; }
+
+/* --- the focus floor ----------------------------------------------------
+   Every rule further down that draws a ring names the controls it knows
+   about, which is why keyboard focus kept going missing: a control added
+   later was not on anybody's list. This is the rule that cannot be forgotten,
+   because it names nothing. The specific rules below still win where a
+   control needs a different colour or offset to stay visible.
+
+   --accent-ink is 7.04:1 on white and 6.27:1 on the greyest light ground
+   here, so it clears the 3:1 that a focus indicator owes several times over.
+   The dark bands override it further down, where a dark green ring would be
+   the same colour as the ground it is drawn on. */
+:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+/* Present for a screen reader, gone for everyone else.
+
+   Defined here rather than in a page's own sheet because styles.css is the one
+   file loaded on every route from main.tsx. A second copy lived in
+   styles-alerts.css long after this one was written, so the rule that actually
+   applied depended on which stylesheet a page happened to import last. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 
 body {
   margin: 0;
@@ -30,14 +132,17 @@ body {
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  /* Inter's tabular figures, so prices and times stop shifting width. */
+  font-feature-settings: 'cv05' 1, 'ss01' 1;
 }
 
-a { color: var(--accent); text-decoration: none; }
-a:hover { color: #145038; }
+a { color: var(--accent-ink); text-decoration: none; }
+a:hover { color: var(--accent); }
 
 button { font-family: inherit; font-size: inherit; }
 
-.mono { font-family: var(--mono); }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.num { font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 
 /* --- app shell --------------------------------------------------------- */
 .app { display: flex; flex-direction: column; min-height: 100%; }
@@ -53,6 +158,14 @@ button { font-family: inherit; font-size: inherit; }
 }
 h1 { font-size: 27px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; margin: 0; }
 h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+
+/* For a page whose whole content is one small card — sign in, the wizard's
+   "check your email" — where the heading has to be the document's h1 for the
+   outline to start at level one, but is drawn at the size the card was
+   designed around. The element says what rank it is; this says how big it is.
+   Not a general-purpose "make headings smaller": if a page needs this on more
+   than its single top card, the page has a structural problem instead. */
+h1.as-h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
 
 /* --- nav --------------------------------------------------------------- */
 .nav {
@@ -87,6 +200,14 @@ h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
 /* --- text -------------------------------------------------------------- */
 .muted { color: var(--muted); font-size: 13px; }
 .faint { color: var(--faint); font-size: 12px; }
+
+/* A link inside a run of quieter text is not distinguishable by colour alone:
+   --accent-ink against --muted is 1.19:1 and against --faint 1.38:1, where
+   1.4.1 wants 3:1 before colour is allowed to carry the difference on its
+   own. An underline is the distinction that works without seeing hue at all,
+   and it is what "Already have an account? Sign in" needed to stop being an
+   invisible link in a grey sentence. */
+.muted a, .faint a { text-decoration: underline; text-underline-offset: 2px; }
 .slot { font-family: var(--mono); font-size: 24px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.15; }
 .name { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
 .price { font-family: var(--mono); font-size: 14px; font-weight: 600; }
@@ -96,11 +217,28 @@ h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
   font-size: 12px; font-weight: 500; padding: 4px 9px;
   border-radius: 20px; white-space: nowrap;
 }
-.chip.good { background: var(--accent-soft); color: var(--accent); }
+/* --accent-ink, not --accent: the accent is 4.12:1 on the soft ground behind
+   it and a chip is 12px text, so it owed 4.5:1. The darker green is 6.37:1 on
+   the same ground and is the colour every other piece of green text on white
+   already uses. */
+.chip.good { background: var(--accent-soft); color: var(--accent-ink); }
 .chip.neutral { background: #f2efec; color: var(--muted); }
 .chip.warn { background: var(--alert-soft); color: var(--alert); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 
+/* A chip you press, as opposed to .chip which is a label you read.
+   Shared: the openings-alerts page (/a) picks trades with these, and
+   styles-alerts.css extends them, so they live here rather than with the
+   landing page that used to be their only caller. */
+.trade-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 42px; padding: 0 15px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--control-line); background: var(--surface); color: var(--ink-2);
+  font-size: 14px; font-weight: 600; box-shadow: var(--lift-1);
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+.trade-chip:hover { border-color: var(--line-strong); color: var(--ink); }
+.trade-chip.on { background: var(--ink); border-color: var(--ink); color: #fff; }
 /* --- buttons ----------------------------------------------------------- */
 .btn {
   min-height: 48px; padding: 0 18px; border-radius: 10px; border: 0;
@@ -110,15 +248,18 @@ h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
 .btn:disabled { background: #efebe6; color: var(--faint); cursor: default; }
 .btn.block { width: 100%; }
 .btn.ghost { background: transparent; color: var(--ink); border: 1.5px solid var(--ink); }
-.btn.quiet { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.btn.quiet { background: transparent; color: var(--muted); border: 1px solid var(--control-line); }
 .btn.alert { background: var(--alert); }
 .btn.sm { min-height: 40px; padding: 0 14px; font-size: 14px; }
 
 /* --- forms ------------------------------------------------------------- */
 label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+/* --control-line, not --line. The edge is the only thing saying "there is a
+   box here to type in", and at 1.24:1 it was not saying it to anybody who
+   needs contrast. See the token. */
 input, select, textarea {
   font-family: inherit; font-size: 16px; color: var(--ink);
-  background: var(--surface); border: 1px solid var(--line);
+  background: var(--surface); border: 1px solid var(--control-line);
   border-radius: 9px; padding: 12px 13px; min-height: 48px; width: 100%;
 }
 input:focus, select:focus, textarea:focus {
@@ -130,7 +271,7 @@ textarea { min-height: 90px; resize: vertical; }
 
 /* --- selectable candidate --------------------------------------------- */
 .pick {
-  background: var(--surface); border: 1.5px solid var(--line); border-radius: 12px;
+  background: var(--surface); border: 1.5px solid var(--control-line); border-radius: 12px;
   padding: 14px; cursor: pointer; text-align: left; width: 100%;
   display: flex; gap: 12px; align-items: flex-start;
   transition: border-color 120ms ease;
@@ -138,7 +279,10 @@ textarea { min-height: 90px; resize: vertical; }
 .pick.on { border-color: var(--accent); }
 .box {
   width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0; margin-top: 1px;
-  border: 1.5px solid #cfc8c0; background: var(--surface);
+  /* An unticked box is nothing but its own edge, so that edge is the whole
+     control. #cfc8c0 was 1.55:1 on white — the box was invisible until it
+     was filled in. */
+  border: 1.5px solid var(--control-line); background: var(--surface);
   display: flex; align-items: center; justify-content: center;
 }
 .pick.on .box { border-color: var(--accent); background: var(--accent); }
@@ -183,4 +327,904 @@ textarea { min-height: 90px; resize: vertical; }
 
 @media (min-width: 700px) {
   .nav { position: sticky; bottom: 0; }
+}
+
+
+/* ==========================================================================
+   The public site — map, openings, operator profiles.
+
+   This is the only page most people ever see. It is laid out as a single
+   column that gets out of the way: a claim, a live map, and a list of hours
+   you can actually book. Nothing decorative earns its place here.
+   ========================================================================== */
+
+.land { display: flex; flex-direction: column; min-height: 100%; }
+
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 22px;
+  background: rgba(246, 247, 249, 0.86);
+  backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.wordmark {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-size: 17px; font-weight: 750; letter-spacing: -0.035em; color: var(--ink);
+}
+.wordmark i {
+  width: 9px; height: 9px; border-radius: 50%; background: var(--accent-vivid);
+  box-shadow: 0 0 0 4px rgba(22, 224, 142, 0.2);
+}
+.topbar nav { display: flex; align-items: center; gap: 6px; }
+/* 44px tall, not 38. These are the only controls a customer has in the bar on
+   a phone and they were three of the smallest targets on the site; the height
+   comes from a floor rather than from padding so the narrow-screen rule below
+   560px can take the padding back without taking the target with it. */
+.tlink {
+  display: inline-flex; align-items: center; min-height: 44px;
+  font-size: 14px; font-weight: 550; color: var(--muted);
+  padding: 0 14px; border-radius: 999px;
+}
+.tlink:hover { color: var(--ink); background: var(--surface); }
+.tlink.solid {
+  background: var(--ink); color: #fff;
+}
+.tlink.solid:hover { background: var(--ink-2); color: #fff; }
+
+.wrap { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 22px; }
+
+/* --- map ---------------------------------------------------------------- */
+.maplibregl-ctrl-attrib { font-size: 10.5px; }
+
+/* Markers are real DOM, so they can carry a label and a price. */
+.mk {
+  display: flex; align-items: center; gap: 9px;
+  background: none; border: 0; padding: 0; cursor: pointer;
+  transform: translateX(-13px);
+}
+.mk-dot {
+  width: 27px; height: 27px; border-radius: 50%; flex-shrink: 0;
+  background: var(--accent); color: #fff;
+  font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+  display: flex; align-items: center; justify-content: center;
+  border: 2.5px solid #fff;
+  box-shadow: 0 0 0 1px rgba(13,17,23,0.14), 0 3px 10px -2px rgba(13,17,23,0.4);
+  transition: transform 140ms cubic-bezier(.2,.9,.3,1.2), background 140ms ease;
+}
+.mk-text {
+  display: flex; flex-direction: column; align-items: flex-start; line-height: 1.2;
+  padding: 3px 9px; border-radius: 7px;
+  background: rgba(255,255,255,0.94);
+  box-shadow: var(--lift-1);
+  white-space: nowrap;
+}
+.mk-name { font-size: 12.5px; font-weight: 650; color: var(--ink); letter-spacing: -0.01em; }
+.mk-price {
+  font-size: 11px; font-weight: 600; color: var(--accent-ink);
+  font-variant-numeric: tabular-nums;
+}
+.mk:hover .mk-dot { transform: scale(1.12); }
+.mk.on .mk-dot { background: var(--ink); transform: scale(1.2); }
+.mk.on .mk-text { background: var(--ink); }
+.mk.on .mk-name { color: #fff; }
+.mk.on .mk-price { color: var(--accent-vivid); }
+.mk-quiet .mk-dot { background: var(--faint); width: 18px; height: 18px; }
+.mk-quiet .mk-text { background: rgba(255,255,255,0.8); }
+.mk-quiet .mk-name { color: var(--muted); font-weight: 550; }
+
+/* Shared with the public profile page, so it stays exactly as it was. */
+.tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 650;
+  color: var(--accent-ink); background: var(--accent-soft);
+  border-radius: 999px; padding: 5px 11px;
+}
+
+.blank {
+  padding: 44px 24px; text-align: center; color: var(--muted);
+  border: 1px dashed var(--line-strong); border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.foot {
+  border-top: 1px solid var(--line); padding: 26px 0 44px;
+  /* Was --faint, which is 2.8:1 on white. Attribution is a licence condition,
+     so it is not allowed to be unreadable. */
+  font-size: 12.5px; color: var(--muted);
+}
+.foot p { margin: 0 0 6px; max-width: 60ch; }
+
+@media (max-width: 620px) {
+  .wrap { padding: 0 16px; }
+  .topbar { padding: 12px 16px; }
+}
+
+
+/* ==========================================================================
+   Setup wizard and operator profiles.
+
+   The wizard is a single narrow column on purpose: one question per screen,
+   thumb-reachable, and nothing in the periphery to read. The profile grid and
+   the public gallery share the card language already used on the map page.
+   ========================================================================== */
+
+.wiz {
+  width: 100%; max-width: 30rem; margin: 0 auto;
+  padding: 32px 0 60px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+.wiz-head { display: flex; flex-direction: column; gap: 10px; }
+.wiz-count {
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+.wiz-bar { display: flex; gap: 5px; }
+.wiz-bar i {
+  flex: 1; height: 4px; border-radius: 999px; background: var(--line);
+  transition: background 200ms ease;
+}
+.wiz-bar i.on { background: var(--accent); }
+
+.wiz-q {
+  font-size: clamp(26px, 5.4vw, 34px); font-weight: 780;
+  letter-spacing: -0.035em; line-height: 1.08;
+  margin: 10px 0 0; max-width: 18ch;
+}
+.wiz-sub {
+  margin: 0 0 6px; color: var(--muted);
+  font-size: 15px; line-height: 1.5; max-width: 44ch;
+}
+
+/* Sticks to the bottom of the column so the next tap is always in the same
+   place, however long the screen above it happens to be. */
+.wiz-nav { display: flex; gap: 10px; padding-top: 6px; }
+
+.wiz-done {
+  width: 54px; height: 54px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-soft); color: var(--accent-ink);
+  border: 1px solid var(--accent-line);
+}
+
+/* --- suggestions and removable chips ----------------------------------- */
+.sug { display: flex; flex-wrap: wrap; gap: 6px; }
+.sug-chip {
+  border: 1px solid var(--control-line); background: var(--surface); color: var(--muted);
+  border-radius: 999px; padding: 8px 13px; font-size: 13px; font-weight: 550;
+  cursor: pointer; min-height: 38px;
+}
+.sug-chip:hover { color: var(--ink); border-color: var(--line-strong); }
+.sug-chip.on { background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 650; }
+
+.chip-x {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--accent-soft); color: var(--accent-ink);
+  border: 1px solid var(--accent-line); border-radius: 999px;
+  padding: 6px 6px 6px 13px; font-size: 13px; font-weight: 600;
+}
+.chip-x button {
+  border: 0; background: none; cursor: pointer; color: inherit;
+  width: 26px; height: 26px; border-radius: 50%;
+  font-size: 17px; line-height: 1; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.chip-x button:hover { background: rgba(0, 135, 90, 0.14); }
+
+/* --- photo grid (operator side) ---------------------------------------- */
+.photo-grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+.photo-cell {
+  margin: 0; background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md); overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.photo-cell img {
+  width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block;
+  background: var(--surface-2);
+}
+.photo-cell figcaption { padding: 8px 10px; font-size: 12px; color: var(--muted); }
+.photo-ops { display: flex; gap: 1px; background: var(--line); }
+.photo-ops button {
+  flex: 1; border: 0; background: var(--surface); color: var(--muted);
+  min-height: 40px; cursor: pointer; font-size: 13px; font-weight: 600;
+}
+.photo-ops button:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+.photo-ops button:disabled { color: var(--line-strong); cursor: default; }
+.photo-ops button.danger { flex: 1.4; color: var(--alert); }
+
+@media (max-width: 620px) {
+  .wiz { padding: 22px 0 44px; }
+}
+
+/* --- trade filter -------------------------------------------------------
+   A visitor arrives looking for one kind of work. Before this existed the
+   page showed every trade mixed together and someone after junk removal was
+   handed car detailing. */
+/* --- starter-service suggestions ----------------------------------------
+   These are per trade. A hardcoded "Full detail" example was being shown to
+   mechanics, junk removers and bin cleaners alike, which told every one of
+   them the product was built for somebody else. */
+.sug { display: flex; flex-wrap: wrap; gap: 8px; }
+.sug-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--control-line); background: var(--surface);
+  color: var(--ink); border-radius: 999px;
+  padding: 9px 14px; font-size: 13.5px; font-weight: 550;
+  cursor: pointer; min-height: 40px;
+  transition: all 120ms ease;
+}
+.sug-chip:hover { border-color: var(--accent); color: var(--accent-ink); }
+.sug-min {
+  font-size: 11.5px; font-weight: 650; color: var(--muted);
+  background: var(--surface-2); border-radius: 999px; padding: 3px 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A pin whose label would collide keeps the label in the DOM for screen
+   readers and hover, but out of the way visually. */
+.mk-text.mk-hide {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+.mk:hover { z-index: 6; }
+.mk:hover .mk-text.mk-hide {
+  position: static; width: auto; height: auto; overflow: visible;
+  clip-path: none;
+}
+
+
+/* --- the bookings feed --------------------------------------------------
+   Somebody the operator has never met can now take a slot from the public
+   page. This is where they find that out, so the unread ones have to be
+   obvious across a room and at arm's length in a van. */
+.feed-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding-bottom: 2px;
+}
+
+.feed-row {
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: var(--r-md); padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 5px;
+}
+/* Unread gets the one accent colour, a white card and a lift. Read rows drop
+   to the page ground and stay in the list rather than disappearing: "who
+   booked me last week" is a question the operator asks. */
+.feed-row.unread {
+  border-left-color: var(--accent);
+  box-shadow: var(--lift-1);
+}
+.feed-row:not(.unread) { color: var(--ink-2); background: transparent; }
+.feed-row:not(.unread) .name { font-weight: 550; }
+
+.feed-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.feed-ago {
+  font-size: 12px; color: var(--faint); white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.feed-when {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--muted); padding-top: 3px;
+}
+
+/* --- postcode finder ----------------------------------------------------
+   The claim on this page is that a van is already near you. Without somewhere
+   to say where "you" is, the page can only list what exists — which is what
+   every directory already does. */
+/* --- in-app messages ----------------------------------------------------
+   A customer with no account and a business with a login have to be able to
+   talk in one place: the requirement was "no number exchange, no sms", so
+   there is no fallback channel if this screen is hard to read. Both sides
+   render the same conversation, so a bubble looks the same to the person who
+   sent it and the person who reads it. */
+
+.chat { display: flex; flex-direction: column; min-width: 0; }
+
+/* A fixed, scrolling log rather than a page that keeps growing: the composer
+   has to stay where the thumb left it while older messages are read. */
+.chat-log {
+  overflow-y: auto; max-height: clamp(300px, 50vh, 540px);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); padding: 14px;
+}
+.chat-msgs {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.chat-msg {
+  display: flex; flex-direction: column; gap: 3px;
+  align-items: flex-start; max-width: 84%;
+}
+.chat-msg.mine { align-self: flex-end; align-items: flex-end; }
+.bubble {
+  background: var(--surface-2); color: var(--ink);
+  border-radius: var(--r-md); padding: 10px 13px;
+  font-size: 14.5px; line-height: 1.45;
+  /* Typed line breaks are kept, and a pasted registration plate or URL wraps
+     instead of pushing the whole log sideways. */
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.chat-msg.mine .bubble { background: var(--accent); color: #fff; }
+.chat-at { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+.composer { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; }
+.composer-row { display: flex; gap: 10px; align-items: flex-end; }
+.composer textarea {
+  flex: 1 1 auto; min-width: 0; min-height: 48px; max-height: 168px;
+  resize: none; overflow-y: auto; border-radius: var(--r-md); font-size: 15px;
+}
+.composer .send {
+  flex: 0 0 auto; width: 48px; min-height: 48px; padding: 0; border-radius: var(--r-md);
+}
+/* Dimmed, not disabled: taking the textarea out of the tab order mid-send
+   drops the caret and, on a phone, closes the keyboard. */
+.composer.sending textarea { opacity: 0.6; }
+.composer-count {
+  font-size: 12px; color: var(--muted); text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.composer-count.over { color: var(--alert); font-weight: 650; }
+.composer-hint { margin: 0; font-size: 12px; color: var(--faint); }
+
+/* --- the customer's page at /c/:token -----------------------------------
+   This one page is the confirmation, the receipt and the only way back to
+   the booking. Losing the link loses all three, so nothing on it is small
+   print. */
+.guest-head {
+  padding: 40px 0 6px; display: flex; flex-direction: column; gap: 10px; max-width: 62ch;
+}
+.guest-head h1 {
+  font-size: clamp(28px, 5vw, 44px); font-weight: 800;
+  letter-spacing: -0.04em; line-height: 1.04;
+}
+.guest-body {
+  display: flex; flex-direction: column; gap: 16px;
+  padding: 14px 0 60px; max-width: 720px;
+}
+.card.confirm { border-color: var(--accent-line); box-shadow: var(--lift-1); }
+
+/* Every booking fact is labelled. A customer reading a bare run of text has
+   to guess which number is the price and which is the time. */
+/* Renamed from .facts: the landing page later defined .facts as its stat-tile
+   grid, and the later rule won — so the booking confirmation's key/value list
+   was rendering inside a tile box. Two different things cannot share a name. */
+.pairs { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 7px 16px; }
+.pairs dt {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted); padding-top: 3px;
+}
+.pairs dd { margin: 0; font-size: 15px; }
+
+.notice.keeper { border: 1px solid var(--accent-line); line-height: 1.5; }
+
+/* --- the operator's inbox at /app/messages ------------------------------- */
+.msgs { display: grid; gap: 14px; align-items: start; }
+.msgs-list { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.thread-row {
+  width: 100%; text-align: left; cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 3px solid var(--line); border-radius: var(--r-md);
+  padding: 12px 14px;
+  transition: border-color 130ms ease;
+}
+.thread-row:hover { border-color: var(--line-strong); }
+.thread-row.unread { border-left-color: var(--accent); box-shadow: var(--lift-1); }
+.thread-row.on { border-left-color: var(--ink); }
+.thread-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.thread-name {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+}
+.thread-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--accent-vivid); box-shadow: 0 0 0 3px rgba(22, 224, 142, 0.22);
+}
+.thread-at {
+  font-size: 12px; color: var(--faint); white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.thread-about { font-size: 13px; color: var(--muted); }
+
+.msgs-pane { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.msgs-pane-head { display: flex; align-items: center; gap: 10px; }
+.msgs-back {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: none; border: 0; cursor: pointer;
+  color: var(--muted); font-size: 14px; padding: 6px 4px; min-height: 40px;
+}
+.msgs-back:hover { color: var(--ink); }
+
+@media (min-width: 720px) {
+  .msgs { grid-template-columns: 250px minmax(0, 1fr); }
+  .msgs-list { max-height: 62vh; overflow-y: auto; padding-right: 2px; }
+  /* Both panes are on screen, so there is nothing to go back to. */
+  .msgs-back { display: none; }
+}
+
+/* One pane at a time on a phone. A list and a conversation side by side at
+   360px leaves neither wide enough to read. */
+@media (max-width: 719px) {
+  .msgs.open .msgs-list { display: none; }
+  .msgs:not(.open) .msgs-pane { display: none; }
+}
+
+
+/* ==========================================================================
+   The landing page.
+
+   The page used to be one white sheet. Hero, chips, cards and explainer all
+   sat on the same ground at the same weight, so nothing read as the product —
+   it read as a list of the things that had been built, and the visitor's eye
+   had nowhere to land.
+
+   This is three bands with three grounds. A dark hero, built entirely from
+   gradients, carrying display type at the size the claim deserves and one
+   nested search pill. A light band for browsing: category tiles, then the
+   openings beside the map. A tinted band for the deal. The foot underneath is
+   SiteFooter's own, and carries its own dark ground.
+
+   The pictures are drawn, not photographed. There is no licensed photography
+   here and none is faked; the tile art is inline SVG (see CategoryArt.tsx)
+   laid in as a background layer, so the day there are real photographs an
+   <img> drops into the same slot with no layout change.
+
+   Every class below belongs to Discover, CategoryArt and CityMap alone. .foot,
+   .topbar, .tlink, .wordmark, .blank, .btn, .seg and .land are shared with the
+   guest, watch, join and profile pages, so where this page needs them to look
+   different the rule is scoped under .land-home rather than changing the
+   shared class.
+   ========================================================================== */
+
+/* .wrap is 1080px and shared. Two panes plus a map need more room than that,
+   so the landing page gets its own container rather than widening theirs. */
+.wrap-wide { width: 100%; max-width: 1240px; margin: 0 auto; padding: 0 20px; }
+
+/* The last band is dark; without this the light body shows under it when the
+   page is shorter than the viewport, and on rubber-band overscroll. */
+.land-home { background: var(--night-1); }
+
+/* Keyboard focus was invisible on every control on this page: the tiles, the
+   pins and the cards are all real buttons and links with no default ring left
+   once their borders were restyled. The bare `:focus-visible` at the top of
+   this file now catches anything not named here; this list stays because it
+   is what the page was tuned against, and it costs nothing. */
+.btn:focus-visible, .tlink:focus-visible, .trade-chip:focus-visible,
+.area-chip:focus-visible, .seg button:focus-visible, .slot-card:focus-visible,
+.mk:focus-visible, .located button:focus-visible, .more .btn:focus-visible,
+.finder-go:focus-visible {
+  outline: 2px solid var(--accent-ink); outline-offset: 2px;
+}
+/* A dark-green ring is invisible on the dark bands, so those get the vivid
+   one — 8.69:1 against the lightest part of the hero wash and 11:1 against the
+   darkest. Listed after, and one level more specific than the bare
+   `:focus-visible` above, so it wins on both counts. */
+.hero-band :focus-visible, .land-home .topbar :focus-visible {
+  outline: 2px solid var(--accent-vivid); outline-offset: 3px;
+}
+
+/* --- the bar, over a dark hero ------------------------------------------
+   Scoped to .land-home: the same .topbar sits on the white profile, join,
+   watch and guest pages and must stay light there. */
+.land-home .topbar {
+  background: rgba(7, 16, 25, 0.74);
+  border-bottom-color: rgba(255, 255, 255, 0.10);
+}
+.land-home .wordmark { color: #fff; }
+.land-home .tlink { color: #cbd8e5; }
+.land-home .tlink:hover { color: #fff; background: rgba(255, 255, 255, 0.10); }
+.land-home .tlink.solid { background: var(--accent-vivid); color: #06231a; font-weight: 700; }
+.land-home .tlink.solid:hover { background: #55f0b3; color: #06231a; }
+
+/* --- band one: the hero -------------------------------------------------
+   A real ground, and not one byte of image to make it: three radial washes
+   over a diagonal gradient. No request, no decode, no layout shift when it
+   lands, and it costs the same on a 3G phone as on a desktop. */
+.hero-band {
+  position: relative;
+  color: #fff;
+  background:
+    radial-gradient(115% 85% at 10% -12%, rgba(22, 224, 142, 0.20), transparent 62%),
+    radial-gradient(85% 75% at 94% 6%, rgba(56, 150, 255, 0.20), transparent 60%),
+    radial-gradient(75% 65% at 50% 112%, rgba(0, 135, 90, 0.24), transparent 66%),
+    linear-gradient(166deg, var(--night-3) 0%, var(--night-2) 40%, var(--night-1) 100%);
+}
+
+/* Centred, because the claim is the whole page and there is nothing yet worth
+   putting beside it. */
+.hero {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 20px; padding: clamp(46px, 9vw, 104px) 0 clamp(42px, 7vw, 80px);
+}
+.hero > * { max-width: 100%; }
+
+.hero h1 {
+  margin: 0; max-width: 17ch; color: #fff;
+  font-size: clamp(40px, 8.4vw, 78px);
+  line-height: 0.98; letter-spacing: -0.045em; font-weight: 800;
+  text-wrap: balance;
+}
+/* --accent-vivid is 5.5:1 on the lightest part of this ground and 12:1 on the
+   darkest, so the emphasis is readable everywhere the wash reaches. */
+.hero h1 em { font-style: normal; color: var(--accent-vivid); }
+
+.hero-sub {
+  margin: 0; max-width: 47ch; color: var(--on-night-2);
+  font-size: clamp(16px, 1.9vw, 20px); line-height: 1.55;
+}
+
+.live {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-size: 12.5px; font-weight: 650; color: #d9ffef;
+  background: rgba(22, 224, 142, 0.13);
+  border: 1px solid rgba(22, 224, 142, 0.36);
+  border-radius: 999px; padding: 7px 15px 7px 12px;
+  flex-wrap: wrap; max-width: 100%;
+}
+.live i {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent-vivid);
+  animation: blip 2.4s ease-in-out infinite;
+}
+@keyframes blip {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 224, 142, 0.55); }
+  50%      { box-shadow: 0 0 0 6px rgba(22, 224, 142, 0); }
+}
+
+/* --- the postcode search ------------------------------------------------
+   One pill. The field and the button live inside the same rounded container
+   rather than sitting next to each other, so it reads as one search box and
+   not as a form with a submit. Still a real form with a labelled input, so
+   Enter submits and a screen reader announces what the field is for. */
+.hero-find {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 11px; width: 100%; padding-top: 6px;
+}
+.finder-label {
+  display: block; font-size: 12px; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase; color: var(--on-night-2);
+}
+.finder {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; max-width: 560px;
+  background: #fff; border-radius: 999px;
+  padding: 6px 6px 6px 18px;
+  box-shadow: 0 22px 48px -20px rgba(0, 0, 0, 0.72), 0 2px 6px rgba(0, 0, 0, 0.24);
+}
+/* The field inside drops its own outline (see below), so this ring IS the
+   focus indicator for it. Solid rather than the 42%-alpha green it was: over
+   a near-black ground that composited down to something barely separable from
+   the ground itself, which is a focus indicator that only works on the mockup. */
+.finder:focus-within {
+  outline: 3px solid var(--accent-vivid);
+  outline-offset: 2px;
+  box-shadow: 0 22px 48px -20px rgba(0, 0, 0, 0.72);
+}
+.finder-pin { display: inline-flex; flex: 0 0 auto; color: var(--accent); }
+.finder input {
+  flex: 1 1 auto; width: auto; min-width: 0; min-height: 56px;
+  border: 0; background: none; box-shadow: none; border-radius: 999px;
+  padding: 0 4px 0 10px; font-size: 17px; font-weight: 550; color: var(--ink);
+}
+.finder input::placeholder { color: var(--faint); font-weight: 500; }
+/* The ring belongs to the pill, not the field inside it. */
+.finder input:focus { outline: none; border-color: transparent; }
+.finder-go {
+  flex: 0 0 auto; border: 0; cursor: pointer;
+  min-height: 56px; min-width: 132px; padding: 0 26px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--ink); color: #fff;
+  font-size: 16px; font-weight: 700; letter-spacing: -0.01em;
+  transition: background 120ms ease;
+}
+.finder-go:hover:not(:disabled) { background: var(--accent-ink); }
+.finder-go:disabled { background: var(--surface-2); color: var(--muted); cursor: default; }
+.finder-note { margin: 0; font-size: 13px; color: var(--on-night-2); }
+
+.hero-warn {
+  margin: 0; max-width: 52ch;
+  background: rgba(255, 176, 92, 0.14); border: 1px solid rgba(255, 176, 92, 0.42);
+  color: #ffdcb0; border-radius: var(--r-md);
+  padding: 12px 16px; font-size: 14px; line-height: 1.45;
+}
+
+.located {
+  display: inline-flex; align-items: center; gap: 5px 10px; flex-wrap: wrap;
+  justify-content: center; max-width: 100%;
+  background: rgba(22, 224, 142, 0.13); border: 1px solid rgba(22, 224, 142, 0.36);
+  border-radius: 999px; padding: 7px 7px 7px 15px;
+  font-size: 14px; color: #d9ffef;
+}
+.located svg { flex: 0 0 auto; }
+.located button {
+  border: 0; cursor: pointer; background: #fff; color: var(--ink);
+  font-size: 13px; font-weight: 700; border-radius: 999px;
+  padding: 0 15px; min-height: 36px;
+}
+.located button:hover { background: var(--accent-vivid); color: #06231a; }
+
+/* --- what is actually listed --------------------------------------------
+   Counted from the same rows the list below renders, never written down. If
+   the number is not in the data the tile does not appear. Hairlines come from
+   the grid gap, so a row that wraps never shows a stranded divider. */
+/* Flex, not grid: there are two tiles or three depending on whether a price
+   is listed, and auto-fit leaves a stranded empty cell whenever the count and
+   the column count disagree. Flex just grows the last one instead. */
+.facts {
+  display: flex; flex-wrap: wrap; gap: 1px;
+  width: 100%; max-width: 740px; margin-top: 6px;
+  background: var(--night-line); border: 1px solid var(--night-line);
+  border-radius: var(--r-lg); overflow: hidden;
+}
+.fact {
+  flex: 1 1 104px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  min-width: 0; padding: 16px 10px 15px; background: rgba(6, 13, 21, 0.5);
+}
+.fact b {
+  font-size: clamp(23px, 4.4vw, 34px); font-weight: 800; color: #fff;
+  letter-spacing: -0.04em; line-height: 1.1; font-variant-numeric: tabular-nums;
+}
+.fact span { font-size: 12.5px; color: var(--on-night-2); line-height: 1.35; }
+
+/* --- band two: browsing -------------------------------------------------- */
+.browse-band {
+  background: var(--bg);
+  padding: clamp(34px, 5vw, 66px) 0 clamp(30px, 5vw, 58px);
+}
+.band-title {
+  margin: 0; color: var(--ink);
+  font-size: clamp(24px, 3.8vw, 36px); font-weight: 800;
+  letter-spacing: -0.035em; line-height: 1.08;
+}
+.band-sub { margin: 9px 0 0; font-size: 15px; color: var(--muted); }
+
+/* The band the category tiles sit in. The tiles themselves are
+   `.cat-tile*` in styles-home.css, next to the rest of the front page. */
+.tiles-band { padding-bottom: clamp(28px, 4vw, 46px); }
+
+/* --- horizontal filter rail ---------------------------------------------
+   Bled to the screen edge on a phone so the row visibly runs off it, which is
+   the only honest way to say "there is more of this sideways". The negative
+   margin matches the container padding exactly, so the page body still cannot
+   scroll sideways. */
+.rail {
+  display: flex; gap: 8px;
+  overflow-x: auto; overscroll-behavior-x: contain;
+  scrollbar-width: none; -ms-overflow-style: none;
+  margin: 0 -20px; padding: 10px 20px 8px;
+}
+.rail::-webkit-scrollbar { display: none; }
+.rail > * { flex: 0 0 auto; }
+@media (min-width: 760px) {
+  .rail { flex-wrap: wrap; overflow: visible; margin: 0; padding: 10px 0 8px; }
+}
+
+/* Neighbourhoods are a second-order filter, so they read quieter than the
+   trade tiles even though they behave the same way. */
+.area-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 40px; padding: 0 14px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--control-line); background: var(--surface); color: var(--ink-2);
+  font-size: 13.5px; font-weight: 600;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.area-chip:hover { border-color: var(--line-strong); color: var(--ink); }
+.area-chip.on { background: var(--ink); border-color: var(--ink); color: #fff; }
+.area-chip.none { background: transparent; border-style: dashed; color: var(--muted); }
+.area-n {
+  font-size: 11.5px; font-weight: 700; color: var(--accent-ink);
+  font-variant-numeric: tabular-nums;
+}
+.area-chip.on .area-n { color: var(--accent-vivid); }
+
+/* --- browse: the list and the map --------------------------------------- */
+.browse { padding: 8px 0 10px; }
+.browse-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 10px 16px; flex-wrap: wrap; padding: 18px 0 2px;
+  scroll-margin-top: 74px;
+}
+.browse-head h2 {
+  font-size: clamp(22px, 4.2vw, 30px); font-weight: 800; letter-spacing: -0.035em;
+}
+.browse-sub { margin: 5px 0 0; font-size: 13.5px; color: var(--muted); }
+
+.browse-grid { display: grid; gap: 16px; align-items: start; }
+/* Without this a long business name in a card stretches the whole column and
+   the page starts scrolling sideways. */
+.browse-grid > * { min-width: 0; }
+
+/* On a narrow screen the map sits ABOVE the list, at a height that leaves the
+   openings visible underneath. It is never hidden: it is the only thing here a
+   directory cannot do, and putting it behind a toggle read as deleting it. */
+.map-col { order: -1; }
+.list-col { order: 0; }
+.map-col .map-canvas, .map-col .map-fallback { height: clamp(230px, 34vh, 320px); }
+.map-col.map-big .map-canvas, .map-col.map-big .map-fallback { height: 68vh; }
+.seg {
+  display: inline-flex; gap: 3px; padding: 3px;
+  background: var(--surface-2); border: 1px solid var(--control-line); border-radius: 999px;
+}
+.seg button {
+  border: 0; background: none; cursor: pointer; color: var(--muted);
+  min-height: 36px; padding: 0 15px; border-radius: 999px;
+  font-size: 13.5px; font-weight: 650;
+  transition: background 120ms ease, color 120ms ease;
+}
+.seg button[aria-pressed="true"] {
+  background: var(--surface); color: var(--ink); box-shadow: var(--lift-1);
+}
+
+@media (min-width: 960px) {
+  .browse-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 430px); gap: 24px; }
+  /* The map stays put while the list scrolls past it. */
+  .map-col { position: sticky; top: 78px; order: 0; }
+  .map-col .map-canvas, .map-col .map-fallback { height: clamp(420px, 62vh, 620px); }
+  .seg { display: none; }
+}
+
+.map-shell {
+  position: relative; border-radius: var(--r-lg); overflow: hidden;
+  border: 1px solid var(--line-strong); box-shadow: var(--lift-2);
+  background: var(--surface-2);
+}
+.map-canvas, .map-fallback { width: 100%; height: clamp(320px, 56vh, 460px); }
+.map-fallback {
+  display: flex; align-items: center; justify-content: center;
+  padding: 32px 24px; text-align: center; color: var(--muted);
+}
+.map-hint {
+  position: absolute; top: 10px; left: 10px; z-index: 2; pointer-events: none;
+  background: rgba(255, 255, 255, 0.94); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 12px; font-size: 12px; font-weight: 600; box-shadow: var(--lift-1);
+}
+@media (min-width: 960px) {
+  .map-canvas, .map-fallback { height: clamp(420px, calc(100vh - 168px), 620px); }
+}
+
+/* --- an open hour -------------------------------------------------------
+   Six elements and no wrappers. Four hundred of these have to lay out without
+   the browser noticing, so the card is a two-column grid rather than a stack
+   of flex rows, and nothing in it transforms on hover. */
+.slot-grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+}
+.slot-card {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto 1fr; gap: 2px 14px;
+  padding: 14px 15px 13px;
+  border-radius: var(--r-md); border: 1px solid var(--line);
+  background: var(--surface); color: inherit;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.slot-card:hover {
+  color: inherit; border-color: var(--line-strong); box-shadow: var(--lift-2);
+}
+.slot-svc {
+  grid-column: 1; font-size: 15px; font-weight: 700;
+  letter-spacing: -0.015em; line-height: 1.25;
+}
+.slot-price {
+  grid-column: 2; grid-row: 1 / span 2; align-self: start;
+  font-size: 20px; font-weight: 800; letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.slot-when {
+  grid-column: 1; font-size: 13.5px; font-weight: 600;
+  color: var(--ink-2); font-variant-numeric: tabular-nums;
+}
+/* A business name and a trade on one line will always be too long for a
+   272px card somewhere, and wrapping it makes every card a different height. */
+.slot-biz {
+  grid-column: 1; margin-top: 2px; font-size: 12.5px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.slot-foot {
+  grid-column: 1 / -1; align-self: end; margin-top: 11px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.slot-near {
+  font-size: 12px; font-weight: 650; color: var(--accent-ink);
+  background: var(--accent-soft); border-radius: 999px; padding: 4px 10px;
+}
+.slot-near.plain { color: var(--muted); background: var(--surface-2); font-weight: 600; }
+.slot-go {
+  font-size: 12.5px; font-weight: 700; color: #fff; white-space: nowrap;
+  background: var(--ink); border-radius: 999px; padding: 7px 15px;
+  transition: background 120ms ease;
+}
+.slot-card:hover .slot-go { background: var(--accent-ink); }
+
+.more { display: flex; justify-content: center; padding: 16px 0 4px; }
+
+@media (max-width: 620px) {
+  .wrap-wide { padding: 0 16px; }
+  .rail { margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
+}
+/* The pill has to hold a pin, a field wide enough for a postcode and a button
+   inside 288px of screen, so the button gives up its padding first. */
+@media (max-width: 460px) {
+  .finder { padding-left: 13px; gap: 4px; }
+  .finder input { font-size: 16px; padding-left: 8px; }
+  .finder-go { min-width: 96px; padding: 0 16px; font-size: 15px; }
+}
+
+/* Nothing here needs to move for the page to work. */
+@media (prefers-reduced-motion: reduce) {
+  .live i { animation: none; }
+  .slot-card, .slot-go, .trade-chip, .area-chip, .seg button,
+  .finder-go, .mk-dot { transition: none; }
+}
+
+/* --- sample listings -----------------------------------------------------
+   The seeded businesses exist so the map is not blank before anyone signs up.
+   Several of their trades are licensed in California and they hold no licence,
+   so they say what they are rather than being passed off as real. */
+.sample {
+  display: inline-block; margin-left: 7px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; vertical-align: 1px;
+  color: var(--muted); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px;
+}
+.sample-note {
+  margin: 0 0 14px; padding: 12px 14px; border-radius: var(--r-md);
+  font-size: 13.5px; line-height: 1.5;
+  color: var(--alert); background: var(--alert-soft);
+  border: 1px solid var(--alert-line);
+}
+
+.foot-n { font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* --- the bottom sheet ----------------------------------------------------
+   Owned by Sheet.tsx. These rules were two copies of the same inline styles
+   in Clients and Jobs; the sheet is a component now and the appearance travels
+   with it, which is also why the panel is a grid rather than a form — the
+   caller brings the form. */
+.sheet-scrim {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: flex-end; justify-content: center;
+  background: rgba(28, 26, 23, 0.4);
+}
+.sheet {
+  display: flex; flex-direction: column; gap: 14px;
+  width: 100%; max-width: 520px; padding: 20px;
+  border-radius: 16px 16px 0 0;
+  background: var(--bg);
+  max-height: 90vh; overflow-y: auto;
+}
+.sheet:focus { outline: none; }
+
+/* --- the two irreversible confirmations ----------------------------------
+   Owned by ConfirmDestructive.tsx and the two callers that put it in front of
+   an erasure and an account closure. The lists in there are the specific
+   things that stop existing, so they get the measure and the leading the
+   cancellation terms on the checkout get, and for the same reason: this is
+   text somebody has to read once, properly, before a button they cannot take
+   back. */
+.erase-list { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.55; }
+.erase-list li + li { margin-top: 7px; }
+.sheet .stack > strong { font-size: 13px; }
+
+/* --- the payment seam ----------------------------------------------------
+   Owned by PaymentMethod.tsx: the space the payment provider's own element
+   will occupy, and which is empty until one is connected. Drawn as an outline
+   rather than as a filled field on purpose — anything that looked like a card
+   field would invite somebody to type a card number into a site that has
+   nowhere to put one and refuses them outright. */
+.pay-seam {
+  border: 1.5px dashed var(--control-line);
+  border-radius: 10px;
+  padding: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  background: var(--surface-2);
 }

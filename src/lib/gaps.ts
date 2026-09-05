@@ -76,7 +76,7 @@ export async function detectGaps(
     ...timeOff,
   ].sort((x, y) => x.start - y.start);
 
-  const found: Array<Interval & { locationId: string | null }> = [];
+  const found: Array<Interval & { locationId: string | null; wholeDay: boolean }> = [];
 
   for (let d = 0; d < days; d++) {
     const dayStart = addLocalDays(rangeStart, tz, d);
@@ -85,10 +85,15 @@ export async function detectGaps(
       if (h.weekday !== local.weekday) continue;
       const winStart = fromLocal(tz, local.year, local.month, local.day, h.start_minute);
       const winEnd = fromLocal(tz, local.year, local.month, local.day, h.end_minute);
-      for (const f of subtract({ start: winStart, end: winEnd }, busy)) {
+      const free = subtract({ start: winStart, end: winEnd }, busy);
+      // Nothing was subtracted, so nothing is booked in this window. That is an
+      // empty day, not a hole to fill, and the app has to say so differently.
+      const wholeDay = free.length === 1
+        && free[0]!.start <= winStart && free[0]!.end >= winEnd;
+      for (const f of free) {
         const start = Math.max(f.start, earliest);
         if (f.end - start >= op.min_gap_seconds) {
-          found.push({ start, end: f.end, locationId: h.location_id });
+          found.push({ start, end: f.end, locationId: h.location_id, wholeDay });
         }
       }
     }
@@ -138,8 +143,8 @@ export async function detectGaps(
       `INSERT INTO gaps
          (id, operator_id, starts_at, ends_at, prev_appointment_id, next_appointment_id,
           prev_lat, prev_lng, next_lat, next_lng, baseline_drive_seconds,
-          is_mobile, location_id, status, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'open',?,?)
+          is_mobile, location_id, fills_whole_day, status, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'open',?,?)
        ON CONFLICT (operator_id, starts_at, ends_at) WHERE status IN ('open','offering')
        DO UPDATE SET
          prev_appointment_id = excluded.prev_appointment_id,
@@ -147,35 +152,53 @@ export async function detectGaps(
          prev_lat = excluded.prev_lat, prev_lng = excluded.prev_lng,
          next_lat = excluded.next_lat, next_lng = excluded.next_lng,
          baseline_drive_seconds = excluded.baseline_drive_seconds,
+         fills_whole_day = excluded.fills_whole_day,
          updated_at = excluded.updated_at
-       WHERE gaps.prev_appointment_id IS NOT excluded.prev_appointment_id
-          OR gaps.next_appointment_id IS NOT excluded.next_appointment_id
-          OR gaps.baseline_drive_seconds IS NOT excluded.baseline_drive_seconds
-          OR gaps.prev_lat IS NOT excluded.prev_lat
-          OR gaps.next_lat IS NOT excluded.next_lat`,
+       -- Same reason the expiry below skips posted rows: an operator's typed
+       -- opening is not this function's to rewrite. Where a posted row already
+       -- holds the window, the conflict is left alone rather than being
+       -- restamped with detected anchors.
+       WHERE gaps.source = 'detected'
+         AND (gaps.prev_appointment_id IS NOT excluded.prev_appointment_id
+           OR gaps.next_appointment_id IS NOT excluded.next_appointment_id
+           OR gaps.baseline_drive_seconds IS NOT excluded.baseline_drive_seconds
+           OR gaps.prev_lat IS NOT excluded.prev_lat
+           OR gaps.next_lat IS NOT excluded.next_lat
+           OR gaps.fills_whole_day IS NOT excluded.fills_whole_day)`,
     ).bind(
       newId(), op.id, g.start, g.end,
       a.prev?.id ?? null, a.next?.id ?? null,
       a.pPoint?.lat ?? null, a.pPoint?.lng ?? null,
       a.nPoint?.lat ?? null, a.nPoint?.lng ?? null,
       baselineByGap.get(i) ?? null,
-      isMobileOperator ? 1 : 0, g.locationId, t, t,
+      isMobileOperator ? 1 : 0, g.locationId, g.wholeDay ? 1 : 0, t, t,
     ));
   }
   if (writes.length) await env.DB.batch(writes);
 
   // Expire open gaps in range that no longer correspond to free time.
   // 'offering' rows are deliberately spared — a live offer still needs its gap.
+  //
+  // Posted gaps are spared too, and for a different reason. A detected gap is
+  // derived state: this function computes it from the calendar, so this
+  // function is entitled to withdraw it. A posted gap was typed by the
+  // operator and is not derived from anything — there is no calendar hole for
+  // it to stop matching — so every run would find it unaccounted for and
+  // expire it. An operator who put up their one free Thursday would watch it
+  // vanish the next time detection ran, which is the entire feature.
   const keep = new Set(found.map((g) => `${g.start}:${g.end}`));
   const stale = await env.DB.prepare(
     `SELECT id, starts_at, ends_at FROM gaps
-      WHERE operator_id = ? AND status = 'open' AND starts_at >= ? AND starts_at < ?`,
+      WHERE operator_id = ? AND status = 'open' AND source = 'detected'
+        AND starts_at >= ? AND starts_at < ?`,
   ).bind(op.id, rangeStart, rangeEnd).all<{ id: string; starts_at: number; ends_at: number }>();
 
   const expiring = (stale.results ?? []).filter((r) => !keep.has(`${r.starts_at}:${r.ends_at}`));
   if (expiring.length) {
     await env.DB.batch(expiring.map((r) =>
-      env.DB.prepare(`UPDATE gaps SET status='expired', updated_at=? WHERE id=? AND status='open'`)
+      env.DB.prepare(
+        `UPDATE gaps SET status='expired', updated_at=?
+          WHERE id=? AND status='open' AND source='detected'`)
         .bind(t, r.id)));
   }
 

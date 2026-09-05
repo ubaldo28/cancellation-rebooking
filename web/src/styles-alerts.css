@@ -1,0 +1,200 @@
+/* ==========================================================================
+   Openings alerts (/a) and van tracking.
+
+   Only what the two of them genuinely add. Everything already in styles.css —
+   .card, .btn, .chip, .trade-chip, .notice, .error, .blank, .facts, the type
+   scale and every token — is reused as it stands, so these pages look like the
+   rest of the site rather than like a bolt-on.
+   ========================================================================== */
+
+/* A form and a set of settings, read one line at a time. Narrower than the
+   map pages on purpose: long measure is what makes a form feel like paperwork.
+
+   Doubled up with .wrap (and .card below) rather than written as a bare class:
+   main.tsx imports App before styles.css, so this file lands FIRST in the
+   bundle and a single class would lose every tie to the sheet it is extending. */
+.wrap.alerts {
+  max-width: 620px;
+  display: flex; flex-direction: column; gap: 16px;
+  padding-top: 14px; padding-bottom: 60px;
+}
+
+.alert-head { display: flex; flex-direction: column; gap: 8px; padding: 26px 0 4px; }
+.alert-head h1 { font-size: clamp(26px, 6vw, 33px); font-weight: 750; letter-spacing: -0.03em; }
+.alert-lede { margin: 0; font-size: 15.5px; line-height: 1.55; color: var(--ink-3); }
+
+.card.alert-card {
+  display: flex; flex-direction: column; gap: 12px;
+  border-radius: var(--r-lg); padding: 18px; box-shadow: var(--lift-1);
+}
+.card.alert-card h2 { font-size: 16px; }
+
+/* Label and value, in a column on a phone and a pair of columns as soon as
+   there is room. This is a local class rather than .facts: styles.css defines
+   .facts twice and the landing-page version wins. */
+.pairs { margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px 16px; }
+.pairs dt {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted); padding-top: 8px;
+}
+.pairs dt:first-of-type { padding-top: 0; }
+.pairs dd { margin: 0; font-size: 15px; }
+@media (min-width: 480px) {
+  .pairs { grid-template-columns: 7.5rem minmax(0, 1fr); gap: 9px 16px; }
+  .pairs dt, .pairs dt:first-of-type { padding-top: 3px; }
+}
+
+/* --- the form ----------------------------------------------------------- */
+.watch-form { display: flex; flex-direction: column; gap: 6px; }
+.watch-form > label { margin-top: 10px; }
+.watch-form > label:first-child { margin-top: 0; }
+
+/* A hint under a field is part of the field, so it sits tight against it and
+   carries the same muted weight as the label above. */
+.field-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.field-note.bad { color: var(--alert); font-weight: 550; }
+
+.opt {
+  font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint);
+}
+
+/* A real fieldset, so a screen reader reads "what do you want done" before the
+   first chip instead of leaving eight buttons floating with no question. */
+.watch-field {
+  border: 0; margin: 10px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.watch-field legend { padding: 0; font-size: 13px; color: var(--muted); }
+
+/* The trade chips wrap rather than scroll: this is a choice being made, not a
+   filter being skimmed, and a chip that ran off the edge could be missed. */
+.chip-wrap { display: flex; flex-wrap: wrap; gap: 7px; }
+.chip-wrap .trade-chip:disabled { opacity: 0.45; cursor: default; }
+.chip-wrap .trade-chip:disabled:hover { border-color: var(--line); color: var(--muted); }
+
+/* --- the detour slider --------------------------------------------------- */
+/* styles.css styles every input as a box with a border and a 48px height.
+   A range input has to shed all of that before it looks like a track. */
+.range-row { display: flex; align-items: center; gap: 14px; }
+.range {
+  -webkit-appearance: none; appearance: none;
+  flex: 1 1 auto; min-width: 0;
+  min-height: 44px;                    /* the touch target, not the track */
+  padding: 0; border: 0; border-radius: 0; background: transparent;
+}
+.range:focus { outline: none; }
+.range:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 4px; border-radius: 6px; }
+
+.range::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 3px; background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.range::-moz-range-track {
+  height: 6px; border-radius: 3px; background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 26px; height: 26px; margin-top: -11px;
+  border-radius: 50%; background: var(--accent); border: 3px solid var(--surface);
+  box-shadow: var(--lift-2); cursor: grab;
+}
+.range::-moz-range-thumb {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent); border: 3px solid var(--surface);
+  box-shadow: var(--lift-2); cursor: grab;
+}
+.range-out {
+  flex: 0 0 auto; min-width: 4.6rem; text-align: right;
+  font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--ink);
+}
+
+/* --- buttons at the foot of a form or a card ---------------------------- */
+.watch-submit { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 14px; }
+.watch-submit .btn { flex: 1 1 auto; }
+
+.alert-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.alert-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 14px; }
+
+/* --- notification state -------------------------------------------------- */
+/* The state is said in words, not only in colour: a green dot on its own is
+   not an answer to "am I going to be told or not". */
+.push-state {
+  margin: 0; display: flex; align-items: center; gap: 8px;
+  font-size: 15px; font-weight: 650; letter-spacing: -0.01em;
+}
+.push-state i {
+  width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--faint);
+}
+.push-state.on { color: var(--accent-ink); }
+.push-state.off { color: var(--ink-2); }
+
+/* --- the link, which is the whole account ------------------------------- */
+.link-row { display: flex; align-items: flex-end; gap: 8px; }
+.link-box {
+  font-size: 13px; letter-spacing: -0.01em;
+  background: var(--surface-2); border-color: var(--line-strong);
+  text-overflow: ellipsis;
+}
+.link-row .btn { flex: 0 0 auto; }
+
+/* ==========================================================================
+   Van tracking — a card inside the customer's own booking page.
+   ========================================================================== */
+.card.vt { display: flex; flex-direction: column; gap: 12px; }
+.vt-title { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
+.vt-quiet { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+
+/* The two numbers that answer "should I go downstairs yet". */
+.vt-figures { display: flex; flex-wrap: wrap; gap: 10px 26px; }
+.vt-figure { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.vt-figure b {
+  font-size: 24px; font-weight: 800; letter-spacing: -0.035em; line-height: 1.1;
+}
+.vt-figure span { font-size: 12.5px; color: var(--muted); }
+
+.vt-map {
+  width: 100%; height: clamp(160px, 34vh, 240px);
+  border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--line);
+}
+
+/* The van. A dot with one ring pulsing off it — the only thing on this map, so
+   it does not have to compete with anything. */
+.vt-van {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--accent); border: 3px solid #fff;
+  box-shadow: var(--lift-2); position: relative;
+}
+.vt-van::after {
+  content: ''; position: absolute; inset: -7px;
+  border-radius: 50%; border: 2px solid var(--accent-vivid);
+  animation: vt-ping 2s ease-out infinite;
+}
+@keyframes vt-ping {
+  0%   { transform: scale(0.6); opacity: 0.9; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+
+/* Nothing on either page needs to move for it to work. */
+@media (prefers-reduced-motion: reduce) {
+  .vt-van::after { animation: none; opacity: 0.5; }
+  .trade-chip, .btn, .range::-webkit-slider-thumb { transition: none; }
+}
+
+/* --- a watch that cannot reach anybody ----------------------------------- */
+/* The one state on this page that is worth interrupting for. Everything else
+   here is a setting; this is a promise the site cannot keep — an opening will
+   match, and there will be nowhere to send it. It borrows the alert tokens
+   rather than the accent ones so it does not read as another tip.
+
+   Doubled up with .notice for the reason given at the top of this file: this
+   sheet lands before styles.css, so a bare .silent would lose to it. */
+.notice.silent {
+  background: var(--alert-bg);
+  border: 1px solid var(--alert-line);
+  color: var(--ink);
+  line-height: 1.5;
+}
+.notice.silent strong { color: var(--alert); }

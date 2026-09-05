@@ -1,0 +1,453 @@
+/*
+ * The four index pages: /near, /los-angeles, /browse and /cost.
+ *
+ * All four do the same job — enumerate something the site covers so that every
+ * page below it is reachable by a person and by a crawler — so they share one
+ * stylesheet rather than four near-identical ones. The visual language is the
+ * category and trade pages' and deliberately nothing new: white ground,
+ * generous space, hairline rules only between things somebody has to tell
+ * apart, and the single green accent used only where something is live or
+ * actionable. A directory that looked like a different product from the pages
+ * it leads to would tell a visitor they had left the site.
+ *
+ * Two of these pages have a server-rendered twin the Worker splices into #root
+ * before React mounts over it. The markup here is therefore the same shape as
+ * seo.ts renders — a heading with a counted line under it, a lede, then
+ * sections of links carrying counts — so the page does not visibly rearrange
+ * itself under the reader at the moment React takes over.
+ *
+ * Everything is prefixed .ix- so it cannot collide with the category, trade or
+ * profile stylesheets, which are loaded on other routes but share a document.
+ */
+
+/* Wider than the category page (640px) because these carry grids of tiles and
+   counts, and the same width as the trade page so the two read as one site. */
+.ix-page { max-width: 900px; }
+
+/* --------------------------------------------------------------------------
+ * Head
+ * ----------------------------------------------------------------------- */
+.ix-head { padding-bottom: 4px; }
+
+.ix-head h1 {
+  font-size: clamp(26px, 4.4vw, 34px);
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+}
+
+/*
+ * The counted line under the heading, which is the server-rendered pages'
+ * <span class="count">. It is a block rather than a run inside the h1 because
+ * it is a different register — the heading names the page, this reports what
+ * was in the rows a second ago — and because a number wrapped into a 34px
+ * heading is read as part of the name.
+ */
+.ix-count {
+  display: block;
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--accent-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.ix-lede {
+  margin: 14px 0 0;
+  max-width: 62ch;
+  font-size: 15.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* --------------------------------------------------------------------------
+ * The stat line
+ *
+ * Nothing here is written down: every figure is counted from the rows the page
+ * is about to render. Rules top and bottom because it is the page's evidence
+ * and should read as a separate register from the prose around it.
+ * ----------------------------------------------------------------------- */
+.ix-stats {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 34px;
+  margin: 22px 0 0;
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.ix-stat { display: grid; gap: 2px; }
+
+.ix-stat b {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.ix-stat span { font-size: 13px; color: var(--muted); }
+
+/* --------------------------------------------------------------------------
+ * Sections
+ * ----------------------------------------------------------------------- */
+.ix-sec { margin-top: 40px; }
+
+.ix-sec > h2 {
+  font-size: 21px;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+  margin-bottom: 4px;
+}
+
+.ix-sec-sub {
+  margin: 0 0 18px;
+  max-width: 62ch;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* A quiet aside under a list — how a ranking was arrived at, where the rest of
+   something lives. Never a figure that is not also in the list above it. */
+.ix-note {
+  margin: 14px 0 0;
+  max-width: 62ch;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.ix-note a { color: var(--accent-ink); text-underline-offset: 3px; }
+
+/*
+ * The sentence that says where a set of figures came from, set apart from the
+ * prose so it cannot be skimmed past. Same treatment as the cost guide's
+ * .tr-note, because it is doing the same job on a page of the same numbers.
+ */
+.ix-flag {
+  margin: 22px 0 0;
+  padding: 16px 18px;
+  border: 1px solid var(--accent-line);
+  border-left-width: 4px;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  max-width: 64ch;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* --------------------------------------------------------------------------
+ * A column of whole-row links
+ *
+ * The category page's rows, unchanged in behaviour: the row is the target, so
+ * a thumb aimed at a name cannot miss by landing in the space beside it. The
+ * 56px floor is a floor and not the target — a row carrying a count grows past
+ * it on its own.
+ * ----------------------------------------------------------------------- */
+.ix-list { list-style: none; margin: 0; padding: 0; }
+
+.ix-list li { border-bottom: 1px solid var(--line); }
+
+.ix-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 56px;
+  padding: 14px 12px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 10px;
+}
+
+.ix-row:hover { background: var(--accent-soft); }
+
+/* The tint alone is 1.1:1 against white, which is not something a keyboard
+   user tabbing down forty rows can see. The tint stays so focus and hover look
+   related; the ring is what actually says where you are. */
+.ix-row:focus-visible {
+  background: var(--accent-soft);
+  outline: 2px solid var(--accent-ink);
+  outline-offset: -2px;
+}
+
+/* Held down on a phone, where there is no hover to tell you the tap landed. */
+.ix-row:active { background: var(--accent-soft); }
+
+.ix-row-text { display: grid; gap: 3px; min-width: 0; }
+
+.ix-row-name { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+
+.ix-row-sub { font-size: 13px; line-height: 1.45; color: var(--muted); }
+
+/* The count is the evidence on the row, so it never wraps away to nothing and
+   never shrinks below the size the sub-line is read at. */
+.ix-row-n {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ix-row-go { flex: 0 0 auto; font-size: 20px; color: var(--faint); }
+
+/* --------------------------------------------------------------------------
+ * A grid of tiles
+ *
+ * For sets where the counts beside the names are meant to be compared at a
+ * glance — neighbourhoods, mostly. The count sits under the name rather than
+ * beside it so a two-word place name wrapping inside its tile cannot leave the
+ * row of tiles at three different heights.
+ * ----------------------------------------------------------------------- */
+.ix-tiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+.ix-tile {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  /* A phone target first, so the same 48px floor the category rows use. */
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.ix-tile:hover { border-color: var(--line-strong); color: var(--accent-ink); }
+
+.ix-tile-name {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.ix-tile-n {
+  font-size: 12.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------------------
+ * One neighbourhood on the index
+ *
+ * A heading that is a link, and under it the trades open in that one place.
+ * The trades are a wrapped run rather than a grid: there are between one and
+ * six of them per place and a grid of two items reads as a broken layout.
+ * ----------------------------------------------------------------------- */
+.ix-area {
+  border-top: 1px solid var(--line);
+  padding: 18px 0 6px;
+}
+
+.ix-area > h3 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+
+.ix-area > h3 a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+
+.ix-area > h3 a:hover { color: var(--accent-ink); }
+
+/* The count belongs to the heading it follows, so it stays inside the h3 and
+   is read out with the place name rather than as an orphan number. */
+.ix-area-n {
+  margin-left: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.ix-jump {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+}
+
+/* 44px tall: these read as small text links but they are the deepest link on
+   the page — the one that answers "junk removal in Sherman Oaks" — and a
+   fiddly target is the last thing somebody scanning a long index needs. */
+.ix-jump a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 10px;
+  font-size: 14.5px;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.ix-jump a:hover { color: var(--accent-ink); }
+
+/* --------------------------------------------------------------------------
+ * A category and its services
+ *
+ * The heading is an h2 on the browse index, where a category is a top-level
+ * division of the page, and an h3 on the metro page, where the same block sits
+ * under "Every service". The element states the rank and this states the
+ * scale, so the two pages look alike without either one lying about its
+ * outline.
+ * ----------------------------------------------------------------------- */
+.ix-cat {
+  border-top: 1px solid var(--line);
+  margin-top: 30px;
+  padding-top: 18px;
+}
+
+.ix-cat > h2,
+.ix-cat > h3 { font-size: 19px; font-weight: 750; letter-spacing: -0.025em; }
+
+.ix-cat > h2 a,
+.ix-cat > h3 a { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
+
+.ix-cat > h2 a:hover,
+.ix-cat > h3 a:hover { color: var(--accent-ink); }
+
+.ix-cat-sub { margin: 4px 0 10px; font-size: 13.5px; line-height: 1.6; color: var(--muted); }
+
+/* --------------------------------------------------------------------------
+ * A listed-price range on the cost index
+ *
+ * Right-aligned and tabular so the ranges line up down the column and can be
+ * compared without reading each one. It sits inside the row link, so it takes
+ * the row's colour rather than carrying its own.
+ * ----------------------------------------------------------------------- */
+.ix-range {
+  flex: 0 0 auto;
+  text-align: right;
+  display: grid;
+  gap: 2px;
+}
+
+.ix-range b {
+  font-size: 16px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ix-range span { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* --------------------------------------------------------------------------
+ * Nothing here
+ *
+ * An empty index is ordinary traffic and not an error: an opening exists only
+ * because a job cancelled, so a whole city can be quiet for an hour. It gets a
+ * sentence and something to do, and it never gets an invented figure to fill
+ * the space.
+ * ----------------------------------------------------------------------- */
+.ix-empty {
+  padding: 26px 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+/* Two ranks, one size. An empty state inside a section is an h3 under that
+   section's h2; where the box is the whole page it is an h2 under the page's
+   h1. The element states the rank, this rule states the scale. */
+.ix-empty h2,
+.ix-empty h3 { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
+
+.ix-empty p {
+  margin: 10px 0 18px;
+  max-width: 54ch;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.ix-empty p:last-child { margin-bottom: 0; }
+
+.ix-empty-do { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* --------------------------------------------------------------------------
+ * A wrapped run of plain links
+ *
+ * The escape hatch at the foot of a page: the other indexes, the whole city.
+ * 48px tall for the reason the category page's are.
+ * ----------------------------------------------------------------------- */
+.ix-else {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.ix-else a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 10px;
+  font-size: 15px;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.ix-else a:hover { color: var(--accent-ink); }
+
+/* --------------------------------------------------------------------------
+ * Prose
+ *
+ * Only the metro page has any, and only two kinds of sentence are allowed in
+ * it — see the comment at the top of Metro.tsx.
+ * ----------------------------------------------------------------------- */
+.ix-prose { max-width: 66ch; }
+
+.ix-prose p { margin: 0 0 12px; font-size: 15px; line-height: 1.65; color: var(--ink-3); }
+
+.ix-prose p:last-child { margin-bottom: 0; }
+
+/* --------------------------------------------------------------------------
+ * Foot
+ * ----------------------------------------------------------------------- */
+.ix-foot {
+  border-top: 1px solid var(--line);
+  margin-top: 44px;
+  padding: 22px 0 40px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.ix-foot p { margin: 0 0 6px; max-width: 62ch; }
+
+.ix-foot a { color: var(--accent-ink); text-underline-offset: 3px; }
+
+/* --------------------------------------------------------------------------
+ * Phone
+ * ----------------------------------------------------------------------- */
+@media (max-width: 560px) {
+  .ix-stats { gap: 16px 26px; }
+  .ix-stat b { font-size: 21px; }
+  .ix-sec { margin-top: 32px; }
+  .ix-empty { padding: 22px 18px; }
+  .ix-row { padding: 14px 8px; }
+  .ix-row-name { font-size: 16px; }
+  /* A trade name and a price range side by side on a 375px screen squeezes
+     both into a column two words wide. The priced rows wrap instead, so the
+     range drops under the name and is read as part of the same row. */
+  .ix-row-priced { flex-wrap: wrap; row-gap: 4px; }
+  .ix-row-priced .ix-range { text-align: left; }
+}

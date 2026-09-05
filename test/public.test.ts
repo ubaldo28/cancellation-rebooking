@@ -1,16 +1,10 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { makeEnv } from './d1';
+import { ALL_MIGRATIONS, makeEnv } from './d1';
 import type { Env } from '../src/types';
-import { claimSlot, slotsNear } from '../src/lib/public';
+import { claimSlot, slotById, slotsNear } from '../src/lib/public';
 import { newId, now } from '../src/lib/util';
 
-const MIGRATIONS = [1, 2, 3, 4, 5, 6].map((n) => {
-  const names: Record<number, string> = {
-    1: '0001_init.sql', 2: '0002_postal_codes.sql', 3: '0003_hardening.sql',
-    4: '0004_scan_budget.sql', 5: '0005_language.sql', 6: '0006_public_booking.sql',
-  };
-  return new URL(`../migrations/${names[n]}`, import.meta.url).pathname;
-});
+const MIGRATIONS = ALL_MIGRATIONS;
 
 let env: Env;
 const OP = 'op1';
@@ -42,8 +36,8 @@ async function seed(opts: { publicBookings?: boolean; maxDetour?: number } = {})
   ).bind(OP, n, n).run();
 
   await env.DB.prepare(
-    `INSERT INTO service_areas (id,operator_id,name,slug,lat,lng,radius_meters,created_at,updated_at)
-     VALUES (?,?,'Sherman Oaks','sherman-oaks',?,?,8000,?,?)`,
+    `INSERT INTO service_areas (id,operator_id,name,slug,place_slug,lat,lng,radius_meters,created_at,updated_at)
+     VALUES (?,?,'Sherman Oaks','sherman-oaks','sherman-oaks',?,?,8000,?,?)`,
   ).bind(newId(), OP, PREV.lat, PREV.lng, n, n).run();
 
   // The offline geocoder needs the ZIP to exist, same as in production.
@@ -96,6 +90,165 @@ describe('what a stranger sees', () => {
   });
 });
 
+describe('regressions in the public listing', () => {
+  it('lists a slot once even when the operator covers several areas', async () => {
+    const gapId = await seed();
+    const n = t();
+    // Same operator, three overlapping areas. The join used to return the gap
+    // once per area, so one opening appeared three times on the page.
+    for (const [name, slug] of [['Valley Village', 'valley-village'],
+                                ['Studio City', 'studio-city']] as const) {
+      await env.DB.prepare(
+        `INSERT INTO service_areas (id,operator_id,name,slug,place_slug,lat,lng,radius_meters,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,8000,?,?)`,
+      ).bind(newId(), OP, name, slug, slug, PREV.lat, PREV.lng, n, n).run();
+    }
+    const all = await slotsNear(env, NEAR, null);
+    expect(all.filter((s) => s.gap_id === gapId).length).toBe(1);
+  });
+
+  it('lists a slot once even when the operator sells several services', async () => {
+    const gapId = await seed();
+    const n = t();
+    await env.DB.prepare(
+      `INSERT INTO services (id,operator_id,name,duration_seconds,price_cents,created_at,updated_at)
+       VALUES ('sv2',?,'Wash only',3600,4900,?,?)`,
+    ).bind(OP, n, n).run();
+    const slots = await slotsNear(env, NEAR, 'sherman-oaks');
+    expect(slots.filter((s) => s.gap_id === gapId).length).toBe(1);
+    // And it offers the most valuable service that fits — the same one
+    // claimSlot would pick, so the price shown is the price charged.
+    expect(slots[0]!.service_name).toBe('Full detail');
+  });
+
+  it('finds a slot by id regardless of how far down the list it sits', async () => {
+    const gapId = await seed();
+    const n = t();
+    // Bury it under a pile of earlier openings. The old booking page fetched a
+    // capped page of slots and searched it, so anything past the cap read as
+    // "gone" while it was still live and bookable.
+    for (let i = 1; i <= 40; i++) {
+      const start = n + 3600 + i * 60;
+      await env.DB.prepare(
+        `INSERT INTO gaps (id,operator_id,starts_at,ends_at,prev_lat,prev_lng,
+           next_lat,next_lng,baseline_drive_seconds,is_mobile,status,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,1,'open',?,?)`,
+      ).bind(newId(), OP, start, start + 5 * 3600,
+        PREV.lat, PREV.lng, NEXT.lat, NEXT.lng, 180, n, n).run();
+    }
+    const one = await slotById(env, gapId);
+    expect(one).not.toBeNull();
+    expect(one!.gap_id).toBe(gapId);
+  });
+
+  it('returns nothing for a gap id that does not exist', async () => {
+    await seed();
+    expect(await slotById(env, 'no-such-gap')).toBeNull();
+  });
+});
+
+describe('what a card says about the business', () => {
+  /** A finished job with a review on it, as leaveReview would have left it. */
+  async function review(
+    opts: { author: string; rating: number; body: string | null; createdAt: number },
+  ) {
+    await env.DB.prepare(
+      `INSERT INTO reviews (id,operator_id,order_item_id,author_name,rating,body,
+         details,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,NULL,?,?)`,
+    ).bind(newId(), OP, newId(), opts.author, opts.rating, opts.body,
+      opts.createdAt, opts.createdAt).run();
+    // Denormalised on the operator by leaveReview, and read from there by the
+    // listing, so the fixture has to keep the two in step the same way.
+    await env.DB.prepare(
+      `UPDATE operators SET rating_sum = rating_sum + ?, rating_count = rating_count + 1
+        WHERE id = ?`,
+    ).bind(opts.rating, OP).run();
+  }
+
+  it('shows no rating and no quote for a business nobody has reviewed', async () => {
+    await seed();
+    const slot = (await slotsNear(env, NEAR, 'sherman-oaks'))[0]!;
+    // Null, not 0 and not 5. A business with no reviews has no rating; giving
+    // it one would be the platform inventing a reputation for a stranger.
+    expect(slot.rating).toBeNull();
+    expect(slot.review_count).toBe(0);
+    expect(slot.review_snippet).toBeNull();
+    expect(slot.hired_count).toBe(0);
+    expect(slot.background_check).toBe(false);
+  });
+
+  it('shows the score and the newest quote, surname cut to an initial', async () => {
+    await seed();
+    const n = t();
+    await review({ author: 'Debra Delgado', rating: 5, body: 'Spotless.', createdAt: n - 7200 });
+    await review({ author: 'Marcus Oyelaran', rating: 4, body: 'On time, fair price.',
+      createdAt: n - 600 });
+
+    const slot = (await slotsNear(env, NEAR, 'sherman-oaks'))[0]!;
+    expect(slot.rating).toBe(4.5);
+    expect(slot.review_count).toBe(2);
+    expect(slot.review_snippet).toEqual({
+      body: 'On time, fair price.', author: 'Marcus O.', rating: 4,
+    });
+  });
+
+  it('rates a business off its reviews but quotes only one that has words', async () => {
+    await seed();
+    const n = t();
+    await review({ author: 'Debra Delgado', rating: 5, body: 'Spotless.', createdAt: n - 7200 });
+    // Newer, but a bare star rating. The stars still count towards the score;
+    // there is simply no line for the card to print, so the older one stands.
+    await review({ author: 'Marcus Oyelaran', rating: 4, body: null, createdAt: n - 600 });
+
+    const slot = (await slotsNear(env, NEAR, 'sherman-oaks'))[0]!;
+    expect(slot.rating).toBe(4.5);
+    expect(slot.review_snippet?.body).toBe('Spotless.');
+    expect(slot.review_snippet?.author).toBe('Debra D.');
+  });
+
+  it('is online only while the switch still has time left on it', async () => {
+    await seed();
+    expect((await slotsNear(env, NEAR, 'sherman-oaks'))[0]!.online).toBe(false);
+
+    await env.DB.prepare(`UPDATE operators SET online_until = ? WHERE id = ?`)
+      .bind(t() + 1800, OP).run();
+    expect((await slotsNear(env, NEAR, 'sherman-oaks'))[0]!.online).toBe(true);
+
+    // Nothing sweeps this. "Online" is online_until > now and nothing else, so
+    // a timestamp that has passed reads as off without anything having run.
+    await env.DB.prepare(`UPDATE operators SET online_until = ? WHERE id = ?`)
+      .bind(t() - 60, OP).run();
+    expect((await slotsNear(env, NEAR, 'sherman-oaks'))[0]!.online).toBe(false);
+  });
+
+  it('carries the profile numbers a card shows next to the name', async () => {
+    await seed();
+    await env.DB.prepare(
+      `UPDATE operators SET hired_count = 314, years_in_business = 12, employees = 4,
+         background_check_name = 'Ana Ruiz', background_checked_at = ? WHERE id = ?`,
+    ).bind(t() - 86400, OP).run();
+
+    const slot = (await slotsNear(env, NEAR, 'sherman-oaks'))[0]!;
+    expect(slot.hired_count).toBe(314);
+    expect(slot.years_in_business).toBe(12);
+    expect(slot.employees).toBe(4);
+    expect(slot.background_check).toBe(true);
+  });
+
+  it('says the same things on the confirmation as it did on the card', async () => {
+    const gapId = await seed();
+    await review({ author: 'Debra Delgado', rating: 5, body: 'Spotless.', createdAt: t() - 600 });
+    const { slot } = await claimSlot(env, {
+      gapId, first_name: 'Rosa', phone: '8185550142', postcode: '91403',
+      address_line: '15200 Ventura Blvd',
+    });
+    expect(slot.rating).toBe(5);
+    expect(slot.review_count).toBe(1);
+    expect(slot.review_snippet?.author).toBe('Debra D.');
+  });
+});
+
 describe('claiming a slot', () => {
   it('creates a client marked as won by the platform, plus the appointment', async () => {
     const gapId = await seed();
@@ -106,8 +259,17 @@ describe('claiming a slot', () => {
 
     const client = await env.DB.prepare(`SELECT * FROM clients LIMIT 1`).first<any>();
     expect(client.first_name).toBe('Rosa');
-    expect(client.phone_e164).toBe('+18185550142');
     expect(client.acquired).toBe('public');      // this is the billable one
+    // The operator gets a real client and a real address, and no way to
+    // contact this person off the platform. The number lives on the claim,
+    // which is ours, not on their list.
+    expect(client.platform_introduced).toBe(1);
+    expect(client.phone_e164).toBeNull();
+    expect(client.address_line).toBe('15200 Ventura Blvd');
+
+    const claim = await env.DB.prepare(`SELECT phone_e164 FROM public_claims LIMIT 1`)
+      .first<any>();
+    expect(claim.phone_e164).toBe('+18185550142');
 
     const appt = await env.DB.prepare(`SELECT * FROM appointments WHERE id=?`)
       .bind(appointment_id).first<any>();

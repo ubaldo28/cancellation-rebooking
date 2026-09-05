@@ -1,20 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type Service, type WorkingHour } from '../api';
+import { api, type Service } from '../api';
 import { useOperator, useSession } from '../App';
+import CloseAccount from '../components/CloseAccount';
+import PaymentMethod from '../components/PaymentMethod';
+import VehicleForm from '../components/VehicleForm';
+import PartsPolicyField, {
+  EMPTY_PARTS, partsPayload, type PartsValue,
+} from '../components/PartsPolicyField';
+import WorkingHours, {
+  blankDay, hhmm, hoursPayload, type DayHours,
+} from '../components/WorkingHours';
 import { ErrorNote, Icon, Spinner } from '../components/ui';
-
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-const toMin = (v: string) => {
-  const [h = '0', m = '0'] = v.split(':');
-  return Number(h) * 60 + Number(m);
-};
+import { useDocumentTitle } from '../lib/title';
 
 export default function Settings() {
+  useDocumentTitle('Settings');
   const op = useOperator();
   const { refresh, signOut } = useSession();
 
-  const [hours, setHours] = useState<Record<number, { on: boolean; start: string; end: string }>>({});
+  const [hours, setHours] = useState<Record<number, DayHours>>({});
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -24,9 +28,9 @@ export default function Settings() {
     setLoading(true); setError(null);
     try {
       const [w, s] = await Promise.all([api.workingHours(), api.services()]);
-      const map: Record<number, { on: boolean; start: string; end: string }> = {};
-      for (let d = 0; d < 7; d++) map[d] = { on: false, start: '09:00', end: '17:00' };
-      for (const h of w.working_hours as WorkingHour[]) {
+      const map: Record<number, DayHours> = {};
+      for (let d = 0; d < 7; d++) map[d] = blankDay();
+      for (const h of w.working_hours) {
         map[h.weekday] = { on: true, start: hhmm(h.start_minute), end: hhmm(h.end_minute) };
       }
       setHours(map);
@@ -43,13 +47,7 @@ export default function Settings() {
   async function saveHours() {
     setError(null);
     try {
-      const list = Object.entries(hours)
-        .filter(([, v]) => v.on)
-        .map(([d, v]) => ({
-          weekday: Number(d), start_minute: toMin(v.start), end_minute: toMin(v.end),
-        }))
-        .filter((h) => h.end_minute > h.start_minute);
-      await api.setWorkingHours(list);
+      await api.setWorkingHours(hoursPayload(hours));
       await api.detectGaps(14);
       setSaved('Working hours saved.');
       setTimeout(() => setSaved(null), 2500);
@@ -80,25 +78,17 @@ export default function Settings() {
         {error && <ErrorNote error={error} onRetry={load} />}
         {saved && <div className="notice">{saved}</div>}
 
+        {/* First on the page, because an operator whose openings are down is
+            looking for the reason, and this is one of the three things that
+            takes them down. */}
+        <VehicleForm />
+
         <section className="stack">
           <span className="eyebrow">Working hours</span>
           <p className="muted" style={{ margin: 0 }}>
             Open slots are only ever found inside these hours.
           </p>
-          {DAYS.map((name, d) => {
-            const h = hours[d] ?? { on: false, start: '09:00', end: '17:00' };
-            return (
-              <div className="card row" key={d} style={{ gap: 10, padding: 12 }}>
-                <input type="checkbox" checked={h.on} style={{ width: 20, minHeight: 20 }}
-                  onChange={(e) => setHours({ ...hours, [d]: { ...h, on: e.target.checked } })} />
-                <span style={{ width: 38, fontWeight: 600 }}>{name}</span>
-                <input type="time" value={h.start} disabled={!h.on} style={{ minHeight: 40, padding: '8px 10px' }}
-                  onChange={(e) => setHours({ ...hours, [d]: { ...h, start: e.target.value } })} />
-                <input type="time" value={h.end} disabled={!h.on} style={{ minHeight: 40, padding: '8px 10px' }}
-                  onChange={(e) => setHours({ ...hours, [d]: { ...h, end: e.target.value } })} />
-              </div>
-            );
-          })}
+          <WorkingHours hours={hours} onChange={setHours} />
           <button className="btn block" onClick={saveHours}>Save working hours</button>
         </section>
 
@@ -175,6 +165,42 @@ export default function Settings() {
         </section>
 
         <section className="stack">
+          <span className="eyebrow">Your location</span>
+          <label className="card row" style={{ padding: 14, gap: 12 }}>
+            <input type="checkbox" style={{ width: 20, minHeight: 20 }}
+              defaultChecked={op?.share_location === 1}
+              onChange={async (e) => {
+                try {
+                  await api.shareLocation(e.target.checked);
+                  await refresh();
+                  setSaved(e.target.checked ? 'Sharing on.' : 'Sharing off.');
+                  setTimeout(() => setSaved(null), 2500);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'Could not save.');
+                }
+              }} />
+            <span className="stack" style={{ gap: 3 }}>
+              <span style={{ color: 'var(--ink)', fontWeight: 600 }}>
+                Let customers see you are on the way
+              </span>
+              <span className="faint">
+                Only the customer whose job is next sees anything, only from an
+                hour before their slot until half an hour after, and only
+                roughly — near enough to know you are close, not which house
+                you are outside. It stops on its own ten minutes after you
+                close the app. Off unless you turn it on.
+              </span>
+            </span>
+          </label>
+        </section>
+
+        {/* Above the account block because a missing card is one of the three
+            things that takes an operator's openings down, and somebody hunting
+            for that reason should not have to scroll past "sign out" to find
+            it. */}
+        <PaymentMethod />
+
+        <section className="stack">
           <span className="eyebrow">Account</span>
           <div className="card stack" style={{ gap: 4 }}>
             <span className="name" style={{ fontSize: 15 }}>{op?.business_name}</span>
@@ -183,6 +209,11 @@ export default function Settings() {
           </div>
           <button className="btn quiet block" onClick={signOut}>Sign out</button>
         </section>
+
+        {/* Last on the page, and in its own section rather than beside "Sign
+            out". The two are one tap apart in every settings screen ever
+            built, and only one of them can be undone by signing back in. */}
+        <CloseAccount />
       </main>
     </>
   );
@@ -194,7 +225,9 @@ function AddService({ onDone }: { onDone: () => void }) {
   const [mins, setMins] = useState('120');
   const [price, setPrice] = useState('');
   const [weeks, setWeeks] = useState('4');
+  const [parts, setParts] = useState<PartsValue>(EMPTY_PARTS);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!open) {
     return (
@@ -207,18 +240,27 @@ function AddService({ onDone }: { onDone: () => void }) {
   return (
     <form className="card stack" onSubmit={async (e) => {
       e.preventDefault();
-      setBusy(true);
+      setBusy(true); setError(null);
       try {
         await api.createService({
           name,
           duration_seconds: Number(mins) * 60,
           price_cents: price ? Math.round(Number(price) * 100) : 0,
           cadence_days: weeks ? Number(weeks) * 7 : undefined,
+          ...partsPayload(parts),
         });
-        setOpen(false); setName(''); setPrice('');
+        setOpen(false); setName(''); setPrice(''); setParts(EMPTY_PARTS);
         onDone();
+      } catch (err) {
+        // There was no catch here at all: a rejected save left an unhandled
+        // promise in the console, the form open with everything still in it,
+        // and not one word on screen about why the service had not appeared in
+        // the list above. The form keeping what was typed is the right half of
+        // that; saying what happened is the half that was missing.
+        setError(err instanceof Error ? err.message : 'Could not add that service.');
       } finally { setBusy(false); }
     }}>
+      {error && <div className="error">{error}</div>}
       <label>Name<input required value={name} onChange={(e) => setName(e.target.value)}
         placeholder="Full detail" /></label>
       <div className="field-row">
@@ -227,6 +269,11 @@ function AddService({ onDone }: { onDone: () => void }) {
         <label>Price<input type="number" step="0.01" value={price}
           onChange={(e) => setPrice(e.target.value)} /></label>
       </div>
+      {/* Telling an operator to "include parts in your price" was the whole
+          of the old answer, and it is wrong for most of the trades here: a
+          mechanic cannot price a part before they see the car. The form now
+          asks the question that actually has an answer. */}
+      <PartsPolicyField value={parts} onChange={setParts} />
       <label>Repeats every (weeks, blank if never)
         <input type="number" min="0" value={weeks} onChange={(e) => setWeeks(e.target.value)} />
       </label>

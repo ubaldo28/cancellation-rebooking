@@ -1,0 +1,345 @@
+/*
+ * Parts: the operator's policy field, the customer's quote card, and the
+ * lead-fee notice.
+ *
+ * Its own stylesheet rather than more lines on styles.css, matching how the
+ * booking, alerts, openings and credentials screens are already split. The
+ * one rule worth stating out loud is below on .quote-amount: the price is the
+ * biggest thing on the card, because a quote whose number is smaller than its
+ * description is a quote people approve without reading the number.
+ */
+
+/* --------------------------------------------------------------------------
+ * Operator: the parts question on a service form
+ * ----------------------------------------------------------------------- */
+.parts-field {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.parts-field > legend {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0 6px;
+}
+
+.parts-option {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 10px;
+  align-items: start;
+  font-size: 13px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+/* Big enough to hit with a thumb in a van. The default radio is 13px and this
+   form is filled in on a phone more often than not. */
+.parts-option input[type='radio'] {
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+}
+
+.parts-option strong { display: block; font-weight: 600; }
+
+/* --------------------------------------------------------------------------
+ * Customer: the checkout's parts explanation
+ * ----------------------------------------------------------------------- */
+.book-parts {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+.book-parts-row {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* --------------------------------------------------------------------------
+ * Customer: the quote card
+ * ----------------------------------------------------------------------- */
+.parts-card { display: grid; gap: 12px; }
+
+.quote {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--accent-line, var(--line));
+  border-radius: 12px;
+}
+
+.quote-desc { font-weight: 600; font-size: 15px; line-height: 1.35; }
+
+/*
+ * The number is the largest thing on the card, and that is the whole point of
+ * this rule. Somebody is reading this on a phone, on a driveway, with an
+ * operator waiting on them. If the amount is not the first thing their eye
+ * lands on, the card has failed at the only job it has.
+ */
+.quote-amount {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.quote-split { font-size: 13px; }
+
+.quote-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.quote-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* Both buttons take a full thumb, and neither is styled to be the obvious tap:
+   approve costs money, and making it the loud button is a dark pattern. */
+.quote-actions .btn { flex: 1 1 auto; min-height: 44px; }
+
+.quote-confirm {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.quote-history {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.quote-past {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.quote-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  font-size: 14px;
+}
+
+/* --------------------------------------------------------------------------
+ * Operator: the lead-fee notice
+ * ----------------------------------------------------------------------- */
+/* Warm rather than red. This is a bill, not a security alert, and an operator
+   who reads it as an accusation stops reading at the first sentence. */
+.notice.warn {
+  background: color-mix(in srgb, #b4690e 12%, transparent);
+  border: 1px solid color-mix(in srgb, #b4690e 34%, transparent);
+  line-height: 1.5;
+}
+
+@media (max-width: 480px) {
+  .quote-amount { font-size: 26px; }
+  .quote-actions .btn { flex: 1 1 100%; }
+}
+
+/* --------------------------------------------------------------------------
+ * The cancellation terms, on the checkout
+ * ----------------------------------------------------------------------- */
+/* Bordered rather than tinted, and directly above the button. A no-refund
+   window has to be read before the tap, not found afterwards — so this is
+   styled to be legible, not to be skimmed past. */
+.book-terms {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.book-terms > strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.book-terms ul { margin: 0; padding-left: 18px; }
+.book-terms li + li { margin-top: 7px; }
+
+/* --------------------------------------------------------------------------
+ * The start code
+ * ----------------------------------------------------------------------- */
+.start-code { display: grid; gap: 10px; }
+
+/*
+ * Big, spaced, monospaced. This is read out loud across a driveway, often by
+ * somebody holding a phone at arm's length, and 6543 misread as 6548 is a job
+ * that does not start. Legibility is the entire brief.
+ */
+.code-digits { display: flex; gap: 10px; margin: 4px 0; }
+
+.code-digit {
+  flex: 0 0 auto;
+  min-width: 52px;
+  padding: 12px 0;
+  text-align: center;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--accent-soft);
+  border-radius: 12px;
+}
+
+.van {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.van > strong { font-size: 16px; }
+
+/* The operator's code box. Wide and numeric — typed one-handed on a driveway. */
+.code-entry {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.code-entry label { flex: 1 1 auto; }
+
+.code-entry input {
+  font-size: 24px;
+  letter-spacing: 0.3em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.code-entry .btn { min-height: 46px; }
+
+/* --------------------------------------------------------------------------
+ * Proof photos
+ * ----------------------------------------------------------------------- */
+.proof {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.proof-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+.proof-stage { display: grid; gap: 6px; }
+
+.proof-stage-head { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+
+/* Scrolls sideways rather than wrapping: a row of thumbnails that reflows to
+   three lines pushes the buttons under it off the screen on a phone. */
+.proof-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.proof-thumb {
+  flex: 0 0 auto;
+  width: 72px;
+  height: 72px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--accent-soft);
+}
+
+.proof-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.proof-add {
+  flex: 0 0 auto;
+  width: 72px;
+  height: 72px;
+  border-radius: 10px;
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* --------------------------------------------------------------------------
+ * The refund question
+ * ----------------------------------------------------------------------- */
+.work-q { display: grid; gap: 4px; }
+
+.work-q-ask {
+  margin: 8px 0 4px;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.work-q-confirm {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* --------------------------------------------------------------------------
+ * Trade categories
+ * ----------------------------------------------------------------------- */
+/* The sign-up picker: collapsed categories, one open at a time. Forty chips
+   at once is a wall; eight under a heading somebody chose to open is a list. */
+.trade-cats { display: grid; gap: 8px; }
+
+.trade-cat { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.trade-cat.open { border-color: var(--accent-line, var(--line)); }
+
+.trade-cat-head {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  min-height: 46px;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.trade-cat .sug { padding: 0 12px 12px; }

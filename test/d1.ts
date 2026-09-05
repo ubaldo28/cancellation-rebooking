@@ -1,4 +1,28 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * Every migration, in order, read from the directory.
+ *
+ * Each test file used to carry its own hand-typed copy of this list. Adding a
+ * migration therefore meant editing thirteen files, and the failure mode when
+ * one was missed was not a clear "you forgot a file" -- it was thirty-odd
+ * unrelated tests failing deep inside library code with "no such column",
+ * which reads like a bug in the feature rather than a stale fixture.
+ *
+ * Reading the directory means a new migration is picked up by every test the
+ * moment it exists, and the schema under test is by definition the schema that
+ * ships. The sort is what makes it an ordering rather than a set: these files
+ * are numbered precisely because 0012 rebuilds a table 0010 created, and
+ * running them in the filesystem's own order would be running them at random.
+ */
+export const ALL_MIGRATIONS: string[] = (() => {
+  const dir = fileURLToPath(new URL('../migrations/', import.meta.url));
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()
+    .map((f) => dir + f);
+})();
 
 // Vite rewrites a static `node:sqlite` import into a bare specifier it cannot
 // resolve, so reach the builtin through the runtime instead.

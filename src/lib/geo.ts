@@ -131,15 +131,13 @@ export async function driveSeconds(
   return keys.map((k, i) => hits.get(k) ?? estimateDriveSeconds(pairs[i]![0], pairs[i]![1]));
 }
 
-export type GeocodeResult = Point & { source: 'table' | 'postcodesio' | 'census'; place?: string };
+export type GeocodeResult = Point & { source: 'table' | 'census'; place?: string };
 
 /**
- * Geocoding, in cost order. Works in every country seeded into postal_codes.
+ * Geocoding, in cost order.
  *
- *   1. postal_codes table  — ~100 countries, offline, free, unlimited.
- *   2. postcodes.io        — GB only. Open data, keyless, sharper than a
- *                            centroid, so it is worth the round trip there.
- *   3. US Census           — US only. Keyless, street-level.
+ *   1. postal_codes table  — offline, free, unlimited, ZIP-centroid accurate.
+ *   2. US Census           — keyless, street-level, and free.
  *
  * Deliberately NOT here: Nominatim. Its usage policy bans distributed scripts
  * (a Worker is distributed), caps at 1 req/sec, and tells commercial apps that
@@ -152,7 +150,10 @@ export type GeocodeResult = Point & { source: 'table' | 'postcodesio' | 'census'
  * silently wrong coordinate sends someone forty minutes the wrong way.
  */
 export async function geocode(
-  env: Env, address: string | null, postcode: string | null, country = 'GB',
+  // The default was 'GB', left over from the first version of this project.
+  // Any caller that omitted the country silently geocoded as Britain. This is
+  // a United States product.
+  env: Env, address: string | null, postcode: string | null, country = 'US',
 ): Promise<GeocodeResult | null> {
   const c = getCountry(country);
   const iso = c?.iso2 ?? country.toUpperCase();
@@ -199,18 +200,11 @@ export async function geocode(
     }
   }
 
-  // 2 & 3. Country-specific free services, for sharper-than-centroid results.
+  // 2. Sharper than a ZIP centroid, when we have a street address.
+  //
+  // The postcodes.io branch that used to sit here was GB-only and is gone with
+  // the rest of the non-US code — it could never be reached again.
   try {
-    if (iso === 'GB' && postcode && env.GEOCODE_PROVIDER !== 'none') {
-      const res = await fetch(
-        `https://api.postcodes.io/postcodes/${encodeURIComponent(postcode.trim())}`);
-      if (res.ok) {
-        const body = (await res.json()) as any;
-        if (body.status === 200 && body.result) {
-          return { lat: body.result.latitude, lng: body.result.longitude, source: 'postcodesio' };
-        }
-      }
-    }
     if (iso === 'US' && address && env.GEOCODE_PROVIDER !== 'none') {
       const url = new URL('https://geocoding.geo.census.gov/geocoder/locations/onelineaddress');
       url.searchParams.set('address', [address, postcode].filter(Boolean).join(' '));

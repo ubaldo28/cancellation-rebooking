@@ -1,0 +1,152 @@
+/* ==========================================================================
+   Checkout (/book/:gapId).
+
+   Only what a basket adds. Everything already in styles.css — the tokens,
+   .land, .topbar, .wrap, .card, .btn, .chip, .tag, .notice, .error, .blank,
+   .sample, .muted, the type scale — is reused as it stands so this page looks
+   like the rest of the site rather than a bolt-on.
+
+   Every selector below is doubled up with a class from styles.css
+   (.wrap.book, .card.book-card, and so on) for one reason: main.tsx imports
+   App before styles.css, so a page stylesheet lands FIRST in the bundle and a
+   single bare class would lose every tie to the sheet it is extending.
+   ========================================================================== */
+
+/* A basket is read one line at a time, so the measure is narrower than the
+   map pages. Long measure is what makes a form feel like paperwork. */
+.wrap.book {
+  max-width: 660px;
+  display: flex; flex-direction: column; gap: 18px;
+  padding-top: 14px; padding-bottom: 140px;
+}
+
+/* --- the opening being looked at ---------------------------------------- */
+.book-head { display: flex; flex-direction: column; gap: 8px; padding: 22px 0 2px; }
+.book-head h1 {
+  font-size: clamp(25px, 6vw, 32px); font-weight: 750; letter-spacing: -0.03em;
+}
+.book-head .book-when { margin: 0; font-size: 15.5px; line-height: 1.5; color: var(--ink-3); }
+.book-head .book-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.wrap.book .book-back {
+  display: inline-flex; align-items: center; gap: 4px;
+  align-self: flex-start; min-height: 44px;
+  font-size: 14px; font-weight: 600; color: var(--muted);
+}
+.wrap.book .book-back:hover { color: var(--ink); }
+
+/* --- sections ------------------------------------------------------------ */
+.card.book-card {
+  display: flex; flex-direction: column; gap: 14px;
+  border-radius: var(--r-lg); padding: 18px; box-shadow: var(--lift-1);
+}
+.card.book-card > h2 { font-size: 17px; }
+.card.book-card .book-sub { margin: -8px 0 0; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+
+/* --- one service, ticked or not ----------------------------------------- */
+.book-svcs { display: flex; flex-direction: column; gap: 9px; }
+
+/* A real button, so the keyboard and a screen reader both get it for free.
+   aria-pressed carries the state; the tick is decorative. */
+.wrap.book .book-svc {
+  display: grid; grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center; gap: 4px 12px; width: 100%;
+  padding: 13px 14px; text-align: left; cursor: pointer;
+  background: var(--surface); border: 1.5px solid var(--line);
+  border-radius: var(--r-md); color: var(--ink);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.wrap.book .book-svc:hover { border-color: var(--line-strong); }
+.wrap.book .book-svc[aria-pressed='true'] {
+  border-color: var(--accent); background: var(--accent-soft);
+}
+.wrap.book .book-svc[disabled] { cursor: default; opacity: 0.55; }
+.wrap.book .book-svc[disabled]:hover { border-color: var(--line); }
+
+.book-svc .book-tick {
+  grid-row: 1 / span 2; display: inline-flex; align-items: center;
+  justify-content: center; width: 24px; height: 24px;
+  border-radius: 7px; border: 1.5px solid var(--line-strong);
+  background: var(--surface); color: transparent;
+}
+.book-svc[aria-pressed='true'] .book-tick {
+  border-color: var(--accent); background: var(--accent); color: #fff;
+}
+.book-svc .book-svc-name {
+  grid-column: 2; grid-row: 1;
+  font-size: 15px; font-weight: 650; letter-spacing: -0.01em;
+}
+.book-svc .book-svc-price {
+  grid-row: 1 / span 2; align-self: center;
+  font-family: var(--mono); font-size: 15px; font-weight: 650;
+}
+.book-svc .book-svc-len {
+  grid-column: 2; grid-row: 2; font-size: 12.5px; color: var(--muted);
+}
+
+/* --- the running total, and whether it still fits ----------------------- */
+.book-sum {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 13px 15px; border-radius: var(--r-md);
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.book-sum .book-sum-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+}
+.book-sum .book-sum-label { font-size: 13px; font-weight: 650; color: var(--muted); }
+.book-sum .book-sum-total {
+  font-family: var(--mono); font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
+}
+.book-sum .book-sum-note { font-size: 13px; color: var(--muted); }
+.book-sum.tight { background: var(--alert-bg); border-color: var(--alert-line); }
+.book-sum.tight .book-sum-note { color: var(--alert); }
+
+/* --- basket rows --------------------------------------------------------- */
+.book-items { display: flex; flex-direction: column; gap: 12px; }
+.book-item {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 14px 15px; border-radius: var(--r-md);
+  border: 1px solid var(--line); background: var(--surface);
+}
+.book-item.here { border-color: var(--accent-line); background: var(--accent-soft); }
+.book-item.bad { border-color: var(--alert-line); background: var(--alert-bg); }
+.book-item .book-item-top {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+}
+.book-item h3 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+.book-item .book-item-price { font-family: var(--mono); font-size: 15px; font-weight: 650; }
+.book-item .book-item-when { margin: 0; font-size: 13.5px; color: var(--ink-3); }
+.book-item ul { margin: 0; padding-left: 18px; font-size: 13.5px; color: var(--ink-3); }
+.book-item li { margin: 2px 0; }
+.book-item .book-item-ops { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
+
+/* --- problems ------------------------------------------------------------ */
+.wrap.book .book-problem {
+  margin: 0; padding: 11px 13px; border-radius: var(--r-sm);
+  font-size: 13.5px; line-height: 1.5;
+  color: var(--alert); background: var(--alert-soft); border: 1px solid var(--alert-line);
+}
+
+/* --- details form -------------------------------------------------------- */
+.book-fields { display: flex; flex-direction: column; gap: 14px; }
+.book-fields .book-field { display: flex; flex-direction: column; gap: 5px; }
+/* Beside the field, never inside its <label>: anything inside a label is read
+   out as part of the field's name, which turns a hint into noise. */
+.book-fields .book-hint {
+  margin: 0; font-size: 12.5px; font-weight: 400; line-height: 1.45; color: var(--muted);
+}
+
+/* --- the last word before the button ------------------------------------- */
+.wrap.book .book-pay {
+  margin: 0; padding: 14px 15px; border-radius: var(--r-md);
+  font-size: 13.5px; line-height: 1.55;
+  color: var(--ink-3); background: var(--surface-2); border: 1px solid var(--line-strong);
+}
+.wrap.book .book-pay strong { color: var(--ink); }
+
+/* Visible focus everywhere, including on the cards that act as buttons. */
+.wrap.book :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .wrap.book * { transition: none !important; animation: none !important; }
+}
