@@ -50,6 +50,7 @@ export const TRADE_CATEGORIES: TradeCategory[] = [
       { slug: 'auto glass repair', label: 'Auto glass' },
       { slug: 'mobile tyre fitting', label: 'Tyre fitting' },
       { slug: 'bike repair service', label: 'Bike repair' },
+      { slug: 'residential window tinting', label: 'Window tinting', hint: 'Cars and homes' },
     ],
   },
   {
@@ -71,6 +72,45 @@ export const TRADE_CATEGORIES: TradeCategory[] = [
       { slug: 'pest control', label: 'Pest control' },
       { slug: 'mobile locksmith', label: 'Locksmith' },
       { slug: 'appliance repair', label: 'Appliance repair' },
+      { slug: 'upholstery cleaning', label: 'Upholstery cleaning' },
+      { slug: 'tile and grout cleaning', label: 'Tile and grout cleaning' },
+      { slug: 'roof cleaning', label: 'Roof cleaning', hint: 'Soft wash, moss removal' },
+      { slug: 'solar panel cleaning', label: 'Solar panel cleaning' },
+      { slug: 'lawn care', label: 'Lawn care', hint: 'Mowing and edging rounds' },
+      { slug: 'irrigation and sprinklers', label: 'Irrigation and sprinklers' },
+      { slug: 'snow clearing', label: 'Snow clearing' },
+      { slug: 'holiday lighting', label: 'Holiday lighting' },
+      { slug: 'aquarium service', label: 'Aquarium service' },
+    ],
+  },
+
+  {
+    // Everything a person books because something is broken or needs putting
+    // in. These are the categories Thumbtack has the most supply in by a wide
+    // margin -- house cleaning and handyman first, then painting, electrical,
+    // plumbing and HVAC -- and the catalogue had none of them. It listed a
+    // mobile bookstore and no plumber.
+    //
+    // Most of them are contractor work in California, which is exactly why
+    // they belong here rather than scattered: the licensing answer is the same
+    // shape for the whole group, and it is the thing an operator most needs to
+    // read before taking a booking.
+    key: 'trades',
+    label: 'Repairs and installation',
+    trades: [
+      { slug: 'plumbing', label: 'Plumbing', hint: 'Leaks, drains, water heaters' },
+      { slug: 'electrical', label: 'Electrical', hint: 'Outlets, fixtures, panels' },
+      { slug: 'heating and air conditioning', label: 'Heating and air conditioning' },
+      { slug: 'painting and decorating', label: 'Painting and decorating' },
+      { slug: 'drywall and plastering', label: 'Drywall and plastering' },
+      { slug: 'flooring installation', label: 'Flooring', hint: 'Wood, tile, vinyl, carpet' },
+      { slug: 'furniture assembly', label: 'Furniture assembly' },
+      { slug: 'tv mounting', label: 'TV mounting and home theatre' },
+      { slug: 'smart home and security install', label: 'Smart home and cameras' },
+      { slug: 'garage door repair', label: 'Garage doors' },
+      { slug: 'window and screen repair', label: 'Windows and screens' },
+      { slug: 'fencing and decking', label: 'Fencing and decking' },
+      { slug: 'moving and delivery', label: 'Moving and delivery' },
     ],
   },
   {
@@ -80,6 +120,7 @@ export const TRADE_CATEGORIES: TradeCategory[] = [
       { slug: 'mobile pet grooming', label: 'Pet grooming' },
       { slug: 'mobile dog gym', label: 'Dog exercise and training' },
       { slug: 'mobile veterinary service', label: 'Veterinary visits' },
+      { slug: 'dog walking and pet sitting', label: 'Dog walking and pet sitting' },
     ],
   },
   {
@@ -89,6 +130,8 @@ export const TRADE_CATEGORIES: TradeCategory[] = [
       { slug: 'mobile hair salon or barbershop', label: 'Hair salon or barbershop' },
       { slug: 'mobile spa and massage', label: 'Spa and massage' },
       { slug: 'mobile makeup artist', label: 'Makeup artistry' },
+      { slug: 'mobile nail technician', label: 'Nails' },
+      { slug: 'tailoring and alterations', label: 'Tailoring and alterations' },
     ],
   },
   {
@@ -99,6 +142,8 @@ export const TRADE_CATEGORIES: TradeCategory[] = [
       { slug: 'coffee and smoothie trucks', label: 'Coffee and smoothie truck' },
       { slug: 'dessert trucks', label: 'Dessert truck' },
       { slug: 'mobile bar service', label: 'Bar service' },
+      { slug: 'personal chef', label: 'Personal chef' },
+      { slug: 'event catering', label: 'Event catering' },
     ],
   },
   {
@@ -117,6 +162,12 @@ export const TRADE_CATEGORIES: TradeCategory[] = [
       { slug: 'personal fitness training', label: 'Personal training' },
       { slug: 'mobile photography and photo booths', label: 'Photography and photo booths' },
       { slug: 'tutoring', label: 'Tutoring' },
+      { slug: 'home organising', label: 'Home organising' },
+      { slug: 'music lessons', label: 'Music lessons' },
+      { slug: 'piano tuning', label: 'Piano tuning' },
+      { slug: 'sports coaching', label: 'Sports coaching', hint: 'Swim, tennis, golf, martial arts' },
+      { slug: 'yoga instruction', label: 'Yoga instruction' },
+      { slug: 'event dj and entertainment', label: 'DJ and entertainment' },
     ],
   },
   {

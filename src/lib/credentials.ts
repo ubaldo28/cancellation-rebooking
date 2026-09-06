@@ -310,6 +310,158 @@ export const TRADE_RULES: Record<string, TradeRule> = {
     + 'health permits with it. The stall itself needs no state trade licence.',
   ),
 
+  // --- the building trades --------------------------------------------------
+  //
+  // All contractor work, so all the same shape: licensed above $1,000 a job,
+  // and an unlicensed person below that must say so in their advertising.
+  // Where a trade carries a SECOND requirement that has nothing to do with
+  // CSLB -- a federal refrigerant certification, a lead-safety certification,
+  // a CPUC permit -- it is written out in full, because those are the ones an
+  // operator is most likely not to know about and they are enforced by people
+  // who do not care that CSLB was satisfied.
+  'plumbing': contractor('Plumbing is contractor work (CSLB classification C-36).'),
+  'drywall and plastering': contractor('Drywall and plastering are contractor work (C-9 and C-35).'),
+  'flooring installation': contractor('Floor covering is contractor work (C-15).'),
+  'fencing and decking': contractor('Fencing and decking are contractor work (C-13).'),
+  'garage door repair': contractor('Garage door work is contractor work (D-28).'),
+  'window and screen repair': contractor('Window and screen work is contractor work (C-17).'),
+  'irrigation and sprinklers': contractor('Irrigation work is landscaping contractor work (C-27).'),
+
+  'electrical': {
+    license: 'over_threshold',
+    authority: 'cslb',
+    authority_name: CSLB,
+    why: 'Electrical work is contractor work (CSLB classification C-10), and a '
+      + `California contractor's licence is required for any single job worth `
+      + `more than ${CONTRACTOR_THRESHOLD_LABEL} in labour and materials `
+      + 'together. At or under that you may work without one, but you must say '
+      + 'you are unlicensed wherever you advertise. Separately from CSLB: an '
+      + 'individual doing electrical work for a C-10 contractor must be '
+      + 'certified as an electrician by the Division of Labor Standards '
+      + 'Enforcement. That certification is about the person, not the business.',
+  },
+
+  'heating and air conditioning': {
+    license: 'over_threshold',
+    authority: 'cslb',
+    authority_name: CSLB,
+    why: 'HVAC is contractor work (CSLB classification C-20) above '
+      + `${CONTRACTOR_THRESHOLD_LABEL} a job. There is also a federal rule that `
+      + 'has nothing to do with the state: anyone who opens a system containing '
+      + 'refrigerant must hold EPA Section 608 certification, at any job value, '
+      + 'and the fines are per violation.',
+  },
+
+  'painting and decorating': {
+    license: 'over_threshold',
+    authority: 'cslb',
+    authority_name: CSLB,
+    why: 'Painting is contractor work (CSLB classification C-33) above '
+      + `${CONTRACTOR_THRESHOLD_LABEL} a job. The one that catches people is `
+      + 'not CSLB: disturbing paint in a home built before 1978 requires '
+      + 'lead-safe certification, and most of the housing stock this platform '
+      + 'covers is older than that.',
+  },
+
+  'moving and delivery': {
+    license: 'required',
+    authority: 'cpuc',
+    authority_name: 'California Public Utilities Commission (CPUC)',
+    why: 'Moving household goods for money in California is licensed by the '
+      + 'CPUC, not by CSLB — a Household Mover Permit, the number beginning '
+      + '"MTR". It is required from the first job, whatever it is worth, and it '
+      + 'comes with insurance minimums. Hauling furniture you did not pack for '
+      + 'a customer who is not moving house is delivery, not moving, and is not '
+      + 'covered by it.',
+  },
+
+  'smart home and security install': {
+    license: 'over_threshold',
+    authority: 'cslb',
+    authority_name: CSLB,
+    why: 'Running low-voltage cable is contractor work (CSLB classification '
+      + `C-7) above ${CONTRACTOR_THRESHOLD_LABEL} a job. If what you install is `
+      + 'an ALARM system — anything that summons a response — that is different '
+      + 'and stricter: it needs an Alarm Company Operator licence from the '
+      + 'Bureau of Security and Investigative Services, and the people doing '
+      + 'the work register with BSIS individually. Cameras and doorbells that '
+      + 'only record are not alarms.',
+  },
+
+  'tv mounting': {
+    license: 'over_threshold',
+    authority: 'cslb',
+    authority_name: CSLB,
+    why: 'Fixing something to the structure of a building is contractor work '
+      + `above ${CONTRACTOR_THRESHOLD_LABEL} in labour and materials together. `
+      + 'A single television on a wall is almost never near that. A room of '
+      + 'them, or mounting plus in-wall cabling and a soundbar circuit, can be.',
+  },
+
+  // --- at the customer's address, and genuinely unlicensed ------------------
+  'furniture assembly': NO_STATE_LICENCE,
+  'home organising': NO_STATE_LICENCE,
+  'upholstery cleaning': NO_STATE_LICENCE,
+  'tile and grout cleaning': NO_STATE_LICENCE,
+  'roof cleaning': contractor('Roof cleaning is contractor work.'),
+  'solar panel cleaning': noLicence(
+    'Washing panels is not licensed. Touching the electrical side of an array — '
+    + 'wiring, inverters, anything past the glass — is contractor work and a '
+    + 'different trade.',
+  ),
+  'lawn care': contractor('Lawn and garden work is contractor work (C-27).'),
+  'snow clearing': NO_STATE_LICENCE,
+  'holiday lighting': contractor(
+    'Hanging lights on a building is contractor work once it involves fixing to '
+    + 'the structure or wiring into it.'),
+  'aquarium service': NO_STATE_LICENCE,
+  'residential window tinting': noLicence(
+    'Tinting is not licensed by the state. What IS enforced, on the driver '
+    + 'rather than on you, is the Vehicle Code: no tint on the windscreen below '
+    + 'the top four inches, and front side windows must still let most light '
+    + 'through. Fitting an illegal film is the kind of job that comes back.',
+  ),
+  'dog walking and pet sitting': noLicence(
+    'No state licence. Cities differ on how many animals one person may walk at '
+    + 'once, and holding somebody else\'s keys is the part your insurer will '
+    + 'want to know about.',
+  ),
+  'tailoring and alterations': NO_STATE_LICENCE,
+  'mobile nail technician': {
+    license: 'required',
+    authority: 'bbc',
+    authority_name: BBC,
+    why: 'Nail care is licensed in California by the Board of Barbering and '
+      + 'Cosmetology, and the licence is required to do the work at all. If you '
+      + 'work from a vehicle the Board licenses mobile units separately from '
+      + 'the individual licence.',
+  },
+  'personal chef': noLicence(
+    'No state trade licence, and cooking in the client\'s own kitchen for that '
+    + 'household is generally not a food facility. The moment you cook '
+    + 'somewhere else and bring it — a commissary, your own kitchen, a party '
+    + 'for a crowd — you are catering, and that needs a county health permit. '
+    + 'A food handler card is expected either way.',
+  ),
+  'event catering': noLicence(
+    'No state trade licence, but catering means a county health permit and a '
+    + 'commissary agreement in California, plus food handler cards. Los Angeles '
+    + 'County issues its own. Serving alcohol brings ABC into it separately.',
+  ),
+  'music lessons': NO_STATE_LICENCE,
+  'piano tuning': NO_STATE_LICENCE,
+  'sports coaching': noLicence(
+    'Coaching is not licensed by the state. Working with children brings '
+    + 'expectations around background checks that come from the families and '
+    + 'the venues rather than from a board.',
+  ),
+  'yoga instruction': noLicence(
+    'Yoga teaching is not licensed by the state, and California specifically '
+    + 'exempts yoga teacher training from the private postsecondary rules. '
+    + 'Certification is what studios and insurers ask for, not the state.',
+  ),
+  'event dj and entertainment': NO_STATE_LICENCE,
+
   // --- named in the app, named by none of the rules -------------------------
   'auto glass repair': UNLISTED,
   'dryer vent cleaning': UNLISTED,
