@@ -1,7 +1,7 @@
 import type { Env } from '../types';
 import { threadByToken, threadForOperator } from './chat';
 import { formatMoney, localeFor } from './countries';
-import { notify } from './feed';
+import { FEED_EXCERPT_CHARS, notify } from './feed';
 import { redactContact } from './redact';
 import { formatTimeRange } from './tz';
 import { badRequest, conflict, newId, notFound, now } from './util';
@@ -305,7 +305,7 @@ export async function askForEstimate(
   await notify(env, thread.operator_id, {
     kind: 'chat_message',
     title: `${thread.guest_name} asked for an estimate`,
-    body: request.slice(0, 140),
+    body: request.slice(0, FEED_EXCERPT_CHARS),
     appointment_id: thread.appointment_id,
     thread_id: thread.id,
   });

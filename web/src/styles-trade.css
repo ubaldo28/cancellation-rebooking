@@ -146,7 +146,7 @@
 
 .tr-finder button {
   flex: 0 0 auto;
-  min-height: 42px;
+  min-height: 44px;
   padding: 0 20px;
   border: 0;
   border-radius: 999px;
@@ -690,6 +690,110 @@
 
 .tr-areas-foot a,
 .tr-sec-foot a { color: var(--accent-ink); text-underline-offset: 3px; }
+
+/* The expander under a capped block of links. It is drawn as one of the quiet
+   buttons the rest of the site uses rather than as a link, because it does not
+   navigate: it grows the list above it, and puts it back again. */
+.tr-sec-more { margin: 12px 0 0; }
+
+.tr-more {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--control-line);
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.tr-more:hover { color: var(--ink); border-color: var(--line-strong); }
+
+/* --------------------------------------------------------------------------
+ * Recent reviews across the trade
+ *
+ * Laid out as a grid of equal cards rather than as a column, because these are
+ * a strip of evidence read by scanning and not a page of reviews read one by
+ * one — that page is the business's own, which every card here links to. The
+ * body is never truncated: a review cut off mid-sentence with no way to open it
+ * is worse than one review fewer.
+ * ----------------------------------------------------------------------- */
+.tr-reviews {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.tr-review {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 15px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.tr-review-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.tr-stars { font-size: 14px; letter-spacing: 1px; color: var(--accent-ink); }
+.tr-stars-off { color: var(--line-strong); }
+
+.tr-review-when { font-size: 12.5px; color: var(--muted); }
+
+.tr-review-body {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.tr-review-who {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.tr-review-what { font-weight: 400; color: var(--muted); }
+
+/* The link is the reason the strip is here, so it is the one accented thing
+   on the card and it is 44px tall like every other target on the site. */
+.tr-review-biz {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.tr-review-biz:hover { color: var(--accent); }
+
+.tr-review-sample {
+  align-self: flex-start;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
 
 /* --------------------------------------------------------------------------
  * The other trades in this category

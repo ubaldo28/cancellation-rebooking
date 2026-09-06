@@ -217,6 +217,10 @@ h1.as-h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
   font-size: 12px; font-weight: 500; padding: 4px 9px;
   border-radius: 20px; white-space: nowrap;
 }
+/* Only the ones you press. A chip is a status label most places it appears —
+   "Booked", "Cancelled" — and those are not targets; the filter row in Clients
+   is the one place it is a control, and "All" was 41px wide. */
+button.chip { min-width: 44px; }
 /* --accent-ink, not --accent: the accent is 4.12:1 on the soft ground behind
    it and a chip is 12px text, so it owed 4.5:1. The darker green is 6.37:1 on
    the same ground and is the colour every other piece of green text on white
@@ -232,7 +236,7 @@ h1.as-h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
    landing page that used to be their only caller. */
 .trade-chip {
   display: inline-flex; align-items: center; gap: 8px;
-  min-height: 42px; padding: 0 15px; border-radius: 999px; cursor: pointer;
+  min-height: 44px; padding: 0 15px; border-radius: 999px; cursor: pointer;
   border: 1px solid var(--control-line); background: var(--surface); color: var(--ink-2);
   font-size: 14px; font-weight: 600; box-shadow: var(--lift-1);
   transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
@@ -250,7 +254,11 @@ h1.as-h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
 .btn.ghost { background: transparent; color: var(--ink); border: 1.5px solid var(--ink); }
 .btn.quiet { background: transparent; color: var(--muted); border: 1px solid var(--control-line); }
 .btn.alert { background: var(--alert); }
-.btn.sm { min-height: 40px; padding: 0 14px; font-size: 14px; }
+/* Smaller type and less padding than a full button, but the same 44px
+   floor: a "sm" button is still the whole target — Share this business,
+   Delete my data, the Close on a sheet — and 40px was under the floor
+   every other control on the site is held to. */
+.btn.sm { min-height: 44px; padding: 0 14px; font-size: 14px; }
 
 /* --- forms ------------------------------------------------------------- */
 label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
@@ -325,10 +333,6 @@ textarea { min-height: 90px; resize: vertical; }
 }
 .avatar.hot { background: var(--alert-soft); color: var(--alert); }
 
-@media (min-width: 700px) {
-  .nav { position: sticky; bottom: 0; }
-}
-
 
 /* ==========================================================================
    The public site — map, openings, operator profiles.
@@ -348,8 +352,11 @@ textarea { min-height: 90px; resize: vertical; }
   backdrop-filter: saturate(180%) blur(12px);
   border-bottom: 1px solid var(--line);
 }
+/* min-height rather than padding: the bar is already taller than this, so the
+   floor grows the link's target without moving anything around it. It was 26px
+   tall and it is the way home from every page on the site. */
 .wordmark {
-  display: inline-flex; align-items: center; gap: 9px;
+  display: inline-flex; align-items: center; min-height: 44px; gap: 9px;
   font-size: 17px; font-weight: 750; letter-spacing: -0.035em; color: var(--ink);
 }
 .wordmark i {
@@ -1008,7 +1015,7 @@ textarea { min-height: 90px; resize: vertical; }
    trade tiles even though they behave the same way. */
 .area-chip {
   display: inline-flex; align-items: center; gap: 7px;
-  min-height: 40px; padding: 0 14px; border-radius: 999px; cursor: pointer;
+  min-height: 44px; padding: 0 14px; border-radius: 999px; cursor: pointer;
   border: 1px solid var(--control-line); background: var(--surface); color: var(--ink-2);
   font-size: 13.5px; font-weight: 600;
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
@@ -1052,7 +1059,7 @@ textarea { min-height: 90px; resize: vertical; }
 }
 .seg button {
   border: 0; background: none; cursor: pointer; color: var(--muted);
-  min-height: 36px; padding: 0 15px; border-radius: 999px;
+  min-height: 44px; padding: 0 15px; border-radius: 999px;
   font-size: 13.5px; font-weight: 650;
   transition: background 120ms ease, color 120ms ease;
 }
@@ -1121,11 +1128,20 @@ textarea { min-height: 90px; resize: vertical; }
   color: var(--ink-2); font-variant-numeric: tabular-nums;
 }
 /* A business name and a trade on one line will always be too long for a
-   272px card somewhere, and wrapping it makes every card a different height. */
+   272px card somewhere, and wrapping it makes every card a different height.
+   So the line is a row that does not wrap, the NAME is the part that gives
+   way, and the SAMPLE badge beside it never shrinks and is never cut. The
+   ellipsis used to be on the whole line, which meant the last thing on it was
+   the first thing clipped — and the last thing on it is the badge that stops a
+   seeded listing being read as a real business. */
 .slot-biz {
   grid-column: 1; margin-top: 2px; font-size: 12.5px; color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: flex; align-items: baseline; min-width: 0;
 }
+.slot-biz-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.slot-biz > .sample { flex: none; }
 .slot-foot {
   grid-column: 1 / -1; align-self: end; margin-top: 11px;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
@@ -1228,3 +1244,27 @@ textarea { min-height: 90px; resize: vertical; }
   color: var(--muted);
   background: var(--surface-2);
 }
+
+/* --- the working-hours editor -------------------------------------------
+   Owned by WorkingHours.tsx, which draws these seven rows in the sign-up
+   wizard and in Settings. The rules were seven inline style objects until the
+   markup became a component; they are here because the one that matters is a
+   media-free wrap the `style` attribute cannot express.
+
+   THE TIMES WRAP AS A PAIR. `<input type="time">` has a natural width of about
+   127px at 16px type — which is the size it has to stay, because anything
+   smaller makes iOS zoom the page on focus — so two of them plus a checkbox
+   and a weekday do not fit across a 375px screen. Giving them a basis wide
+   enough for both means they drop to a line of their own exactly when they
+   would otherwise have to be squeezed, and a squeezed one loses its AM/PM,
+   which is the half of the value that matters. */
+.wh-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px; }
+
+/* 22px, not the browser's 13: it is the control that switches a whole day off,
+   and `flex: none` stops the row shrinking it back down again. */
+.wh-on { width: 22px; height: 22px; min-height: 22px; flex: none; }
+
+.wh-day { width: 34px; font-weight: 600; }
+
+.wh-times { display: flex; gap: 8px; flex: 1 1 262px; min-width: 0; }
+.wh-times input { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 8px 10px; }

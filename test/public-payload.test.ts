@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it, beforeEach } from 'vitest';
 import { ALL_MIGRATIONS, makeEnv } from './d1';
+import { clientSource, exportedString } from './client-source';
 import worker from '../src/index';
 import type { Env } from '../src/types';
 import { claimSlot, slotsNear } from '../src/lib/public';
@@ -448,30 +448,13 @@ describe('the cost guide’s FAQ markup', () => {
  * reading the React source off disk. Change one and this fails.
  */
 
-const CLIENT = (path: string) =>
-  readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
-
-/**
- * The value of `export const NAME = 'a' + 'b';` in a source file this test
- * cannot import — PaymentState.tsx is TSX compiled for the browser, and
- * importing it here would drag the React runtime into a Worker test.
- */
-function exportedString(source: string, name: string): string {
-  const decl = source.match(new RegExp(`export const ${name}\\s*=([\\s\\S]*?);`));
-  expect(decl, `${name} is no longer declared where this test looks for it`).not.toBeNull();
-  const parts = [...decl![1]!.matchAll(/'((?:[^'\\]|\\.)*)'/g)]
-    .map((m) => m[1]!.replace(/\\(['\\])/g, '$1'));
-  expect(parts.length).toBeGreaterThan(0);
-  return parts.join('');
-}
-
 describe('what the site says about money, said once', () => {
   const DETAILING = 'mobile car wash and detailing';
 
   it('gives the Worker and the React app the same sentence, character for character',
     () => {
       const client = exportedString(
-        CLIENT('web/src/components/PaymentState.tsx'), 'PAY_TODAY_SHORT');
+        clientSource('web/src/components/PaymentState.tsx'), 'PAY_TODAY_SHORT');
       expect(PAY_TODAY_SHORT).toBe(client);
     });
 
@@ -479,7 +462,7 @@ describe('what the site says about money, said once', () => {
     // If either page inlines its own wording again, the constant above stops
     // being the single statement and this pin stops meaning anything.
     for (const page of ['web/src/pages/Trade.tsx', 'web/src/pages/CostGuide.tsx']) {
-      const src = CLIENT(page);
+      const src = clientSource(page);
       expect(src).toContain("import { PAY_TODAY_SHORT } from '../components/PaymentState'");
       expect(src).toContain('${PAY_TODAY_SHORT}');
     }

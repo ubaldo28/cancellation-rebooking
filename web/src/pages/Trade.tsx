@@ -1,15 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, sentence, type MapArea, type PublicSlot, type TradeCategory } from '../api';
+import {
+  api, sentence,
+  type MapArea, type PublicSlot, type TradeCategory, type TradeReview,
+} from '../api';
 import Crumbs from '../components/Crumbs';
 import { PAY_TODAY_SHORT } from '../components/PaymentState';
 import PublicPage from '../components/PublicPage';
 import PostcodeFinder from '../components/PostcodeFinder';
 import SlotCard from '../components/SlotCard';
 import SlotFilters, { useSlotFilters } from '../components/SlotFilters';
-import { ErrorNote, Spinner } from '../components/ui';
+import { ErrorNote, Spinner, Stars } from '../components/ui';
 import '../styles-trade.css';
-import { nearTradeHref } from '../lib/seo';
+import { jsonLd, nearTradeHref } from '../lib/seo';
+import { distinctGaps } from '../lib/slots';
 import { useDocumentTitle } from '../lib/title';
 
 /**
@@ -49,6 +53,113 @@ import { useDocumentTitle } from '../lib/title';
  * and laying all of them out costs a phone a second for cards nobody reaches.
  */
 const PAGE = 24;
+
+/**
+ * How many links a block at the foot of the page shows before it has to be
+ * asked for the rest.
+ *
+ * The reference marketplace caps every one of its footer blocks at five and
+ * expands in place, and the reason is the shape of the page rather than the
+ * length of any one list: four uncapped blocks stacked on top of each other
+ * turn the bottom of a landing page into forty links a visitor has to scroll
+ * past to reach the footer, and none of them is the thing they came for. Five
+ * is enough to show what kind of thing is behind the block; the button is
+ * there for anyone who wants the rest.
+ */
+const CAP = 5;
+
+/**
+ * How many reviews the strip asks for.
+ *
+ * It is a strip, not the review page — a business's own reviews are on its
+ * profile, and that is where each of these links to. Enough to show that real
+ * people have used this trade, few enough that it does not push the cost guide
+ * and the neighbourhood links off the bottom of the page.
+ */
+const REVIEWS = 6;
+
+/**
+ * One link in one of the blocks at the foot of the page.
+ *
+ * `external` is not a style: everything under /near is rendered by the Worker
+ * and is not a React route, so those have to be plain anchors or a client-side
+ * navigation lands on the SPA's catch-all. See the note over the neighbourhood
+ * list further down.
+ */
+interface BlockLink {
+  key: string;
+  href: string;
+  external?: boolean;
+  name: string;
+  /** The counted fact beside the name. Never a claim, always a number. */
+  note: string;
+}
+
+/**
+ * A block of links, capped at five, with the rest one press away.
+ *
+ * The expander grows the list it is under rather than navigating, so
+ * `aria-expanded` and `aria-controls` carry that: without them the only signal
+ * that anything happened is items appearing above a button, which a screen
+ * reader user has already moved past. Focus deliberately stays on the button —
+ * it is still there, it has changed its label, and moving somebody into a list
+ * they asked to see the end of would take them away from the control that
+ * closes it again.
+ */
+function LinkBlock({ id, heading, sub, items, shape = 'tile', foot }: {
+  id: string;
+  heading: string;
+  sub: ReactNode;
+  items: BlockLink[];
+  shape?: 'tile' | 'inline';
+  foot?: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const shown = open ? items : items.slice(0, CAP);
+  const rest = items.length - CAP;
+  const listId = `${id}-list`;
+
+  const inside = (l: BlockLink) => (shape === 'tile' ? (
+    <>
+      <span className="tr-tile-name">{l.name}</span>
+      <span className="tr-tile-n">{l.note}</span>
+    </>
+  ) : (
+    <>
+      {l.name}
+      {l.note && <span className="tr-n">{l.note}</span>}
+    </>
+  ));
+
+  return (
+    <section className={shape === 'tile' ? 'tr-sec' : 'tr-else'} aria-labelledby={id}>
+      <h2 id={id}>{heading}</h2>
+      {sub && <p className="tr-sec-sub">{sub}</p>}
+      <ul className={shape === 'tile' ? 'tr-tiles' : 'tr-else-list'} id={listId}>
+        {shown.map((l) => (
+          <li key={l.key}>
+            {l.external
+              ? <a href={l.href}>{inside(l)}</a>
+              : <Link to={l.href}>{inside(l)}</Link>}
+          </li>
+        ))}
+      </ul>
+      {rest > 0 && (
+        <p className="tr-sec-more">
+          <button type="button" className="tr-more" aria-expanded={open}
+            aria-controls={listId} onClick={() => setOpen((v) => !v)}>
+            {open ? 'Show fewer' : `Show ${rest} more`}
+          </button>
+        </p>
+      )}
+      {foot && <p className="tr-sec-foot">{foot}</p>}
+    </section>
+  );
+}
+
+const reviewDate = (s: number) =>
+  new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    .format(new Date(s * 1000));
 
 /**
  * The FAQ copy, kept out of the markup so the block below and the JSON-LD are
@@ -102,24 +213,6 @@ function faqsFor(tradeName: string): { q: string; a: string }[] {
   ];
 }
 
-/**
- * JSON-LD, escaped so page data can never close the script element.
- *
- * HTML-escaping is wrong inside a script: &lt; is not < to a JSON parser, so
- * the block would stop being valid JSON. Unicode-escaping the three dangerous
- * characters keeps it parseable and inert as markup, which means a trade or
- * service name containing "</script>" ends up as text rather than as a way out
- * of the element. React would in fact set this as a text node client-side, but
- * the escape has to hold if these pages are ever pre-rendered, and a rule that
- * only holds in one rendering mode is not a rule.
- */
-function jsonLd(data: unknown): string {
-  return JSON.stringify(data)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/&/g, '\\u0026');
-}
-
 export default function Trade() {
   const { trade } = useParams<{ trade: string }>();
   // The stored value on an operator row is lower case and the slug in the URL
@@ -157,6 +250,19 @@ export default function Trade() {
    */
   const [cats, setCats] = useState<TradeCategory[] | null>(null);
 
+  /**
+   * Recent reviews from every business doing this work.
+   *
+   * THE ONLY STATE THIS CAN BE IN IS "ROWS THE WORKER RETURNED". There is no
+   * loading skeleton and no empty box: a trade nobody has reviewed renders
+   * nothing at all, because a heading followed by "no reviews yet" on a
+   * landing page tells a stranger the site is empty in the one place it is
+   * trying to show them it is not. The same is true of a failure — an
+   * unreviewed trade and an unreachable endpoint are indistinguishable to a
+   * visitor, and the honest rendering of both is silence.
+   */
+  const [reviews, setReviews] = useState<TradeReview[]>([]);
+
   const load = useCallback(async (pc?: string) => {
     if (pc) { setLocating(true); setLocateError(null); } else { setLoading(true); setError(null); }
     try {
@@ -183,6 +289,25 @@ export default function Trade() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (!slug) return;
+    // The guard against a slow answer for one trade landing on another, which
+    // is possible because the slug is a route parameter and this page is not
+    // remounted when it changes.
+    let live = true;
+    void (async () => {
+      try {
+        const res = await api.tradeReviews(slug, REVIEWS);
+        if (live) setReviews(res.reviews);
+      } catch {
+        // A 404 for a trade the catalogue does not have, or a request that did
+        // not arrive. Both render as nothing; see the note on the state.
+        if (live) setReviews([]);
+      }
+    })();
+    return () => { live = false; };
+  }, [slug]);
+
   // Where this trade sits in the catalogue, so the breadcrumb and the sibling
   // links at the bottom know which category they belong to.
   const placeInCatalog = useMemo(() => {
@@ -206,10 +331,7 @@ export default function Trade() {
    * has always counted them this way, and these blocks are rendered on both
    * sides of the same URL, so they have to agree.
    */
-  const openings = useMemo(() => {
-    const seen = new Set<string>();
-    return slots.filter((s) => (seen.has(s.gap_id) ? false : (seen.add(s.gap_id), true)));
-  }, [slots]);
+  const openings = useMemo(() => distinctGaps(slots), [slots]);
 
   /** How many openings each trade has right now, by slug. */
   const openByTrade = useMemo(() => {
@@ -304,7 +426,7 @@ export default function Trade() {
   // keeps whatever page depth the previous list was scrolled to.
   useEffect(() => { setLimit(PAGE); },
     [located, filters.sort, filters.openFilter, filters.priceCap,
-      filters.ratingFloor, filters.day]);
+      filters.ratingFloor, filters.day, filters.service]);
 
   if (loading) {
     return <PublicPage className="tr-page"><Spinner label="Finding open appointments" /></PublicPage>;
@@ -371,8 +493,40 @@ export default function Trade() {
     .filter((t) => t.n > 0)
     .sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
 
-  const guides = (placeInCatalog ? siblings : busiest).slice(0, 6);
-  const popular = busiest.slice(0, 6);
+  // Ten rather than six now that each block caps itself at five and offers the
+  // rest: the slice is there so a catalogue of a hundred trades cannot put a
+  // hundred links behind one button, not to decide what the reader may see.
+  const guides = (placeInCatalog ? siblings : busiest).slice(0, 10);
+  const popular = busiest.slice(0, 10);
+
+  /**
+   * THE FOURTH BLOCK: where else there is work, when it is not here.
+   *
+   * The reference marketplace ends a service page with a block of nearby
+   * places, and the obvious version of that here would repeat the "where this
+   * trade is open right now" list a few inches above it, link for link. This
+   * is the other half of that list instead — the neighbourhoods that have an
+   * appointment open on Slotfill but none in this trade — so the two blocks
+   * partition the map between them rather than saying the same thing twice.
+   * A visitor who has read the listing and found nothing near them is exactly
+   * who this is for.
+   *
+   * Every row is counted from the same fetch as everything else: a
+   * neighbourhood appears because an opening is in it right now, and the
+   * number beside it is that count. Somewhere with nothing open is not listed,
+   * because the link would land on an empty page. When a postcode has been
+   * given the map has already been narrowed to what can reach it, which is the
+   * only sense in which any of this is "near" — and the sentence under the
+   * heading says which of the two it is rather than leaving the word to do it.
+   */
+  const elsewhere = (() => {
+    const here = new Set(openWhere.map((a) => a.slug));
+    return areas
+      .filter((a) => a.slot_count > 0 && !here.has(a.slug))
+      .map((a) => ({ slug: a.slug, name: a.name, n: a.slot_count }))
+      .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name))
+      .slice(0, 12);
+  })();
 
   /**
    * A slug that is in nobody's catalogue is an ordinary miss, not an error —
@@ -451,8 +605,7 @@ export default function Trade() {
         <p className="tr-sub">
           These are hours a local business has free this week — a job that
           cancelled, or a day that is not full yet. Every price is set by the
-          business doing the work. Booking one holds it; nothing is paid on
-          this site yet, so you settle the price with the business directly.
+          business doing the work. {PAY_TODAY_SHORT}
         </p>
 
         {facts.open > 0 && (
@@ -599,6 +752,61 @@ export default function Trade() {
         )}
       </section>
 
+      {/* --- what people said about this work ----------------------------
+          Their service pages carry recent reviews from across the businesses
+          in the trade, and it is the one piece of evidence a listing page
+          cannot produce for itself: a card can say a business is rated 4.8,
+          but only a review says what the work was like. Every row here was
+          left by somebody who booked on Slotfill — that is the only way one
+          can exist — and every one links to the business that earned it.
+
+          There is no aggregate above them and there never will be. An average
+          across a trade would be a number about Slotfill rather than about
+          anybody's work, and it would move every time a business joined. */}
+      {reviews.length > 0 && (
+        <section className="tr-sec" aria-labelledby="tr-reviews">
+          <h2 id="tr-reviews">
+            {reviews.length === 1
+              ? `A review of ${lower} on Slotfill`
+              : `Recent reviews of ${lower}`}
+          </h2>
+          <p className="tr-sec-sub">
+            {reviews.length === 1 ? 'The most recent review' : `The ${reviews.length} most recent reviews`}
+            {' '}left for businesses doing this work, from{' '}
+            {new Set(reviews.map((r) => r.profile_slug)).size === 1
+              ? 'one business'
+              : `${new Set(reviews.map((r) => r.profile_slug)).size} businesses`}.
+            Only somebody who booked and had the work done can leave one.
+          </p>
+          <div className="tr-reviews">
+            {reviews.map((r) => (
+              <article key={r.id} className="tr-review">
+                <div className="tr-review-top">
+                  <Stars n={r.rating} className="tr-stars" />
+                  <span className="tr-review-when">{reviewDate(r.created_at)}</span>
+                </div>
+                <p className="tr-review-body">{r.body}</p>
+                <p className="tr-review-who">
+                  <span>{r.author_name}</span>
+                  {r.details && <span className="tr-review-what">{r.details}</span>}
+                </p>
+                {/* The link is the point of the strip: this is the business
+                    that did it, and their page is where the rest of their
+                    reviews are. */}
+                <Link className="tr-review-biz" to={`/p/${r.profile_slug}`}>
+                  {r.business_name}
+                </Link>
+                {/* Seeded businesses are labelled wherever they appear. A
+                    review of one is a real row written by us, and letting it
+                    pass as a customer's would be the one dishonest thing on a
+                    page whose whole argument is that its facts are counted. */}
+                {r.is_sample && <span className="tr-review-sample">Sample business</span>}
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* --- where this trade is open ----------------------------------- */}
       {openWhere.length > 0 && (
         <section className="tr-sec" aria-labelledby="tr-where">
@@ -704,48 +912,48 @@ export default function Trade() {
           each one is openings in that trade, which is also the number of
           prices the guide behind the link has to show. */}
       {guides.length > 0 && (
-        <section className="tr-sec" aria-labelledby="tr-guides">
-          <h2 id="tr-guides">Related cost information</h2>
-          <p className="tr-sec-sub">
-            What the work next to this one is listed at today. Every one of
-            these pages counts its figures off the businesses on Slotfill the
-            moment you open it — none of them quotes an average or a survey.
-          </p>
-          <ul className="tr-tiles">
-            {guides.map((t) => (
-              <li key={t.slug}>
-                <Link to={`/cost/${encodeURIComponent(t.slug)}`}>
-                  <span className="tr-tile-name">What {t.label.toLowerCase()} costs</span>
-                  <span className="tr-tile-n">
-                    {t.n > 0
-                      ? `${t.n} ${t.n === 1 ? 'price' : 'prices'} listed`
-                      : 'nothing listed today'}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-          <p className="tr-sec-foot">
-            <Link to="/cost">Every cost guide on Slotfill</Link>
-          </p>
-        </section>
+        <LinkBlock id="tr-guides" heading="Related cost information"
+          items={guides.map((t) => ({
+            key: t.slug,
+            href: `/cost/${encodeURIComponent(t.slug)}`,
+            name: `What ${t.label.toLowerCase()} costs`,
+            note: t.n > 0
+              ? `${t.n} ${t.n === 1 ? 'price' : 'prices'} listed`
+              : 'nothing listed today',
+          }))}
+          sub={'What the work next to this one is listed at today. Every one of '
+            + 'these pages counts its figures off the businesses on Slotfill the '
+            + 'moment you open it — none of them quotes an average or a survey.'}
+          foot={<Link to="/cost">Every cost guide on Slotfill</Link>} />
       )}
 
       {/* --- the rest of the category ----------------------------------- */}
       {siblings.length > 0 && placeInCatalog && (
-        <section className="tr-else">
-          <h2>More in {placeInCatalog.category.label.toLowerCase()}</h2>
-          <ul className="tr-else-list">
-            {siblings.map((t) => (
-              <li key={t.slug}>
-                <Link to={`/s/${encodeURIComponent(t.slug)}`}>
-                  {t.label}
-                  {t.n > 0 && <span className="tr-n">{t.n}</span>}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <LinkBlock id="tr-else" shape="inline"
+          heading={`More in ${placeInCatalog.category.label.toLowerCase()}`}
+          sub={null}
+          items={siblings.map((t) => ({
+            key: t.slug,
+            href: `/s/${encodeURIComponent(t.slug)}`,
+            name: t.label,
+            note: t.n > 0 ? String(t.n) : '',
+          }))} />
+      )}
+
+      {/* --- the fourth block: neighbourhoods with work in them ---------- */}
+      {elsewhere.length > 0 && (
+        <LinkBlock id="tr-nearby" heading="Nearby neighbourhoods"
+          items={elsewhere.map((a) => ({
+            key: a.slug,
+            href: `/near/${encodeURIComponent(a.slug)}`,
+            external: true,
+            name: a.name,
+            note: `${a.n} ${a.n === 1 ? 'appointment' : 'appointments'} open`,
+          }))}
+          sub={`Nothing in ${lower} is open in these at the moment, but something `
+            + `else is. Each one goes to everything open in that neighbourhood`
+            + `${located ? `, and all of it can reach ${near}` : ''}.`}
+          foot={<a href="/near">Every neighbourhood Slotfill covers</a>} />
       )}
 
       {/* --- what else is open across the site ---------------------------
@@ -759,30 +967,18 @@ export default function Trade() {
           trending, or popular, would be putting a word in front of a number
           that does not support it. */}
       {popular.length > 0 && (
-        <section className="tr-sec" aria-labelledby="tr-busy">
-          <h2 id="tr-busy">Most appointments open right now</h2>
-          <p className="tr-sec-sub">
-            The trades with the most free hours on Slotfill at this moment,
-            counted from the same rows as everything else on this page. It is a
-            count of what is open today, not a measure of what is popular — we
-            do not have one of those.
-          </p>
-          <ul className="tr-tiles">
-            {popular.map((t) => (
-              <li key={t.slug}>
-                <Link to={`/s/${encodeURIComponent(t.slug)}`}>
-                  <span className="tr-tile-name">{t.label}</span>
-                  <span className="tr-tile-n">
-                    {t.n} {t.n === 1 ? 'appointment open' : 'appointments open'}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-          <p className="tr-sec-foot">
-            <Link to="/browse">Every service Slotfill lists</Link>
-          </p>
-        </section>
+        <LinkBlock id="tr-busy" heading="Most appointments open right now"
+          items={popular.map((t) => ({
+            key: t.slug,
+            href: `/s/${encodeURIComponent(t.slug)}`,
+            name: t.label,
+            note: `${t.n} ${t.n === 1 ? 'appointment open' : 'appointments open'}`,
+          }))}
+          sub={'The trades with the most free hours on Slotfill at this moment, '
+            + 'counted from the same rows as everything else on this page. It is a '
+            + 'count of what is open today, not a measure of what is popular — we '
+            + 'do not have one of those.'}
+          foot={<Link to="/browse">Every service Slotfill lists</Link>} />
       )}
 
       <footer className="tr-foot">

@@ -266,7 +266,10 @@ export default function GuestThread() {
                   <div className="name" style={{ marginTop: 10 }}>{booking.service_name}</div>
                   <dl className="pairs" style={{ marginTop: 12 }}>
                     <dt>When</dt>
-                    <dd>{bookingWhen(booking.starts_at, booking.ends_at)}</dd>
+                    <dd>
+                      {bookingWhen(booking.starts_at, booking.ends_at,
+                        thread.timezone, thread.locale)}
+                    </dd>
                     <dt>Where</dt>
                     <dd>
                       {booking.address_line
@@ -300,7 +303,9 @@ export default function GuestThread() {
                     quarters from 12 to 48, a quarter inside 12, and you will
                     see the amount before you confirm. Message them below if
                     something has changed; moving it is usually fine.
-                    Times are shown in your device's timezone.
+                    {thread.timezone
+                      ? ` The time above is local to ${business}.`
+                      : " The time above is in your device's timezone."}
                   </p>
                 </div>
               )}
@@ -332,7 +337,7 @@ export default function GuestThread() {
                     Nothing is booked yet. Asking here does not hold the time,
                     so book it when you are ready.
                   </p>
-                  <a className="btn sm" href={`/book/${thread.gap_id}`}>Book this slot</a>
+                  <a className="btn sm" href={`/book/${thread.gap_id}`}>Book this opening</a>
                 </div>
               )}
 
@@ -373,20 +378,30 @@ export default function GuestThread() {
 }
 
 /**
- * When the job is.
+ * When the job is, in the timezone the van will be standing in.
  *
- * Rendered in the reader's own timezone. The guest payload carries no
- * timezone and there is no operator record to borrow one from, so the only
- * alternative is UTC — and a confirmation that says 07:00 for an 08:00 job is
- * worse than one that says nothing. The customer and the van are in the same
- * place, so the device clock is the right one far more often than not.
+ * This used to use the device clock, under a comment saying the guest payload
+ * carried no timezone. It does: guestView in src/index.ts puts the business's
+ * `timezone` and `locale` on every guest thread for exactly this, and says in
+ * as many words that without it an 08:00 job renders as 07:00 and somebody
+ * misses it. A customer reading this on a phone that is still on last week's
+ * holiday timezone, or on a laptop set wrong, was being given an hour that
+ * nobody is coming at.
+ *
+ * Both fields are optional on the type because an older Worker may not send
+ * them, so the device's own zone stays the fallback — the customer and the van
+ * are usually in the same place, which is what made the old behaviour right
+ * far more often than not rather than always.
  */
-function bookingWhen(startSeconds: number, endSeconds: number): string {
-  const day = new Intl.DateTimeFormat(undefined, {
-    weekday: 'long', day: 'numeric', month: 'long',
+function bookingWhen(
+  startSeconds: number, endSeconds: number, tz?: string, locale?: string,
+): string {
+  const opts: Intl.DateTimeFormatOptions = tz ? { timeZone: tz } : {};
+  const day = new Intl.DateTimeFormat(locale, {
+    ...opts, weekday: 'long', day: 'numeric', month: 'long',
   }).format(new Date(startSeconds * 1000));
-  const at = (s: number) => new Intl.DateTimeFormat(undefined, {
-    hour: '2-digit', minute: '2-digit',
+  const at = (s: number) => new Intl.DateTimeFormat(locale, {
+    ...opts, hour: '2-digit', minute: '2-digit',
   }).format(new Date(s * 1000));
   return `${day}, ${at(startSeconds)} to ${at(endSeconds)}`;
 }

@@ -110,7 +110,7 @@ export const RETENTION = {
    */
   JOB_LOCATION_DAYS: 90,
 
-  /** Feed rows, which carry the first 140 characters of chat messages. */
+  /** Feed rows, which carry FEED_EXCERPT_CHARS of a chat message. */
   NOTIFICATION_DAYS: 90,
 
   /** The SMS/device log, whose to_address column is a phone number. */
@@ -311,7 +311,7 @@ export async function sweepJobLocations(env: Env): Promise<number> {
   return n;
 }
 
-/** Feed rows carry the first 140 characters of somebody's message. */
+/** Feed rows carry the first FEED_EXCERPT_CHARS of somebody's message. */
 export async function sweepNotifications(env: Env): Promise<number> {
   const res = await env.DB.prepare(
     `DELETE FROM notifications WHERE created_at < ?`,
@@ -596,6 +596,42 @@ export async function eraseCustomerByToken(
 
 const sum = (r: Record<string, number>) => Object.values(r).reduce((a, b) => a + b, 0);
 
+/**
+ * The van's last fix and its trail, erased.
+ *
+ * THE ONE PIECE OF PERSONAL DATA IN THIS PRODUCT THAT IS NOT IN D1. Position
+ * pings stopped being rows in migration 0015 and became state on a Durable
+ * Object -- see src/do/van.ts -- and every deletion path in this file was
+ * written against the database, so not one of them ever reached it.
+ * VanTracker.clear() has existed since the day that object was written and
+ * nothing outside the tests had ever called it. The result was that an
+ * operator's last known position and up to twenty sampled points of where they
+ * drove stayed in Durable Object storage indefinitely: after they switched
+ * location sharing off, and after they closed the account this file is
+ * otherwise so careful to empty. Both of those are a person saying "stop
+ * holding where I am", and neither of them did anything about it.
+ *
+ * Failures are swallowed on purpose. The object may never have been created,
+ * the binding is optional in every environment that has not run the tracking
+ * migration, and a tracking-storage hiccup must not be what makes an account
+ * closure or a privacy toggle fail -- the caller has already done, or is about
+ * to do, the part that is recorded.
+ */
+interface VanClearStub { clear(): Promise<void> }
+interface VanClearNamespace {
+  idFromName(name: string): DurableObjectId;
+  get(id: DurableObjectId): VanClearStub;
+}
+
+export async function forgetVan(env: Env, operatorId: string): Promise<void> {
+  const id = (operatorId ?? '').trim();
+  if (!id) return;
+  const ns = (env as unknown as { VAN?: VanClearNamespace }).VAN;
+  if (!ns) return;
+  try { await ns.get(ns.idFromName(id)).clear(); }
+  catch (e) { console.error('van clear failed', id, e); }
+}
+
 /** The receipt. A peppered hash of the subject, never the subject. */
 async function recordErasure(
   env: Env, kind: 'customer' | 'operator', subject: string, rows: number,
@@ -681,6 +717,10 @@ export async function closeOperatorAccount(
     `DELETE FROM work_photos WHERE operator_id = ?`,
   ).bind(id).run()));
   if (op.avatar_key && env.PHOTOS) await env.PHOTOS.delete(op.avatar_key).catch(() => {});
+
+  // Where they last were, and the trail of where they drove. Not a row, which
+  // is exactly why it was being missed. See forgetVan.
+  await forgetVan(env, id);
 
   // Other people's data that only existed because this account did.
   add('threads', changes(await env.DB.prepare(

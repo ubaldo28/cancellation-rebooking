@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, afterEach } from 'vitest';
 import { ALL_MIGRATIONS, makeEnv } from './d1';
 import type { Env } from '../src/types';
 import {

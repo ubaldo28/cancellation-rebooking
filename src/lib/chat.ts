@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 import { hashOfferToken } from './auth';
-import { notify } from './feed';
+import { FEED_EXCERPT_CHARS, notify } from './feed';
+import { RateLimitedError } from './ratelimit';
 import { redactContact, redactionMessage } from './redact';
 import { badRequest, conflict, newId, newToken, notFound, now } from './util';
 
@@ -356,7 +357,7 @@ export async function postAsGuest(
   await notify(env, thread.operator_id, {
     kind: 'chat_message',
     title: `${thread.guest_name} sent you a message`,
-    body: message.body.slice(0, 140),
+    body: message.body.slice(0, FEED_EXCERPT_CHARS),
     appointment_id: thread.appointment_id,
     thread_id: thread.id,
   });
@@ -477,6 +478,190 @@ export async function attachBooking(
 
   if ((res.meta.changes ?? 0) === 0) throw notFound('No such conversation.');
 }
+
+// ---------------------------------------------------------------------------
+// A stranger opening a conversation, from a profile page and nothing else
+// ---------------------------------------------------------------------------
+//
+// Everything above assumes the guest already holds a link, because until now
+// only a booking could mint one. The two functions below are the other door:
+// the reference marketplace puts "Message" and "Request a quote" on a profile
+// as first-class actions, usable when nothing is scheduled, and a person who
+// wants to ask whether a van fits down their alley before they pay for
+// anything had nowhere on this site to ask it.
+//
+// Opening that door is the reason the rest of this section exists. A booking
+// costs the person making it a name, a phone number, an address and a
+// geocode; a message costs them a sentence. That difference is the whole
+// abuse surface, and it is answered below.
+
+/** How this business is named by whoever is writing to it. */
+export interface EnquiryTarget {
+  /** The public URL segment, which is all a profile page has. */
+  slug?: string | null;
+  /** The operator id, which the slot and gap pages already carry. */
+  id?: string | null;
+}
+
+/** The business, as far as anyone starting a conversation needs to know it. */
+export interface EnquiryOperator {
+  id: string;
+  business_name: string;
+  profile_slug: string | null;
+  trade: string | null;
+}
+
+/**
+ * Resolves a business a stranger is allowed to write to, or null.
+ *
+ * ONE PLACE, AND EVERY PATH THAT MINTS A GUEST TOKEN GOES THROUGH IT. The
+ * conditions are the same set claimSlot applies before it will sell a slot,
+ * and they were not all being applied here: the thread route checked the plan
+ * and the public-bookings flag and nothing else, so a business suspended for
+ * missed appointments — whose openings are pulled from the map, who cannot
+ * post a new one, and who cannot be sent an instant request — still had its
+ * inbox open to every stranger on the internet. A ladder that stops the work
+ * and leaves the enquiries is not a suspension, it is a slower version of
+ * being listed.
+ *
+ * `is_published` is required of a SLUG and not of an id, which is the one
+ * place the two spellings genuinely differ. A slug names a profile page, and a
+ * business that has taken its page down has said what it wants. An id comes
+ * from an open slot on the map — `accept_public_bookings` is what put it
+ * there, publishing a profile is a separate decision, and a customer looking
+ * at a bookable appointment must be able to ask a question about it whether or
+ * not the business has written an About section.
+ */
+export async function operatorForEnquiry(
+  env: Env, ref: EnquiryTarget,
+): Promise<EnquiryOperator | null> {
+  const slug = (ref.slug ?? '').trim();
+  const id = (ref.id ?? '').trim();
+  if (!slug && !id) return null;
+
+  const t = now();
+  // Both spellings in one statement rather than two functions that can drift:
+  // whichever the caller has, the conditions below are the same conditions.
+  const row = await env.DB.prepare(
+    `SELECT id, business_name, profile_slug, trade
+       FROM operators
+      WHERE ((? <> '' AND profile_slug = ? AND is_published = 1)
+             OR (? <> '' AND id = ?))
+        AND accept_public_bookings = 1
+        AND plan IN ('trial','active')
+        AND banned_at IS NULL
+        AND (suspended_until IS NULL OR suspended_until <= ?)`,
+  ).bind(slug, slug, id, id, t).first<EnquiryOperator>();
+
+  return row ?? null;
+}
+
+/**
+ * How many different businesses one address may open a conversation with.
+ *
+ * Ten, over six hours. The shape of the number matters more than the number:
+ * it counts BUSINESSES REACHED, not messages sent, so a customer going back
+ * and forth with one plumber never touches it however much they type, and
+ * somebody genuinely shopping around — three or four quotes for the same job,
+ * which is what the reference's own "request a quote" flow encourages — is
+ * nowhere near it either. What it does bound is breadth: at this ceiling an
+ * address can reach forty businesses a day, which is a rounding error against
+ * a city and is reached by nobody who is actually asking about a job.
+ *
+ * Six hours rather than a day because the key is an address and an address is
+ * not a person — an office, a café and everything behind CGNAT are one row
+ * here — so a wrongly-caught bystander gets their allowance back inside the
+ * same afternoon without anybody having to ask for it.
+ */
+const REACH_MAX_OPERATORS = 10;
+const REACH_WINDOW_SECONDS = 6 * 60 * 60;
+
+/**
+ * Refuses before a conversation is opened with a business this address has not
+ * reached before.
+ *
+ * Called with the operator already resolved, so a business already spoken to
+ * is free: the count is of DISTINCT rows, and the row for that pair already
+ * exists. That is what makes this survivable for a real customer and fatal for
+ * a spray — the two are told apart by the only thing that actually
+ * distinguishes them.
+ */
+export async function assertEnquiryReachAllowed(
+  env: Env, ip: string, operatorId: string,
+): Promise<void> {
+  const t = now();
+  const since = t - REACH_WINDOW_SECONDS;
+
+  const already = await env.DB.prepare(
+    `SELECT 1 FROM enquiry_reach WHERE ip = ? AND operator_id = ? AND first_at > ?`,
+  ).bind(ip, operatorId, since).first();
+  // Writing again to somebody already written to is not reaching anybody new.
+  if (already) return;
+
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM enquiry_reach WHERE ip = ? AND first_at > ?`,
+  ).bind(ip, since).first<{ n: number }>();
+
+  if ((row?.n ?? 0) >= REACH_MAX_OPERATORS) {
+    // 429 with a Retry-After rather than a bare refusal, so a person caught by
+    // somebody else on their address is told when to come back instead of
+    // reloading into the wall. The window is fixed from each first contact, so
+    // the honest answer is when the oldest row in it ages out.
+    const oldest = await env.DB.prepare(
+      `SELECT MIN(first_at) AS at FROM enquiry_reach WHERE ip = ? AND first_at > ?`,
+    ).bind(ip, since).first<{ at: number | null }>();
+    const retryAfter = Math.max(60, (oldest?.at ?? t) + REACH_WINDOW_SECONDS - t);
+
+    const err = new RateLimitedError(
+      'You have started conversations with a lot of businesses in a short time. '
+      + `Carry on with the ones you have opened — you can write to a new business again in ${
+        Math.ceil(retryAfter / 3600)} hours.`,
+      retryAfter,
+    );
+    // Its own code, so this is distinguishable in a log — and by the front end
+    // — from the ordinary volume limits, which mean something else entirely.
+    err.code = 'too_many_businesses';
+    throw err;
+  }
+}
+
+/**
+ * Records that this address has now reached this business.
+ *
+ * After the conversation exists, never before: a refusal further down — a
+ * blank name, a message over the length cap — must not spend an allowance on
+ * a conversation that was never opened.
+ *
+ * ON CONFLICT DO NOTHING keeps first_at as the FIRST contact rather than the
+ * latest, which is what makes the window a window. Refreshing it on every
+ * message would let one long conversation hold a slot open indefinitely.
+ */
+export async function recordEnquiryReach(
+  env: Env, ip: string, operatorId: string,
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO enquiry_reach (ip, operator_id, first_at) VALUES (?,?,?)
+     ON CONFLICT(ip, operator_id) DO NOTHING`,
+  ).bind(ip, operatorId, now()).run();
+}
+
+/**
+ * Drops rows the window has moved past, on the cron.
+ *
+ * A row is only interesting while it is counting. Kept for ever it would be a
+ * permanent record of which businesses each address has ever written to, which
+ * is a thing worth having only if you want to be asked for it.
+ */
+export async function sweepEnquiryReach(env: Env): Promise<void> {
+  await env.DB.prepare(
+    `DELETE FROM enquiry_reach WHERE first_at <= ?`,
+  ).bind(now() - REACH_WINDOW_SECONDS).run();
+}
+
+/** Exported for the tests, so the numbers above are asserted rather than retyped. */
+export const ENQUIRY_REACH_LIMITS = {
+  MAX_OPERATORS: REACH_MAX_OPERATORS, WINDOW_SECONDS: REACH_WINDOW_SECONDS,
+} as const;
 
 /** How many conversations are waiting on the operator. Drives the badge, so one row. */
 export async function unreadThreadCount(env: Env, operatorId: string): Promise<number> {

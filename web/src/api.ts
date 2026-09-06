@@ -11,8 +11,6 @@
  * deployed Worker; that origin then has to appear in ALLOWED_ORIGINS.
  */
 
-import { formatMoney } from './lib/format';
-
 const BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
 
 export class ApiError extends Error {
@@ -432,6 +430,62 @@ export interface Review {
   photos?: string[];
 }
 
+/**
+ * One review as a trade page shows it, from any business doing that work.
+ *
+ * Deliberately not a `Review`: no reply, no photos, no internal booking id —
+ * a strip across a whole trade needs the words, the stars and somewhere to go.
+ * `profile_slug` is never null, so the link is always `/p/${profile_slug}`.
+ */
+export interface TradeReview {
+  id: string;
+  rating: number;
+  /** Already cut to "Debra D." by the server. */
+  author_name: string;
+  /** Never null or blank: a review with no words is not returned at all. */
+  body: string;
+  details: string | null;
+  created_at: number;
+  business_name: string;
+  profile_slug: string;
+  /** A seeded sample business. Say so — do not render it as a market. */
+  is_sample: boolean;
+}
+
+/**
+ * Another business doing the same work on the same patch.
+ *
+ * NOTHING HERE HAS A DEFAULT. `rating` is null for a business nobody has
+ * reviewed, which is not the same as a bad score and must not be drawn as five
+ * empty stars; `years_in_business` and `employees` are null when they have not
+ * said. Render the absence, never a placeholder.
+ */
+export interface SimilarBusiness {
+  business_name: string;
+  /** The `/p/:slug` segment. Never null. */
+  profile_slug: string;
+  trade: string | null;
+  tagline: string | null;
+  /** Neighbourhoods this business works, by name. */
+  areas: string[];
+  /**
+   * How many of those the business whose page this is also works. This is what
+   * "nearby" means here — a van has no address to measure a distance from —
+   * and it is the first key the list is ordered by. Zero is a real answer: the
+   * business is in the trade but shares no neighbourhood.
+   */
+  shared_areas: number;
+  is_sample: boolean;
+  rating: number | null;
+  review_count: number;
+  hired_count: number;
+  online: boolean;
+  background_check: boolean;
+  years_in_business: number | null;
+  employees: number | null;
+  avatar_key: string | null;
+}
+
 export interface ProfileFaq { id: string; question: string; answer: string; position: number }
 
 /** One thing this business does, priced. Its working notes are not in here. */
@@ -491,6 +545,15 @@ export interface PublicProfileResponse {
   services: PublicService[];
   /** When they work. Empty when they have never set any. */
   working_hours: PublicHours[];
+  /**
+   * A few other businesses in the same trade whose patch overlaps this one's,
+   * for the foot of the page. Already excludes the business being shown.
+   *
+   * Empty when this is the only business in its trade with a page, or when it
+   * has no trade set — render that as the absence it is. `api.similarBusinesses`
+   * is the "see all" behind it.
+   */
+  similar: SimilarBusiness[];
 }
 
 export interface OnlineStatus {
@@ -784,6 +847,45 @@ export const api = {
     turnstile_token?: string;
   }) => post<{ thread: Thread; token: string; link: string }>('/api/public/threads', b),
 
+  /**
+   * "Message" and "Request a quote" from a business's profile, with nothing
+   * booked and no account.
+   *
+   * Takes the profile slug because that is all a profile page has — the
+   * operator id is an internal key and is deliberately not published — and it
+   * mints exactly the same guest token a booking mints, so the `link` it
+   * returns opens the ordinary `/c/:token` conversation. THAT LINK IS THE ONLY
+   * COPY THERE WILL EVER BE: only its hash is stored, so a page that drops it
+   * has lost the conversation for good.
+   *
+   * `kind: 'quote'` needs `request` and comes back with an `estimate`; the
+   * business answers it with a price and a time, and accepting that becomes an
+   * ordinary booking. `kind: 'message'` needs `first_message` and comes back
+   * with `estimate: null`.
+   *
+   * Two refusals are worth handling by name. 404 means that business is not
+   * taking messages — unpublished, or suspended. 429 with code
+   * `too_many_businesses` means this visitor has opened conversations with
+   * enough different businesses for now; it is not a limit on how much they
+   * can say to anyone they have already written to, and the message on it says
+   * when they can start a new one.
+   */
+  startProfileEnquiry: (slug: string, b: {
+    guest_name: string;
+    kind?: 'message' | 'quote';
+    /** The opening message, for `kind: 'message'`. */
+    first_message?: string;
+    /** What they want priced, for `kind: 'quote'`. */
+    request?: string;
+    subject?: string;
+    /** See placeOrder below for what this is and when it is left out. */
+    turnstile_token?: string;
+  }) => post<{
+    thread: Thread; token: string; link: string;
+    operator: { business_name: string; profile_slug: string | null };
+    estimate: Estimate | null;
+  }>(`/api/public/profile/${encodeURIComponent(slug)}/enquiries`, b),
+
   threads: (unreadOnly?: boolean) =>
     get<{ threads: Thread[]; unread: number }>(`/api/threads${unreadOnly ? '?unread=1' : ''}`),
   thread: (id: string) => get<{ thread: Thread; messages: ChatMessage[] }>(`/api/threads/${id}`),
@@ -891,6 +993,31 @@ export const api = {
   publicReviews: (operatorId: string, sort?: string) =>
     get<{ rating: RatingSummary; reviews: Review[] }>(
       `/api/public/reviews/${operatorId}${sort ? `?sort=${sort}` : ''}`),
+
+  /**
+   * Recent reviews from every business in one trade, for the service page.
+   *
+   * `slug` is the catalogue slug — the same segment `/s/:trade` uses. An
+   * unknown trade is a 404; a real trade nobody has reviewed comes back with
+   * an empty array, and that has to be rendered as nothing rather than as a
+   * placeholder review.
+   */
+  tradeReviews: (slug: string, limit?: number) =>
+    get<{ trade: { slug: string; label: string }; reviews: TradeReview[] }>(
+      `/api/public/trades/${encodeURIComponent(slug)}/reviews${
+        limit ? `?limit=${limit}` : ''}`),
+
+  /**
+   * The "see all" behind the three alternatives on a profile.
+   *
+   * The profile payload already carries the first few in `similar`, so this is
+   * only needed when the page wants more than that. The business whose slug is
+   * passed is excluded by the server.
+   */
+  similarBusinesses: (slug: string, limit?: number) =>
+    get<{ businesses: SimilarBusiness[] }>(
+      `/api/public/profile/${encodeURIComponent(slug)}/similar${
+        limit ? `?limit=${limit}` : ''}`),
   reviewableBookings: (token: string) =>
     get<{ bookings: Array<{ order_item_id: string; ends_at: number; services: string | null }> }>(
       `/api/public/threads/${encodeURIComponent(token)}/reviewable`),
@@ -1027,8 +1154,14 @@ export const sentence = (s: string): string => s.charAt(0).toUpperCase() + s.sli
  * prose inside a sentence. The two are not drift and should not be unified.
  */
 export const durationLabel = (seconds: number): string => {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.round((seconds % 3600) / 60);
+  // Rounded to the minute ONCE, before the hours are taken off, because
+  // rounding the remainder on its own is the bug OnlineSwitch's own comment
+  // names: 3,599 seconds came out as "60m" and 7,199 as "1h 60m", which makes
+  // the whole readout look broken. Service durations are whole seconds the
+  // operator types, so those are not hypothetical values.
+  const total = Math.round(seconds / 60);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
   return h && m ? `${h}h ${m}m` : h ? `${h}h` : `${m}m`;
 };
 

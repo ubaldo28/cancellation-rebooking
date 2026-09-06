@@ -1,5 +1,5 @@
-import type { Env, Operator, Point } from '../types';
-import { ZERO_DECIMAL, formatMoney, getCountry, localeFor, normalisePostcode } from './countries';
+import type { Env, Point } from '../types';
+import { discounted, formatMoney, getCountry, localeFor, normalisePostcode } from './countries';
 import { driveSeconds, geocode } from './geo';
 import { notify } from './feed';
 import { isDemoOperator } from './demo';
@@ -171,12 +171,17 @@ function coarsenAnchor(v: number | null | undefined): number | null {
   return Math.round(v * step) / step;
 }
 
-/** The operator columns every card needs, listed once so both queries agree. */
-const CARD_COLUMNS =
+/**
+ * The operator columns every card needs, listed once so both queries agree.
+ *
+ * Exported so a fourth query cannot quietly grow a fifth idea of what a
+ * business card says. Every user of it aliases the operators table as `o`.
+ */
+export const CARD_COLUMNS =
   `o.rating_sum, o.rating_count, o.hired_count, o.online_until,
    o.background_checked_at, o.years_in_business, o.employees, o.avatar_key`;
 
-interface CardRow {
+export interface CardRow {
   rating_sum: number;
   rating_count: number;
   hired_count: number;
@@ -187,7 +192,7 @@ interface CardRow {
   avatar_key: string | null;
 }
 
-type CardFacts = Pick<PublicSlot,
+export type CardFacts = Pick<PublicSlot,
   'rating' | 'review_count' | 'hired_count' | 'online'
   | 'background_check' | 'years_in_business' | 'employees' | 'avatar_key'>;
 
@@ -205,7 +210,7 @@ type CardFacts = Pick<PublicSlot,
  * It applies to the sample businesses in exactly the same way: whatever the
  * demo rows say is what shows, which for most of them is nothing at all.
  */
-function cardFacts(o: CardRow, t: number): CardFacts {
+export function cardFacts(o: CardRow, t: number): CardFacts {
   return {
     // Rounded the same way ratingFor rounds, so the card and the profile page
     // never print a different number for the same business.
@@ -497,19 +502,15 @@ export async function slotsNear(
 }
 
 /**
- * A discount off a real price, rounded to something a person would write.
+ * Re-exported, not defined here.
  *
- * 10% off $189 is $170.10. Nobody prices a car wash at $170.10, and a price
- * with stray cents on it reads as a bug rather than a deal, so the result is
- * rounded to a whole unit of currency (or to the nearest 10 for zero-decimal
- * currencies, where a single unit is worth very little).
+ * The rounding moved to ./countries, next to formatMoney and the zero-decimal
+ * list it depends on, so that ./offers can reach it without importing this
+ * whole listing module — which is why it ended up with its own second copy of
+ * the arithmetic. The name stays available on this path because the routes and
+ * ./orders already import it from here.
  */
-export function discounted(cents: number, percent: number, currency: string): number {
-  if (!percent) return cents;
-  const raw = cents * (1 - percent / 100);
-  const step = ZERO_DECIMAL.has(currency.toUpperCase()) ? 10 : 100;
-  return Math.max(0, Math.round(raw / step) * step);
-}
+export { discounted };
 
 export interface MapArea {
   name: string; slug: string; lat: number; lng: number;
@@ -666,24 +667,32 @@ export async function claimSlot(env: Env, input: {
       WHERE g.id = ?`,
   ).bind(input.gapId).first<any>();
 
-  if (!row) throw notFound('That slot is no longer listed.');
-  if (row.accept_public_bookings !== 1) throw notFound('That slot is no longer listed.');
+  if (!row) throw notFound('That opening is no longer listed.');
+  if (row.accept_public_bookings !== 1) throw notFound('That opening is no longer listed.');
   // The listing query already hides these, but the gap id travels in the URL
   // of the no-JavaScript form and a page cached before the suspension still
   // posts to it, so the check has to be here too and not only in the query
   // that stopped showing the slot.
   if (row.banned_at != null || (row.suspended_until != null && row.suspended_until > t)) {
-    throw notFound('That slot is no longer listed.');
+    throw notFound('That opening is no longer listed.');
   }
   if (!['open', 'offering'].includes(row.status)) {
-    throw conflict('Sorry — that slot has just been taken.', 'slot_taken');
+    throw conflict('Sorry — that opening has just been taken.', 'slot_taken');
   }
-  if (row.starts_at <= t) throw conflict('That slot has already started.', 'slot_passed');
+  if (row.starts_at <= t) throw conflict('That opening has already started.', 'slot_passed');
 
   const country = getCountry(row.country);
-  const phone = toE164(input.first_name ? input.phone : null, row.country);
+
+  // The name is checked before the number, and that ordering is the fix rather
+  // than a tidy-up. The two used to be one expression — the number was only
+  // normalised `if (input.first_name)` — so a form submitted with the name box
+  // empty and a perfectly good mobile in the other one came back with "that
+  // does not look like a valid mobile number", pointing at the one field the
+  // person had filled in correctly. Each field now reports its own problem.
+  if (!input.first_name?.trim()) throw badRequest('We need a name for the booking.', 'no_name');
+
+  const phone = toE164(input.phone, row.country);
   if (!phone) throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
-  if (!input.first_name?.trim()) throw badRequest('We need a name for the booking.');
 
   // The same check placeOrder and createInstantRequest make, after the number
   // is normalised so a suspension cannot be stepped around by typing the same
@@ -722,7 +731,7 @@ export async function claimSlot(env: Env, input: {
       ORDER BY price_cents DESC LIMIT 1`,
   ).bind(row.operator_id, row.ends_at - row.starts_at,
     input.gapId, input.gapId).first<any>();
-  if (!service) throw conflict('That slot is no longer bookable.', 'no_service');
+  if (!service) throw conflict('That opening is no longer bookable.', 'no_service');
 
   if (at && row.is_mobile === 1) {
     const pairs: [Point, Point][] = [];
@@ -733,7 +742,7 @@ export async function claimSlot(env: Env, input: {
     detour = Math.max(0, travel - (row.baseline_drive_seconds ?? 0));
     if (detour > row.max_detour_seconds
         || service.duration_seconds + travel > row.ends_at - row.starts_at) {
-      throw conflict('That slot is too far from their route now.', 'too_far');
+      throw conflict('That opening is too far from their route now.', 'too_far');
     }
   }
 
@@ -802,11 +811,11 @@ export async function claimSlot(env: Env, input: {
       ).bind(t, row.operator_id),
     ]);
     if ((res[3]?.meta.changes ?? 0) === 0) {
-      throw conflict('Sorry — that slot has just been taken.', 'slot_taken');
+      throw conflict('Sorry — that opening has just been taken.', 'slot_taken');
     }
   } catch (e) {
     if (String(e).includes('UNIQUE') || String(e).includes('constraint')) {
-      throw conflict('Sorry — that slot has just been taken.', 'slot_taken');
+      throw conflict('Sorry — that opening has just been taken.', 'slot_taken');
     }
     throw e;
   }

@@ -16,17 +16,18 @@ import { WEB_IMAGE_TYPES, assertBodyWithin, cleanImageUpload } from './lib/image
 import { RateLimitedError, clientIp, enforceRateLimit } from './lib/ratelimit';
 import { withSecurityHeaders } from './lib/headers';
 import { requireTurnstile, tokenFromBody } from './lib/turnstile';
-import { START_WORDS, STOP_WORDS, copy, isLang, pickLang } from './lib/messages';
+import { START_WORDS, STOP_WORDS, SUPPORTED_LANGUAGES, isLang } from './lib/messages';
 import { verifyTwilioSignature } from './lib/twilio';
 import {
   acceptOffer, createOffers, declineOffer, loadOfferByToken, markViewed,
 } from './lib/offers';
-import { claimSlot, discounted, mapData, slotById, slotsNear } from './lib/public';
+import { claimSlot, discounted, mapData } from './lib/public';
 import { isDemoOperator, seedDemoIfEmpty, startDemo } from './lib/demo';
 import { listNotifications, markAllRead, markRead, unreadCount } from './lib/feed';
 import {
-  listMessages, listThreads, markThreadRead, postAsGuest, postAsOperator,
-  startThread, threadByToken, threadForOperator, unreadThreadCount,
+  assertEnquiryReachAllowed, listMessages, listThreads, markThreadRead, operatorForEnquiry,
+  postAsGuest, postAsOperator, recordEnquiryReach, startThread, sweepEnquiryReach,
+  threadByToken, threadForOperator, unreadThreadCount,
 } from './lib/chat';
 import {
   addSubscription, createWatch, deactivateWatch, matchWatches, removeSubscription,
@@ -43,14 +44,16 @@ import {
   cancelByCustomer, cancelByOperator, feesOwed, listFees, listingBlock, markArrived,
   quoteRefund,
 } from './lib/bypass';
-import { maskClientRow, maskEmail, maskPhone } from './lib/redact';
+import { maskClientRow, maskEmail, maskPhone, maskWithdrawnAddress } from './lib/redact';
 import {
   assertNoCardData, assertPaymentRef, cardSafeDb, safeBrand, safeLast4,
   stripeWebhooksConfigured, verifyStripeSignature,
 } from './lib/payments';
 import { listAdminActions, recordAdminAction } from './lib/audit';
-import { closeOperatorAccount, eraseCustomerByToken, sweepRetention } from './lib/retention';
-import { catalogFor, TRADE_CATEGORIES, tradeLabel } from './lib/trades';
+import {
+  closeOperatorAccount, eraseCustomerByToken, forgetVan, sweepRetention,
+} from './lib/retention';
+import { catalogFor, TRADE_CATEGORIES } from './lib/trades';
 import { deleteFaq, listFaqs, saveFaq } from './lib/profile';
 import {
   acceptRequest, cancelRequest, createInstantRequest, declineRequest, expireRequests,
@@ -63,7 +66,7 @@ import {
 } from './lib/estimates';
 import {
   displayName, leaveReview, listReviews, ratingFor, releasePhoto, replyToReview,
-  reviewableFor,
+  reviewableFor, reviewsForTrade,
 } from './lib/reviews';
 import {
   answerWork, confirmArrival, flaggedOperators, flagSummary, pendingQuestion,
@@ -74,11 +77,12 @@ import {
   addJobPhoto, deleteJobPhoto, isStage, proofSummary, readJobPhoto,
 } from './lib/proof';
 import {
-  getVehicle, jobCodeForGuest, reportVehicle, saveVehicle, verifyStartCode,
+  getVehicle, jobCodeForGuest, reportVehicle, saveVehicle, vehicleReports,
+  verifyStartCode,
 } from './lib/startcode';
 import {
-  confirmNoShow, customerStanding, hasOperatorCard, NEEDS_CARD_CUSTOMER,
-  openReports, operatorStanding, rejectNoShow, reportNoShow, saveOperatorCard,
+  confirmNoShow, customerStanding, hasOperatorCard, openReports, operatorStanding,
+  rejectNoShow, reportNoShow, saveOperatorCard,
 } from './lib/standing';
 import {
   areaIndexPage, browseIndexPage, canonicalTradeSegment, categoryPage, costGuidePage,
@@ -93,10 +97,10 @@ import {
 } from './lib/track';
 import {
   MAX_PHOTO_BYTES, addPhoto, deletePhoto, ensureProfileSlug, getPublicProfile,
-  listPhotos, reorderPhotos,
+  listPhotos, reorderPhotos, similarBusinesses,
 } from './lib/profile';
 import { rankCandidates, type GapRow } from './lib/rank';
-import { addLocalDays, formatTimeRange, localDayStart } from './lib/tz';
+import { formatTimeRange, localDayStart } from './lib/tz';
 import {
   HttpError, badRequest, conflict, escapeHtml, html, json, newId, notFound, now, toE164,
 } from './lib/util';
@@ -116,6 +120,24 @@ function route(method: string, path: string, handler: Handler) {
     '^' + path.replace(/:[A-Za-z_]+/g, (m) => { keys.push(m.slice(1)); return '([^/]+)'; }) + '/?$',
   );
   routes.push({ method, pattern, keys, handler });
+}
+
+/**
+ * The captured path segments, or null when one of them is not decodable.
+ *
+ * decodeURIComponent throws on a malformed escape — a lone `%`, `%ZZ`, half a
+ * multi-byte sequence — and every token, slug and object key in this file
+ * arrives through it. Returning null instead of throwing is what lets the
+ * router treat that as "no such path", which is what it is: a segment that
+ * cannot be decoded is not a name any row in this database has.
+ */
+function decodeParams(keys: string[], m: RegExpExecArray): Record<string, string> | null {
+  const params: Record<string, string> = {};
+  for (let i = 0; i < keys.length; i++) {
+    try { params[keys[i]!] = decodeURIComponent(m[i + 1]!); }
+    catch { return null; }
+  }
+  return params;
 }
 
 /**
@@ -183,10 +205,77 @@ const touchCalendar = (env: Env, operatorId: string) =>
 // ---------------------------------------------------------------------------
 const str = (v: unknown): string | null =>
   typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
+
+/**
+ * A whole number out of a body field or a query parameter, or null for the
+ * absence of one.
+ *
+ * The null is the entire value of this helper and it used to be unreachable
+ * for the callers that needed it most. `Number(null)` is 0 and `Number('')` is
+ * 0, so an absent query parameter — which `URLSearchParams.get` returns as
+ * null — arrived here as a perfectly finite zero and every `int(...) ?? now()`
+ * in the file silently defaulted to the epoch instead. GET /api/appointments
+ * and GET /api/gaps both window on those values, so a call with no explicit
+ * window asked for the first fortnight of 1970 and answered `[]` — and so did
+ * a call that named only `from`, because the `to` beside it collapsed to 0 and
+ * closed the window before it opened. Neither failed; both simply reported
+ * that the operator had nothing on.
+ *
+ * So only a number or a string is a number here. Everything else — null,
+ * undefined, a blank or whitespace string, a boolean, an array, an object — is
+ * the absence of a value, which is what makes `?? fallback` mean what every
+ * caller in this file already reads it to mean.
+ */
 const int = (v: unknown): number | null => {
-  const n = Number(v);
+  if (typeof v === 'number') return Number.isFinite(v) ? Math.trunc(v) : null;
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  if (s === '') return null;
+  const n = Number(s);
   return Number.isFinite(n) ? Math.trunc(n) : null;
 };
+
+/** The same rule as `int`, keeping the fraction: coordinates and nothing else. */
+const num = (v: unknown): number | null => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  if (s === '') return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * An id out of a request body, proved to belong to the operator making it.
+ *
+ * Every foreign key on this API arrives as a string a caller typed, and a
+ * scoped UPDATE is not enough on its own: `WHERE id = ? AND operator_id = ?`
+ * protects the row being written, and says nothing about a row this one now
+ * POINTS AT. POST /api/appointments took client_id, lead_id and service_id
+ * straight off the body, so one business could file an appointment against
+ * another business's client — and then read that customer's first name,
+ * surname and phone number straight back out of GET /api/appointments, which
+ * joins clients to show exactly those columns. The same handle also drove a
+ * write: marking it a no-show incremented a stranger's no_show_count, which is
+ * what ranks that customer down for the business that actually has them.
+ *
+ * Returns null for an absent id, so an optional column stays optional; throws
+ * 404 — the same answer as an id that does not exist anywhere — for one that
+ * belongs to somebody else, because "wrong owner" and "no such row" must not
+ * be distinguishable to a caller probing with ids.
+ */
+async function ownedId(
+  env: Env, table: 'clients' | 'services' | 'job_leads' | 'locations',
+  raw: unknown, operatorId: string, label: string,
+): Promise<string | null> {
+  const id = str(raw);
+  if (!id) return null;
+  const row = await env.DB.prepare(
+    `SELECT id FROM ${table} WHERE id = ? AND operator_id = ?`,
+  ).bind(id, operatorId).first();
+  if (!row) throw notFound(`${label} not found.`);
+  return id;
+}
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -369,30 +458,185 @@ route('GET', '/api/me', async ({ req, env }) => {
   }, 200, { 'cache-control': 'no-store' });
 });
 
-const SETTABLE = [
-  'business_name', 'trade', 'phone_e164', 'timezone', 'country', 'currency',
-  'location_mode', 'fill_model', 'sms_mode', 'home_address', 'home_lat', 'home_lng',
-  'min_gap_seconds', 'max_detour_seconds', 'buffer_seconds', 'offer_ttl_seconds',
-  'offers_per_wave', 'min_notice_seconds', 'reoffer_cooldown_seconds', 'discount_percent',
-] as const;
+/**
+ * Every column PATCH /api/settings may write, and what each one will accept.
+ *
+ * The list used to be names alone and the handler bound whatever arrived under
+ * one straight into the UPDATE. That is not a small gap in a form validator:
+ * these columns are the operating parameters of the business, and the values
+ * that break them look ordinary.
+ *
+ *   - `offers_per_wave: 0` is a business that has switched itself off. The
+ *     wave takes the top nought candidates, every offer wave goes out empty,
+ *     and the only symptom is gaps that quietly never fill.
+ *   - `discount_percent` outside 0..100 is caught by a CHECK on the column,
+ *     which means the caller got a 500 and an unhandled SQLite error rather
+ *     than a sentence naming the field.
+ *   - `min_gap_seconds: "abc"` is stored verbatim. SQLite has no opinion about
+ *     what goes in an INTEGER column, so the string sits there and every
+ *     comparison gaps.ts makes against it silently stops being arithmetic.
+ *   - an empty or unknown `language` becomes part of a locale string that Intl
+ *     refuses, and that throws inside a render, a long way from here.
+ *
+ * The front end checks four of these on the way out. That is a convenience for
+ * the person typing, not a guard: it is one client of an API that anybody can
+ * call, and a Worker that trusts its client is not guarded at all.
+ *
+ * The bounds are set past anything a real business would choose rather than
+ * anywhere near it — the job is to catch a wrong unit, a typo and a hostile
+ * caller, not to have an opinion about how somebody runs their diary. Each
+ * range covers everything web/src/pages/Settings.tsx can produce.
+ *
+ * `language` is on the list because migration 0005 says the operator picks
+ * their own interface language and nothing had ever let them: the column was
+ * read on six paths and settable on none.
+ */
+type Rule =
+  | { kind: 'text'; max: number; nullable?: boolean }
+  | { kind: 'int'; min: number; max: number }
+  | { kind: 'coord'; min: number; max: number }
+  | { kind: 'enum'; values: readonly string[] }
+  | { kind: 'country' }
+  | { kind: 'currency' }
+  | { kind: 'language' }
+  | { kind: 'phone' }
+  | { kind: 'timezone' };
+
+const SETTABLE: Record<string, Rule> = {
+  business_name: { kind: 'text', max: 120 },
+  trade: { kind: 'text', max: 80 },
+  phone_e164: { kind: 'phone' },
+  timezone: { kind: 'timezone' },
+  country: { kind: 'country' },
+  currency: { kind: 'currency' },
+  language: { kind: 'language' },
+  location_mode: { kind: 'enum', values: ['mobile', 'premises', 'hybrid'] },
+  fill_model: { kind: 'enum', values: ['clients', 'leads', 'both'] },
+  sms_mode: { kind: 'enum', values: ['device', 'twilio'] },
+  home_address: { kind: 'text', max: 200, nullable: true },
+  home_lat: { kind: 'coord', min: -90, max: 90 },
+  home_lng: { kind: 'coord', min: -180, max: 180 },
+  // Half an hour is the shortest gap the app offers to fill; a working day is
+  // past the point where the setting means anything.
+  min_gap_seconds: { kind: 'int', min: 300, max: 8 * 3600 },
+  max_detour_seconds: { kind: 'int', min: 0, max: 4 * 3600 },
+  buffer_seconds: { kind: 'int', min: 0, max: 4 * 3600 },
+  // An offer nobody can answer inside five minutes is not an offer; one that
+  // outlives a fortnight outlives the slot it is for.
+  offer_ttl_seconds: { kind: 'int', min: 300, max: 14 * 86400 },
+  offers_per_wave: { kind: 'int', min: 1, max: 10 },
+  min_notice_seconds: { kind: 'int', min: 0, max: 30 * 86400 },
+  reoffer_cooldown_seconds: { kind: 'int', min: 0, max: 365 * 86400 },
+  discount_percent: { kind: 'int', min: 0, max: 100 },
+};
+
+/**
+ * One settable value, checked and converted, or a 400 naming the field.
+ *
+ * The message always names the column the caller sent, because the whole
+ * reason this exists is that the previous answer to a bad value was either a
+ * silent success or "Something went wrong."
+ */
+function checkSetting(key: string, rule: Rule, raw: unknown, country: string): unknown {
+  switch (rule.kind) {
+    case 'text': {
+      // A column that is NOT NULL cannot be cleared, and clearing it by
+      // sending "" used to store a blank business name on a public profile.
+      const v = str(raw);
+      if (v === null) {
+        if (rule.nullable && (raw === null || raw === '')) return null;
+        throw badRequest(`${key} needs some text.`, 'bad_setting');
+      }
+      if (v.length > rule.max) {
+        throw badRequest(`${key} must be ${rule.max} characters or fewer.`, 'bad_setting');
+      }
+      return v;
+    }
+    case 'int': {
+      const v = int(raw);
+      if (v === null) throw badRequest(`${key} must be a whole number.`, 'bad_setting');
+      if (v < rule.min || v > rule.max) {
+        throw badRequest(`${key} must be between ${rule.min} and ${rule.max}.`, 'bad_setting');
+      }
+      return v;
+    }
+    case 'coord': {
+      // Null is meaningful here: it is "I have no fixed home base", which is
+      // the state a mobile operator who cleared the address is in.
+      if (raw === null || raw === '') return null;
+      const v = num(raw);
+      if (v === null || v < rule.min || v > rule.max) {
+        throw badRequest(`${key} must be between ${rule.min} and ${rule.max}.`, 'bad_setting');
+      }
+      return v;
+    }
+    case 'enum': {
+      const v = str(raw);
+      if (v === null || !rule.values.includes(v)) {
+        throw badRequest(`${key} must be one of: ${rule.values.join(', ')}.`, 'bad_setting');
+      }
+      return v;
+    }
+    case 'country': {
+      const v = str(raw);
+      const c = v ? getCountry(v) : null;
+      if (!c) throw badRequest(`Country "${raw}" is not supported yet.`, 'unsupported_country');
+      // Stored as the canonical ISO-3166 pair, so 'us' and 'US' cannot become
+      // two different countries in the same column.
+      return c.iso2;
+    }
+    case 'currency': {
+      // ISO-4217 is three letters, and Intl.NumberFormat throws on anything
+      // else — inside formatMoney, on a page, rather than here.
+      const v = str(raw)?.toUpperCase() ?? '';
+      if (!/^[A-Z]{3}$/.test(v)) {
+        throw badRequest(`currency must be a three-letter code such as USD.`, 'bad_setting');
+      }
+      return v;
+    }
+    case 'language': {
+      const v = str(raw);
+      if (!isLang(v)) {
+        throw badRequest(
+          `language must be one of: ${SUPPORTED_LANGUAGES.join(', ')}.`, 'bad_setting');
+      }
+      return v;
+    }
+    case 'phone': {
+      // Cleared deliberately, or normalised the same way a client's number is.
+      // Stored raw, this column held whatever anybody typed while every other
+      // number in the database was E.164, so the two could never be compared.
+      if (raw === null || raw === '') return null;
+      const v = toE164(str(raw), country);
+      if (!v) {
+        throw badRequest('That phone number is not valid for your country.', 'bad_phone');
+      }
+      return v;
+    }
+    case 'timezone': {
+      // An invalid IANA name would silently poison every gap this operator has.
+      const v = str(raw);
+      try { new Intl.DateTimeFormat('en', { timeZone: v ?? '' }); }
+      catch { throw badRequest(`"${raw}" is not a valid timezone.`, 'bad_timezone'); }
+      return v;
+    }
+  }
+}
 
 route('PATCH', '/api/settings', async ({ req, env }) => {
   const op = await requireOperator(req, env);
   const b = await body(req);
 
-  if (b.country !== undefined && !getCountry(String(b.country))) {
-    throw badRequest(`Country "${b.country}" is not supported yet.`, 'unsupported_country');
-  }
-  if (b.timezone !== undefined) {
-    // An invalid IANA name would silently poison every gap this operator has.
-    try { new Intl.DateTimeFormat('en', { timeZone: String(b.timezone) }); }
-    catch { throw badRequest(`"${b.timezone}" is not a valid timezone.`, 'bad_timezone'); }
-  }
-
   const sets: string[] = [];
   const vals: unknown[] = [];
-  for (const k of SETTABLE) {
-    if (b[k] !== undefined) { sets.push(`${k} = ?`); vals.push(b[k]); }
+  for (const [k, rule] of Object.entries(SETTABLE)) {
+    if (b[k] === undefined) continue;
+    // The country in the same request wins over the stored one, so an operator
+    // moving country and giving their new number in one call is not told their
+    // own number is invalid for the country they just left.
+    const country = str(b.country) ?? op.country;
+    sets.push(`${k} = ?`);
+    vals.push(checkSetting(k, rule, b[k], country));
   }
   if (!sets.length) throw badRequest('Nothing to update.');
   vals.push(now(), op.id);
@@ -427,10 +671,14 @@ route('PUT', '/api/working-hours', async ({ req, env }) => {
     const wd = int(h.weekday), s = int(h.start_minute), e = int(h.end_minute);
     if (wd === null || s === null || e === null) throw badRequest('Bad working hours entry.');
     if (wd < 0 || wd > 6 || s < 0 || e > 1440 || e <= s) throw badRequest('Bad working hours range.');
+    // A week of hours pinned to somebody else's premises. Same class as every
+    // other foreign key on this API — see ownedId — and worth the extra read
+    // here because gaps.ts reads this column back to decide where a van is.
+    const locationId = await ownedId(env, 'locations', h.location_id, op.id, 'Location');
     stmts.push(env.DB.prepare(
       `INSERT INTO working_hours (id, operator_id, location_id, weekday, start_minute, end_minute, created_at)
        VALUES (?,?,?,?,?,?,?)`,
-    ).bind(newId(), op.id, str(h.location_id), wd, s, e, t));
+    ).bind(newId(), op.id, locationId, wd, s, e, t));
   }
   await env.DB.batch(stmts);
   await touchCalendar(env, op.id);
@@ -551,6 +799,11 @@ route('POST', '/api/clients', async ({ req, env }) => {
     );
   }
 
+  // Their own service, not any service. rank.ts joins this column with no
+  // operator of its own to scope by, so a foreign id here would put another
+  // business's service name and price on a candidate card. See ownedId.
+  const defaultServiceId = await ownedId(env, 'services', b.default_service_id, op.id, 'Service');
+
   let lat = b.lat != null ? Number(b.lat) : null;
   let lng = b.lng != null ? Number(b.lng) : null;
   let status: 'pending' | 'ok' | 'failed' | 'manual' = lat != null ? 'manual' : 'pending';
@@ -570,7 +823,7 @@ route('POST', '/api/clients', async ({ req, env }) => {
     ).bind(
       id, op.id, first, str(b.last_name), phone, str(b.email),
       str(b.address_line), postcode, lat, lng, status, lat != null ? t : null,
-      str(b.default_service_id), int(b.last_serviced_at), int(b.next_due_at),
+      defaultServiceId, int(b.last_serviced_at), int(b.next_due_at),
       consent, consent ? t : null, str(b.notes), t, t,
     ).run();
   } catch (e) {
@@ -582,14 +835,75 @@ route('POST', '/api/clients', async ({ req, env }) => {
   return json({ id, geocode_status: status }, 201);
 });
 
+/**
+ * How each editable client column is read off the body.
+ *
+ * The list used to be names alone, bound straight into the UPDATE, and the
+ * result was a PATCH that accepted things its own POST refuses. SQLite does
+ * not enforce column types, so `lat: "over there"` was stored as text in a
+ * REAL column and every distance rank.ts computes from it stopped being
+ * arithmetic without anything failing; `next_due_at: "soon"` did the same to
+ * the overdue list. Where a value could not be stored at all — an object bound
+ * to a column — the caller got "Something went wrong." and a 500.
+ *
+ * `soft` marks the columns that mean something as NULL: an address that has
+ * been cleared, a customer with no next visit planned. The rest must be given
+ * a value if they are named at all.
+ */
+const CLIENT_FIELDS: Record<string, (v: unknown) => unknown> = {
+  first_name: (v) => str(v) ?? badThrow('A client needs a first name.'),
+  last_name: (v) => str(v),
+  email: (v) => str(v),
+  address_line: (v) => str(v),
+  notes: (v) => str(v),
+  lat: (v) => coord(v, 90, 'lat'),
+  lng: (v) => coord(v, 180, 'lng'),
+  last_serviced_at: (v) => stamp(v, 'last_serviced_at'),
+  next_due_at: (v) => stamp(v, 'next_due_at'),
+  is_active: (v) => (v ? 1 : 0),
+};
+
+const badThrow = (m: string): never => { throw badRequest(m); };
+
+/** A coordinate, null to clear it, and nothing else. */
+const coord = (v: unknown, limit: number, name: string): number | null => {
+  if (v === null || v === '') return null;
+  const n = num(v);
+  if (n === null || n < -limit || n > limit) {
+    throw badRequest(`${name} must be a number between ${-limit} and ${limit}.`, 'bad_field');
+  }
+  return n;
+};
+
+/** A unix timestamp, null to clear it, and nothing else. */
+const stamp = (v: unknown, name: string): number | null => {
+  if (v === null || v === '') return null;
+  const n = int(v);
+  if (n === null || n < 0) throw badRequest(`${name} must be a unix timestamp.`, 'bad_field');
+  return n;
+};
+
 route('PATCH', '/api/clients/:id', async ({ req, env, params }) => {
   const op = await requireOperator(req, env);
   const b = await body(req);
-  const fields = ['first_name', 'last_name', 'email', 'address_line', 'postcode',
-    'lat', 'lng', 'default_service_id', 'last_serviced_at', 'next_due_at', 'notes', 'is_active'];
   const sets: string[] = [], vals: unknown[] = [];
-  for (const k of fields) if (b[k] !== undefined) { sets.push(`${k} = ?`); vals.push(b[k]); }
+  for (const [k, read] of Object.entries(CLIENT_FIELDS)) {
+    if (b[k] !== undefined) { sets.push(`${k} = ?`); vals.push(read(b[k])); }
+  }
 
+  // Checked here the same way the create path checks it, rather than written
+  // through with the rest: a postcode that is not one geocodes to nothing, and
+  // a client with no coordinates is a client no gap can ever rank.
+  if (b.postcode !== undefined) {
+    const postcode = str(b.postcode);
+    if (postcode && !isValidPostcode(postcode, op.country)) {
+      throw badRequest(
+        `That does not look like a valid postcode for ${getCountry(op.country)?.name ?? op.country}.`,
+        'bad_postcode',
+      );
+    }
+    sets.push('postcode = ?'); vals.push(postcode);
+  }
   if (b.phone_e164 !== undefined) {
     const phone = toE164(str(b.phone_e164), op.country);
     if (str(b.phone_e164) && !phone) throw badRequest('Invalid phone number.', 'bad_phone');
@@ -598,6 +912,17 @@ route('PATCH', '/api/clients/:id', async ({ req, env, params }) => {
   if (b.sms_consent !== undefined) {
     sets.push('sms_consent = ?', 'sms_consent_at = ?');
     vals.push(b.sms_consent ? 1 : 0, b.sms_consent ? now() : null);
+  }
+  // The same check the create path makes, for the same reason: the row is
+  // scoped to this operator, and what it points at was not. See ownedId.
+  //
+  // The write is what ownedId returned rather than the raw body value, so
+  // clearing the column goes through as NULL. Sending `""` used to skip the
+  // check — str() gives null for a blank string — and then store that blank
+  // string as a service id nothing joins to.
+  if (b.default_service_id !== undefined) {
+    const serviceId = await ownedId(env, 'services', b.default_service_id, op.id, 'Service');
+    sets.push('default_service_id = ?'); vals.push(serviceId);
   }
   if (!sets.length) throw badRequest('Nothing to update.');
   vals.push(now(), params.id, op.id);
@@ -639,6 +964,9 @@ route('POST', '/api/leads', async ({ req, env }) => {
   const owned = await env.DB.prepare(`SELECT id FROM clients WHERE id=? AND operator_id=?`)
     .bind(clientId, op.id).first();
   if (!owned) throw notFound('Client not found.');
+  // client_id was already proved to be theirs; service_id was not, and rank.ts
+  // joins it to put a name and a price on the offer. See ownedId.
+  const serviceId = await ownedId(env, 'services', b.service_id, op.id, 'Service');
 
   const id = newId(), t = now();
   await env.DB.prepare(
@@ -648,7 +976,7 @@ route('POST', '/api/leads', async ({ req, env }) => {
         parts_required, parts_ready, urgency, status, expires_at, created_at, updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'open', ?,?,?)`,
   ).bind(
-    id, op.id, clientId, str(b.service_id), title, str(b.description),
+    id, op.id, clientId, serviceId, title, str(b.description),
     int(b.quoted_price_cents), int(b.quoted_at) ?? t, int(b.estimated_duration_seconds),
     str(b.address_line), str(b.postcode),
     b.lat != null ? Number(b.lat) : null, b.lng != null ? Number(b.lng) : null,
@@ -658,14 +986,80 @@ route('POST', '/api/leads', async ({ req, env }) => {
   return json({ id }, 201);
 });
 
+/** The statuses a lead may be moved between — the CHECK on the column, in code. */
+const LEAD_STATUSES = ['open', 'offered', 'scheduled', 'won', 'lost', 'expired'] as const;
+
+/**
+ * How each editable lead column is read off the body.
+ *
+ * Three of these columns carry a CHECK constraint, and writing the body value
+ * through untouched meant the database was the only thing enforcing them —
+ * which it does by throwing, past every catch in this file, so `status:
+ * "bogus"` answered 500 "Something went wrong." to a caller whose only mistake
+ * was a typo. The two that carry no constraint were worse off: a lead's
+ * `urgency` sorts the offer queue and `quoted_price_cents` is the price a
+ * customer is shown, and either would accept a string and keep it.
+ */
+const LEAD_FIELDS: Record<string, (v: unknown) => unknown> = {
+  title: (v) => str(v) ?? badThrow('A lead needs a title.'),
+  description: (v) => str(v),
+  address_line: (v) => str(v),
+  lost_reason: (v) => str(v),
+  lat: (v) => coord(v, 90, 'lat'),
+  lng: (v) => coord(v, 180, 'lng'),
+  expires_at: (v) => stamp(v, 'expires_at'),
+  quoted_price_cents: (v) => money(v, 'quoted_price_cents'),
+  estimated_duration_seconds: (v) => {
+    if (v === null || v === '') return null;
+    const n = int(v);
+    if (n === null || n <= 0 || n > 30 * 86400) {
+      throw badRequest('estimated_duration_seconds must be a positive number of seconds.', 'bad_field');
+    }
+    return n;
+  },
+  urgency: (v) => {
+    const n = int(v);
+    if (n === null || n < 1 || n > 5) throw badRequest('urgency must be 1 to 5.', 'bad_field');
+    return n;
+  },
+  status: (v) => {
+    const s = str(v);
+    if (!s || !(LEAD_STATUSES as readonly string[]).includes(s)) {
+      throw badRequest(`status must be one of: ${LEAD_STATUSES.join(', ')}.`, 'bad_field');
+    }
+    return s;
+  },
+  parts_required: (v) => (v ? 1 : 0),
+  parts_ready: (v) => (v ? 1 : 0),
+};
+
+/** A price in cents. Null clears it; negative is not a price. */
+const money = (v: unknown, name: string): number | null => {
+  if (v === null || v === '') return null;
+  const n = int(v);
+  if (n === null || n < 0) throw badRequest(`${name} must be zero or more cents.`, 'bad_field');
+  return n;
+};
+
 route('PATCH', '/api/leads/:id', async ({ req, env, params }) => {
   const op = await requireOperator(req, env);
   const b = await body(req);
-  const fields = ['title', 'description', 'quoted_price_cents', 'estimated_duration_seconds',
-    'address_line', 'postcode', 'lat', 'lng', 'parts_required', 'parts_ready',
-    'urgency', 'status', 'lost_reason', 'expires_at'];
   const sets: string[] = [], vals: unknown[] = [];
-  for (const k of fields) if (b[k] !== undefined) { sets.push(`${k} = ?`); vals.push(b[k]); }
+  for (const [k, read] of Object.entries(LEAD_FIELDS)) {
+    if (b[k] !== undefined) { sets.push(`${k} = ?`); vals.push(read(b[k])); }
+  }
+  // Same reasoning as on a client: an unusable postcode is a lead that can
+  // never be placed, and the create path already refuses one.
+  if (b.postcode !== undefined) {
+    const postcode = str(b.postcode);
+    if (postcode && !isValidPostcode(postcode, op.country)) {
+      throw badRequest(
+        `That does not look like a valid postcode for ${getCountry(op.country)?.name ?? op.country}.`,
+        'bad_postcode',
+      );
+    }
+    sets.push('postcode = ?'); vals.push(postcode);
+  }
   if (!sets.length) throw badRequest('Nothing to update.');
   vals.push(now(), params.id, op.id);
   const res = await env.DB.prepare(
@@ -685,7 +1079,8 @@ route('GET', '/api/appointments', async ({ req, env, url }) => {
   const rows = await env.DB.prepare(
     `SELECT a.*, c.first_name, c.last_name, c.phone_e164, c.acquired,
             s.name AS service_name,
-            oi.id AS order_item_id, oi.arrived_at, oi.cancelled_at, oi.parts_cents
+            oi.id AS order_item_id, oi.arrived_at, oi.cancelled_at, oi.parts_cents,
+            oi.address_released_at
        FROM appointments a
        LEFT JOIN clients c  ON c.id = a.client_id
        LEFT JOIN services s ON s.id = a.service_id
@@ -698,9 +1093,19 @@ route('GET', '/api/appointments', async ({ req, env, url }) => {
   // -- and the app carries the messages. A number handed over once is handed
   // over forever, and every booking after the first one then happens somewhere
   // this product cannot see or stand behind. See redact.ts.
+  //
+  // And they get the address only while the booking is live. Cancelling
+  // withdraws the release, and from that moment the row leaves here with no
+  // street line and no coordinates on it.
   return json({
-    appointments: (rows.results ?? []).map((r) =>
-      maskClientRow(r as Record<string, unknown>, (r as { acquired?: string }).acquired)),
+    appointments: (rows.results ?? []).map((r) => {
+      const row = r as Record<string, unknown>;
+      return maskWithdrawnAddress(
+        maskClientRow(row, (row as { acquired?: string }).acquired),
+        row.order_item_id as string | null,
+        row.address_released_at as number | null,
+      );
+    }),
   });
 });
 
@@ -717,6 +1122,15 @@ route('POST', '/api/appointments', async ({ req, env }) => {
   ).bind(op.id, e, s).first();
   if (clash) throw new HttpError(409, 'That overlaps an existing appointment.', 'overlap');
 
+  // Every id on this row is checked to be one of theirs before it is written.
+  // See ownedId: the appointment itself was always scoped to the operator, and
+  // that was mistaken for the whole tenancy check — it is not, because what
+  // the row points at is what the calendar then joins and displays.
+  const clientId = await ownedId(env, 'clients', b.client_id, op.id, 'Client');
+  const serviceId = await ownedId(env, 'services', b.service_id, op.id, 'Service');
+  const leadId = await ownedId(env, 'job_leads', b.lead_id, op.id, 'Lead');
+  const locationId = await ownedId(env, 'locations', b.location_id, op.id, 'Location');
+
   const id = newId(), t = now();
   await env.DB.prepare(
     `INSERT INTO appointments
@@ -725,7 +1139,7 @@ route('POST', '/api/appointments', async ({ req, env }) => {
         created_at, updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'scheduled', ?, ?, ?, ?, ?)`,
   ).bind(
-    id, op.id, str(b.client_id), str(b.service_id), str(b.lead_id), str(b.location_id),
+    id, op.id, clientId, serviceId, leadId, locationId,
     s, e, b.is_mobile === false ? 0 : 1, str(b.address_line), str(b.postcode),
     b.lat != null ? Number(b.lat) : null, b.lng != null ? Number(b.lng) : null,
     int(b.price_cents), str(b.source) ?? 'manual', str(b.notes), t, t,
@@ -774,6 +1188,13 @@ route('PATCH', '/api/appointments/:id', async ({ req, env, params }) => {
     if (clash) throw new HttpError(409, 'That overlaps an existing appointment.', 'overlap');
   }
 
+  // Moving the booking onto a service belongs to somebody else is the same
+  // hole as naming their client on the way in, and the row's own operator_id
+  // scope does nothing about it. See ownedId.
+  if (b.service_id !== undefined && str(b.service_id)) {
+    await ownedId(env, 'services', b.service_id, op.id, 'Service');
+  }
+
   const sets: string[] = ['starts_at = ?', 'ends_at = ?', 'status = ?'];
   const vals: unknown[] = [starts, ends, status];
   for (const k of ['price_cents', 'notes', 'address_line', 'postcode', 'lat', 'lng', 'service_id']) {
@@ -781,9 +1202,17 @@ route('PATCH', '/api/appointments/:id', async ({ req, env, params }) => {
   }
   if (status === 'no_show' && appt.status !== 'no_show' && appt.client_id) {
     // Counted here, and used to rank a repeat no-show down for future gaps.
+    //
+    // Scoped to the operator like every other write to this table, and not as
+    // a formality: appointments created before this route began checking
+    // client_id can still name a client row belonging to another business, and
+    // an unscoped increment would let this hand a stranger's customer a
+    // permanent strike on somebody else's list. The counter is only ever about
+    // the relationship between THIS operator and THIS client.
     await env.DB.prepare(
-      `UPDATE clients SET no_show_count = no_show_count + 1, updated_at = ? WHERE id = ?`,
-    ).bind(t, appt.client_id).run();
+      `UPDATE clients SET no_show_count = no_show_count + 1, updated_at = ?
+        WHERE id = ? AND operator_id = ?`,
+    ).bind(t, appt.client_id, op.id).run();
   }
   vals.push(t, params.id, op.id);
 
@@ -1134,13 +1563,6 @@ route('POST', '/o/:token/decline', async ({ req, env, params }) => {
     <p class="meta">We've taken you off this one. You'll hear about the next slot.</p>`));
 });
 
-
-// ---------------------------------------------------------------------------
-// Public discovery — the neighbourhood page a stranger lands on
-// ---------------------------------------------------------------------------
-function publicPage(title: string, inner: string): string {
-  return page(title, inner);
-}
 
 // ---------------------------------------------------------------------------
 // Service areas — where an operator is willing to work.
@@ -1549,20 +1971,41 @@ async function guestView(env: Env, thread: Awaited<ReturnType<typeof threadByTok
   };
 }
 
-route('POST', '/api/public/threads', async ({ req, env }) => {
-  const b = await body(req);
-  const operatorId = str(b.operator_id);
+/**
+ * Everything that has to be true before a stranger gets a guest link.
+ *
+ * Both doors into a conversation go through this — the slot page, which knows
+ * an operator id, and the profile page, which knows only a slug — because the
+ * whole value of a gate is that it cannot be walked round. A second entry
+ * point with nine tenths of the checks is not a second entry point, it is the
+ * hole.
+ *
+ * The order is deliberate. The volume ceilings come first because they are two
+ * cheap writes and everything after them is not; the challenge is next,
+ * because a check that runs after the row is written is a log line rather than
+ * a gate; the business is resolved before the fan-out is counted because the
+ * count is of businesses; and the fan-out is spent only once the conversation
+ * actually exists, so a blank name does not cost somebody an allowance.
+ */
+async function openEnquiry(
+  req: Request, env: Env, b: Record<string, unknown>, target: { slug?: string; id?: string },
+): Promise<{ thread: Awaited<ReturnType<typeof startThread>>['thread']; token: string;
+  link: string; operator: { business_name: string; profile_slug: string | null } }> {
   const guestName = str(b.guest_name);
-  if (!operatorId) throw badRequest('Which business are you writing to?');
   if (!guestName) throw badRequest('We need a name to put on the message.');
+
+  const ip = clientIp(req);
 
   // Two buckets, because there are two different abuses. One host opening
   // conversations everywhere is the first; ten a quarter hour still lets a
   // customer message several businesses about the same job. One business
   // buried under new conversations is the second, and forty is well above a
   // busy day's real enquiries for a single van.
-  await enforceRateLimit(env, `thread-ip:${clientIp(req)}`, 10, 900);
-  await enforceRateLimit(env, `thread-op:${operatorId}`, 40, 900);
+  //
+  // The keys are shared by both doors on purpose: bucketing the profile route
+  // separately would have made it the way round the ceiling on the other one.
+  await enforceRateLimit(env, `thread-ip:${ip}`, 10, 900);
+  if (target.id) await enforceRateLimit(env, `thread-op:${target.id}`, 40, 900);
 
   // The door into every other guest route. Everything under
   // /api/public/threads/:token is reachable only by holding a token this
@@ -1570,22 +2013,97 @@ route('POST', '/api/public/threads', async ({ req, env }) => {
   // none of those has to ask for one again mid-conversation.
   await requireTurnstile(env, req, tokenFromBody(b));
 
-  const op = await env.DB.prepare(
-    `SELECT id FROM operators WHERE id = ? AND accept_public_bookings = 1
-        AND plan IN ('trial','active')`,
-  ).bind(operatorId).first();
+  const op = await operatorForEnquiry(env, target);
   if (!op) throw notFound('That business is not taking messages.');
 
+  // Bucketed here too when the caller named a slug, because the ceiling above
+  // could only be applied to a target already known by id.
+  if (!target.id) await enforceRateLimit(env, `thread-op:${op.id}`, 40, 900);
+
+  // The one thing a rate limit cannot see: how many DIFFERENT businesses this
+  // address has opened a conversation with. See chat.ts for why that is a
+  // separate measurement rather than a tighter number on the buckets above.
+  await assertEnquiryReachAllowed(env, ip, op.id);
+
+  const kind = str(b.kind) === 'quote' ? 'quote' : 'message';
+
   const { thread, token } = await startThread(env, {
-    operator_id: operatorId,
+    operator_id: op.id,
     gap_id: str(b.gap_id),
     guest_name: guestName,
-    subject: str(b.subject),
-    first_message: str(b.first_message) ?? undefined,
+    // A quote request writes its own line into the conversation, from
+    // estimates.ts, in the customer's own words. Passing the same text as an
+    // opening message as well would put it in the thread twice.
+    subject: str(b.subject) ?? (kind === 'quote' ? 'Quote request' : null),
+    first_message: kind === 'quote' ? undefined : str(b.first_message) ?? undefined,
   });
 
+  await recordEnquiryReach(env, ip, op.id);
+
+  return {
+    thread, token,
+    link: `${env.APP_URL.replace(/\/$/, '')}/c/${token}`,
+    operator: { business_name: op.business_name, profile_slug: op.profile_slug },
+  };
+}
+
+route('POST', '/api/public/threads', async ({ req, env }) => {
+  const b = await body(req);
+  const operatorId = str(b.operator_id);
+  if (!operatorId) throw badRequest('Which business are you writing to?');
+
+  const opened = await openEnquiry(req, env, b, { id: operatorId });
   // The only response that may ever carry the raw token.
-  return json({ thread, token, link: `${env.APP_URL.replace(/\/$/, '')}/c/${token}` }, 201);
+  return json({ thread: opened.thread, token: opened.token, link: opened.link }, 201);
+});
+
+/**
+ * "Message" and "Request a quote", from a business's profile page.
+ *
+ * The reference marketplace puts both on a profile as first-class actions,
+ * usable when nothing is scheduled. This site had neither, and could not have
+ * had them: the profile route deliberately does not publish an operator id —
+ * it is an internal key — so the page had no way to name the business it was
+ * looking at to the one endpoint that mints a guest link. That is what the
+ * slug is for.
+ *
+ * It mints exactly the same token every booking mints, so /c/:token and the
+ * whole guest surface behind it work unchanged and this adds no second kind of
+ * conversation to maintain. `kind: 'quote'` hands the request straight to
+ * askForEstimate — the estimates machinery already models a question, an
+ * answer with a price and a time, and an acceptance that becomes a booking, so
+ * there is nothing here to reinvent.
+ */
+route('POST', '/api/public/profile/:slug/enquiries', async ({ req, env, params }) => {
+  const b = await body(req);
+  const wantsQuote = str(b.kind) === 'quote';
+
+  // Checked before anything is written, because an estimate can only be
+  // attached to a conversation that already exists — so a refusal after the
+  // mint would cost the sender the one copy of their link that will ever
+  // exist. The rest of the rules about what may be asked stay in estimates.ts,
+  // which owns them; this is only the case a form produces by being submitted
+  // empty.
+  if (wantsQuote && !str(b.request)) {
+    throw badRequest('Say what you would like doing. They cannot price a blank.',
+      'no_request');
+  }
+
+  const opened = await openEnquiry(req, env, b, { slug: params.slug ?? '' });
+
+  // Handed straight to the estimates machinery, which writes the request into
+  // the conversation in the customer's own words and tells the business. There
+  // is deliberately no second path: a quote asked for from a profile and one
+  // asked for mid-conversation are the same thing and have to stay the same
+  // rows, or the business ends up with two inboxes.
+  const estimate = wantsQuote
+    ? await askForEstimate(env, opened.token, str(b.request) ?? '')
+    : null;
+
+  return json({
+    thread: opened.thread, token: opened.token, link: opened.link,
+    operator: opened.operator, estimate,
+  }, 201);
 });
 
 route('GET', '/api/public/threads/:token', async ({ env, params }) => {
@@ -1680,10 +2198,6 @@ route('DELETE', '/api/openings/:id', async ({ req, env, params }) => {
   return json({ ok: true });
 });
 
-// ---------------------------------------------------------------------------
-// Checkout. A customer may take several services, across several businesses
-// and several dates, and pay for the lot once.
-// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Parts quotes
 // ---------------------------------------------------------------------------
@@ -1989,13 +2503,6 @@ route('GET', '/api/public/standing', async ({ req, env, url }) => {
   return json({ blocked: standing.blocked, message: standing.message });
 });
 
-route('GET', '/api/public/terms', async () => {
-  // One place the two cancellation rules are written down, so the checkout,
-  // the confirmation and the operator's own page cannot drift into three
-  // slightly different versions of what somebody agreed to.
-  return json({ customer: NEEDS_CARD_CUSTOMER });
-});
-
 
 // ---------------------------------------------------------------------------
 // Proof of the job
@@ -2099,15 +2606,25 @@ route('GET', '/api/flags', async ({ req, env }) => {
   return json({ summary: await flagSummary(env, op.id) });
 });
 
-// Every business on the site ranked by how many bypass flags it has collected.
-// GET /api/flags above is the operator's own, and is what an operator gets.
+// Every business on the site ranked by how many bypass flags it has collected,
+// and beside it every booking where a customer said the van was not the one on
+// the account. GET /api/flags above is the operator's own, and is what an
+// operator gets.
+//
+// The vehicle reports travel here rather than in the ranking because they are
+// not bypass evidence and must not be counted as any: a hire van is the
+// ordinary explanation, and the point of showing them is that a person reads
+// what the customer wrote. See vehicleReports in lib/startcode.ts.
 route('GET', '/api/admin/flags', async ({ req, env }) => {
   const admin = await requireAdmin(req, env);
   const operators = await flaggedOperators(env);
+  const vehicles = await vehicleReports(env);
   await recordAdminAction(env, admin.id, {
-    action: 'read_flags', subject_kind: 'queue', detail: `rows_${operators.length}`,
+    action: 'read_flags', subject_kind: 'queue',
+    detail: `rows_${operators.length}_vehicles_${vehicles.length}`,
   });
-  return json({ operators }, 200, { 'cache-control': 'no-store' });
+  return json({ operators, vehicle_reports: vehicles },
+    200, { 'cache-control': 'no-store' });
 });
 
 
@@ -2360,13 +2877,18 @@ route('POST', '/api/public/online/requests', async ({ req, env }) => {
 
 // Polled by the customer while the fuse burns. Expiry is decided on read, so
 // this is correct even if the sweep has not run.
-route('GET', '/api/public/online/requests/:token', async ({ env, params }) => {
+route('GET', '/api/public/online/requests/:token', async ({ req, env, params }) => {
+  // The answer is a name, a phone number, a street address and coordinates.
+  // The page holding the link polls it while the five-minute fuse burns, which
+  // is why the ceiling is set where it is rather than tight.
+  await guardTokenGuessing(env, req, 'instant');
   const found = await requestByToken(env, params.token!);
   if (!found) throw notFound('That request is not valid any more.');
   return json({ request: found });
 });
 
-route('DELETE', '/api/public/online/requests/:token', async ({ env, params }) => {
+route('DELETE', '/api/public/online/requests/:token', async ({ req, env, params }) => {
+  await guardTokenGuessing(env, req, 'instant');
   await cancelRequest(env, params.token!);
   return json({ ok: true });
 });
@@ -2431,6 +2953,14 @@ route('DELETE', '/api/estimates/:id', async ({ req, env, params }) => {
   return json({ ok: true });
 });
 
+// ---------------------------------------------------------------------------
+// Checkout. A customer may take several services, across several businesses
+// and several dates, in one basket.
+//
+// "and pay for the lot once" is what this will be. Nothing here takes money —
+// placeOrder writes the order as 'pending' and says so — so the two routes
+// below price the basket and hold the appointments. See lib/payments.ts.
+// ---------------------------------------------------------------------------
 route('POST', '/api/public/orders/price', async ({ req, env }) => {
   const b = await body(req);
   const items = Array.isArray(b.items) ? b.items : [];
@@ -2511,6 +3041,55 @@ route('GET', '/api/public/trades', async ({ env }) => {
     200, { 'cache-control': 'public, max-age=300' });
 });
 
+/**
+ * Recent reviews from every business doing one kind of work.
+ *
+ * The reference marketplace's service page carries this strip; ours had the
+ * rows and no way to read them except one business at a time, so a visitor who
+ * had not already chosen a business could not see that anybody had ever been
+ * reviewed at all.
+ *
+ * Same rules as the profile route, and they are the point of it: real rows
+ * only, the customer's name cut to a first name and an initial, and a trade
+ * nobody has reviewed answers with an empty list rather than anything invented.
+ */
+route('GET', '/api/public/trades/:slug/reviews', async ({ req, env, params, url }) => {
+  // Unauthenticated, and it reads across the whole review table. The same
+  // ceiling the per-business route carries, for the same reason: the page it
+  // feeds asks once when it opens.
+  await enforceRateLimit(env, `trade-reviews:${clientIp(req)}`, 120, 60);
+
+  // The path segment is the catalogue's own slug — the one /s/:trade uses —
+  // and it is resolved against the catalogue rather than passed to the query,
+  // so an unknown trade is a 404 and not an empty list that reads like a trade
+  // nobody has ever reviewed.
+  const entry = tradeFromPathSegment(params.slug ?? '');
+  if (!entry) throw notFound('We do not have that trade.');
+
+  const limit = int(url.searchParams.get('limit')) ?? undefined;
+  const reviews = await reviewsForTrade(env, entry.slug, limit);
+
+  return json({
+    trade: { slug: entry.slug, label: entry.label },
+    reviews,
+  }, 200, { 'cache-control': 'public, max-age=300' });
+});
+
+/**
+ * Other businesses doing the same work on the same patch.
+ *
+ * The profile page's own payload already carries three of these; this is the
+ * "see all" behind them, so a visitor who has decided against one business is
+ * not sent back to a search to find the next. The business whose page it is is
+ * excluded by the query, not by the caller.
+ */
+route('GET', '/api/public/profile/:slug/similar', async ({ req, env, params, url }) => {
+  await enforceRateLimit(env, `similar:${clientIp(req)}`, 120, 60);
+  const businesses = await similarBusinesses(env, params.slug ?? '',
+    int(url.searchParams.get('limit')) ?? 12);
+  return json({ businesses }, 200, { 'cache-control': 'public, max-age=300' });
+});
+
 route('POST', '/api/public/watches', async ({ req, env }) => {
   const b = await body(req);
   // A watch is a standing instruction to email somebody, so the address is a
@@ -2540,6 +3119,38 @@ route('POST', '/api/public/watches', async ({ req, env }) => {
 });
 
 /**
+ * The ceiling on presenting a secret link that turns out to be wrong.
+ *
+ * Bucketed on the address and NOT on the token, which is the whole point and
+ * is the same reasoning guestlink.ts sets out at length: every guess carries a
+ * different token, so a per-token bucket opens a fresh allowance for each one
+ * and no ceiling is ever reached. The address is the only thing a walk through
+ * the token space has in common with itself.
+ *
+ * The first pass put a ceiling on the session issuer and a failure lockout on
+ * /c/:token, and left the two token spaces beside them untouched — an alert
+ * link, which answers with the postcode and the mailbox somebody asked to be
+ * emailed at, and an instant request, which answers with a stranger's name,
+ * phone number, street address and coordinates. Both are 32 random bytes, so
+ * this is not what makes guessing hopeless; it is what makes an unbounded
+ * attempt at it visible and stoppable, and what bounds the damage if a shorter
+ * token is ever introduced by accident.
+ *
+ * Every route in both spaces goes through this, PATCH on a watch included. That
+ * one already carried a per-token ceiling of its own for the geocode behind it,
+ * and a per-token ceiling is exactly the shape that cannot see a walk: it is
+ * the address, here, that the walk has in common with itself.
+ *
+ * Two hundred an hour, which is loose on purpose. A real holder of one of
+ * these links opens it, reloads it, and edits their filters a few times; the
+ * number is set well above that because the person a tight limit catches is
+ * the customer whose link it is, and a whole street behind one CGNAT address
+ * is one row here.
+ */
+const guardTokenGuessing = (env: Env, req: Request, space: string) =>
+  enforceRateLimit(env, `link:${space}:${clientIp(req)}`, 200, 3600);
+
+/**
  * One-click unsubscribe, straight from an email.
  *
  * A GET on a link in an email, so it must work with no session, no
@@ -2547,24 +3158,31 @@ route('POST', '/api/public/watches', async ({ req, env }) => {
  * matched: a stranger poking at it learns nothing, and the person who
  * clicked it gets the outcome they wanted either way.
  */
-route('GET', '/a/stop/:token', async ({ env, params }) => {
+route('GET', '/a/stop/:token', async ({ req, env, params }) => {
+  await guardTokenGuessing(env, req, 'watch');
   await unsubscribeByToken(env, params.token ?? '');
-  return html(publicPage('Alerts stopped', `<p class="big">✅</p>
+  return html(page('Alerts stopped', `<p class="big">✅</p>
     <h1>Alerts stopped</h1>
     <p class="meta">You will not get any more emails about openings near you.</p>
     <a href="/" class="note">See what is open</a>`));
 });
 
-route('GET', '/api/public/watches/:token', async ({ env, params }) => {
+route('GET', '/api/public/watches/:token', async ({ req, env, params }) => {
+  // The answer carries the postcode and the mailbox behind this alert.
+  await guardTokenGuessing(env, req, 'watch');
   const watch = await watchByToken(env, params.token ?? '');
   if (!watch) throw notFound('That alert link is not valid any more.');
   return json({ watch }, 200, { 'cache-control': 'no-store' });
 });
 
 route('PATCH', '/api/public/watches/:token', async ({ req, env, params }) => {
-  // Editing the alert re-places its postcode, so it is a write with a geocode
-  // behind it rather than a settings toggle. Sixty an hour is a person fiddling
-  // with the filters for as long as anyone ever does.
+  // Answers differently for a token that exists, exactly as the GET beside it
+  // does, so it is walkable in the same way and gets the same address-bucketed
+  // ceiling.
+  await guardTokenGuessing(env, req, 'watch');
+  // And its own, on the token: editing the alert re-places its postcode, so it
+  // is a write with a geocode behind it rather than a settings toggle. Sixty an
+  // hour is a person fiddling with the filters for as long as anyone ever does.
   await enforceRateLimit(env, `watch-edit:${params.token ?? ''}`, 60, 3600);
   const b = await body(req);
   const patch: Record<string, unknown> = {};
@@ -2579,7 +3197,8 @@ route('PATCH', '/api/public/watches/:token', async ({ req, env, params }) => {
   return json({ watch: await updateWatch(env, params.token ?? '', patch) });
 });
 
-route('DELETE', '/api/public/watches/:token', async ({ env, params }) => {
+route('DELETE', '/api/public/watches/:token', async ({ req, env, params }) => {
+  await guardTokenGuessing(env, req, 'watch');
   await deactivateWatch(env, params.token ?? '');
   return json({ ok: true });
 });
@@ -2665,8 +3284,16 @@ route('GET', '/api/track/me', async ({ req, env }) => {
 route('POST', '/api/track/share', async ({ req, env }) => {
   const op = await requireOperator(req, env);
   const b = await body(req);
+  const on = Boolean(b.share_location);
   // Only ever from the operator's own explicit action. Never a signup default.
-  await setShareLocation(env, op.id, Boolean(b.share_location));
+  await setShareLocation(env, op.id, on);
+  // Switching it off means stop holding where I am, and until now it only meant
+  // stop showing it: the flag hid the van from every customer view while the
+  // last fix and the trail of where this person drove stayed on the Durable
+  // Object, indefinitely, because nothing in the product had ever called
+  // clear(). The flag is checked first on every read, so this is not what makes
+  // the view go dark -- it is what makes the data actually go. See forgetVan.
+  if (!on) await forgetVan(env, op.id);
   return json({ ok: true });
 });
 
@@ -2807,11 +3434,14 @@ route('GET', '/los-angeles', async ({ env }) => html(
 ));
 
 // ---------------------------------------------------------------------------
-// The four pages that are React routes AND server-rendered.
+// The pages that are React routes AND server-rendered.
 //
 // /s/:trade, /cost/:trade, /browse/:category and /p/:slug are the surfaces
 // most search traffic lands on, and until now a crawler asking for one got the
-// empty SPA shell: a document with a script tag and nothing to read.
+// empty SPA shell: a document with a script tag and nothing to read. /browse
+// and /cost joined them because the site's own "every cost guide" link pointed
+// at one of them, and a hub that answers with an empty shell is a dead end
+// wherever it was linked from.
 //
 // ONE DOCUMENT FOR EVERYBODY, not two. The renderers below build the page and
 // splice it into the SPA's own index.html, inside #root and ahead of the app's
@@ -2989,7 +3619,7 @@ route('POST', '/book/:gapId', async ({ req, env, params }) => {
          JOIN service_areas a ON a.operator_id = g.operator_id AND a.is_active = 1
         WHERE g.id = ? LIMIT 1`,
     ).bind(params.gapId ?? '').first<{ slug: string }>();
-    return html(publicPage('Could not book', `<h1>Could not book</h1>
+    return html(page('Could not book', `<h1>Could not book</h1>
       <p class="meta">${escapeHtml(msg)}</p>
       ${back ? `<a href="/near/${escapeHtml(back.slug)}" class="note">See other slots</a>` : ''}`), code);
   }
@@ -3143,7 +3773,20 @@ export default {
    * exist, which is the only version of this that stays true.
    */
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    return withSecurityHeaders(await respond(req, cardSafe(env), ctx));
+    // The catch is the door staying shut, not politeness about tidy errors.
+    // Everything below this line is inside a try in one place or another, but
+    // "everything" is a claim about code that has not been written yet, and the
+    // cost of it being wrong once is a response that leaves without passing
+    // through withSecurityHeaders at all — no CSP, no nosniff, no frame
+    // refusal — carrying whatever the runtime chooses to say about the
+    // failure. One backstop here is cheaper than being right forever, and the
+    // caller gets the same opaque sentence every other 500 in the file gives.
+    try {
+      return withSecurityHeaders(await respond(req, cardSafe(env), ctx));
+    } catch (err) {
+      console.error('unhandled at the entry point', err);
+      return withSecurityHeaders(json({ error: 'Something went wrong.' }, 500));
+    }
   },
 
   async scheduled(_event: ScheduledController, env: Env): Promise<void> {
@@ -3264,8 +3907,20 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       if (r.method !== req.method) continue;
       const m = r.pattern.exec(url.pathname);
       if (!m) continue;
-      const params: Record<string, string> = {};
-      r.keys.forEach((k, i) => { params[k] = decodeURIComponent(m[i + 1]!); });
+      const params = decodeParams(r.keys, m);
+      // A segment that is not valid percent-encoding names no resource, so it
+      // is answered the way any other unknown path is.
+      //
+      // It matters that this is a refusal and not an exception. The decode
+      // used to happen here, outside the try below, so `/o/%FF` — three
+      // characters, no session, no body — threw a URIError past every catch in
+      // this file and out of fetch() itself. What the caller got back was the
+      // runtime's own error response: no CORS, not the JSON error shape every
+      // client parses, and none of the headers withSecurityHeaders exists to
+      // put on everything — no CSP, no nosniff, no frame refusal — on a
+      // document a browser will happily render. On a preview deployment it
+      // carried a stack trace naming the source tree as well.
+      if (!params) return withCors(json({ error: 'Not found' }, 404), req, env);
       try {
         // Every route behind a customer's /c/:token link, gated in one place.
         // Put here rather than on each of the thirty routes because the whole
@@ -3307,77 +3962,139 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
 }
 
 /**
- * Cron. wrangler.toml:
- *   [triggers]
- *   crons = ["*\/15 * * * *"]
+ * One piece of cron work, which cannot take the rest of the tick with it.
+ *
+ * The pass used to be a straight run of awaits with a try around only the last
+ * two, so any one of them throwing ended the whole tick where it stood. That
+ * ordering quietly made the most important sweep the most fragile: retention
+ * is deliberately last, because everything above it keeps the product working
+ * — which meant a failure anywhere in expiring a quote, settling a hold or
+ * reconciling cadence stopped this deployment deleting home addresses, phone
+ * numbers and photographs of people's houses, on every tick, until somebody
+ * noticed. The same throw also skipped the expired login tokens and sessions,
+ * so credentials that should have been swept outlived the failure too.
+ *
+ * These steps are genuinely independent — each one is idempotent and reads
+ * only what it writes — so there is no ordering to preserve by stopping, and
+ * "one query is broken" is not a reason to also stop erasing data.
+ */
+async function step(name: string, run: () => Promise<unknown>): Promise<void> {
+  try { await run(); } catch (e) { console.error(`cron step failed: ${name}`, e); }
+}
+
+/**
+ * One tick. Every fifteen minutes — `crons` in wrangler.toml's `[triggers]`.
+ *
+ * The order below is the order things depend on each other in, and retention is
+ * last on purpose: everything above it keeps the product working, and none of
+ * it is a reason to stop deleting people's addresses.
  */
 async function runScheduled(env: Env): Promise<void> {
   {
     const t = now();
 
     // Expire offers whose window has closed, and release their gaps.
-    await env.DB.prepare(
+    await step('expire offers', () => env.DB.prepare(
       `UPDATE gap_offers SET status='expired', updated_at=?
         WHERE status IN ('sent','delivered','viewed','queued') AND expires_at IS NOT NULL
           AND expires_at <= ?`,
-    ).bind(t, t).run();
+    ).bind(t, t).run());
 
-    await env.DB.prepare(
+    await step('release gaps', () => env.DB.prepare(
       `UPDATE gaps SET status='open', updated_at=?
         WHERE status='offering'
           AND NOT EXISTS (SELECT 1 FROM gap_offers o
                            WHERE o.gap_id = gaps.id
                              AND o.status IN ('sent','delivered','viewed','queued'))`,
-    ).bind(t).run();
+    ).bind(t).run());
 
     // A quote left 'sent' forever is a live authorisation to charge somebody
     // for parts priced weeks ago. Expiring it costs the operator one tap to
     // resend. See parts.ts.
-    await expireQuotes(env);
+    await step('expire quotes', () => expireQuotes(env));
 
     // Money frozen by a cancellation, settled once its hold runs out. Silence
     // resolves to keeping the money and charging nobody, so that no pair of
     // people can profit by agreeing to say nothing. See settlement.ts.
-    await settleExpiredHolds(env);
+    await step('settle holds', () => settleExpiredHolds(env));
 
     // The five-minute fuse on an instant request, and quotes whose start time
     // came and went. Both are also evaluated on read, so these sweeps only
     // tidy the rows -- they are not what makes the rules true.
-    await expireRequests(env);
-    await expireEstimates(env);
+    await step('expire requests', () => expireRequests(env));
+    await step('expire estimates', () => expireEstimates(env));
 
     // Wrong-link counters whose window and lockout have both run out. Purely
     // housekeeping: the lockout expires by comparing timestamps on read, so
     // deleting the row late changes nothing except how big the table is.
-    await sweepGuestLinkAttempts(env);
+    await step('sweep guest link attempts', () => sweepGuestLinkAttempts(env));
+
+    // Which businesses each address has written to, once the window that was
+    // counting them has passed. Housekeeping in the same sense — the count is
+    // taken by comparing timestamps on read, so a late delete changes nothing
+    // except the size of the table — but this one is also a record of who
+    // contacted whom, and there is no reason to keep one of those a minute
+    // longer than the thing it exists to measure.
+    await step('sweep enquiry reach', () => sweepEnquiryReach(env));
 
     // Gaps whose start time has passed are dead.
-    await env.DB.prepare(
+    await step('expire gaps', () => env.DB.prepare(
       `UPDATE gaps SET status='expired', updated_at=?
         WHERE status IN ('open','offering') AND starts_at <= ?`,
-    ).bind(t, t).run();
+    ).bind(t, t).run());
 
     // Cadence is recomputed inline when a job is marked completed, so this is
     // only a reconciliation for rows that reached 'completed' another way
     // (an import, a direct edit). Scoped to the last day rather than the whole
     // client table, which used to be rewritten on every tick.
-    await env.DB.prepare(
+    //
+    // THIS SWEEP AND THE INLINE PATH MUST AGREE, and for a while they did not.
+    // Two differences, and both of them dropped customers out of the overdue
+    // pool that rank.ts feeds on — silently, a day late, so the operator saw a
+    // list that had simply gone quiet.
+    //
+    // The first was where cadence comes from. PATCH /api/appointments takes it
+    // from the service on the APPOINTMENT and falls back to the client's
+    // default; this took it from the client's default alone. A business whose
+    // clients have no default service — every break-fix trade — got a due date
+    // inline and had it recomputed here from nothing.
+    //
+    // The second was what to do when there is no cadence to apply. The inline
+    // write says `COALESCE(?, next_due_at)`: a job whose service does not
+    // repeat leaves an existing due date alone, because "this visit does not
+    // set a new due date" is not the same statement as "this customer is not
+    // due again". This wrote `MAX(...) + COALESCE(x, NULL)` — a COALESCE with
+    // nothing to fall back to, which is the value it was given — so the
+    // addition met NULL and the whole expression became NULL. Within 24 hours
+    // of an inline completion, that overwrote a perfectly good due date with
+    // nothing.
+    //
+    // The inline behaviour is the correct one and this now matches it: cadence
+    // off the most recent completed appointment's service, falling back to the
+    // client's default, and the existing next_due_at kept when neither yields
+    // one. Written as a correlated subquery per client rather than a join so
+    // that "the most recent completed job" is picked once and its service, its
+    // end time and the fallback all come from that same row.
+    await step('reconcile cadence', () => env.DB.prepare(
       `UPDATE clients SET
          last_serviced_at = (SELECT MAX(a.ends_at) FROM appointments a
                               WHERE a.client_id = clients.id AND a.status = 'completed'),
          visit_count = (SELECT COUNT(*) FROM appointments a
                          WHERE a.client_id = clients.id AND a.status = 'completed'),
-         next_due_at = (
-           SELECT MAX(a.ends_at) FROM appointments a WHERE a.client_id = clients.id AND a.status = 'completed'
-         ) + COALESCE(
-           (SELECT s.cadence_days * 86400 FROM services s WHERE s.id = clients.default_service_id),
-           NULL),
+         next_due_at = COALESCE(
+           (SELECT a.ends_at + COALESCE(s1.cadence_days, s2.cadence_days) * 86400
+              FROM appointments a
+              LEFT JOIN services s1 ON s1.id = a.service_id
+              LEFT JOIN services s2 ON s2.id = clients.default_service_id
+             WHERE a.client_id = clients.id AND a.status = 'completed'
+             ORDER BY a.ends_at DESC LIMIT 1),
+           next_due_at),
          updated_at = ?
        WHERE id IN (
          SELECT DISTINCT a.client_id FROM appointments a
           WHERE a.status = 'completed' AND a.updated_at > ? AND a.client_id IS NOT NULL
        )`,
-    ).bind(t, t - 86400).run();
+    ).bind(t, t - 86400).run());
 
     // Rescan only operators whose calendar actually moved since their last
     // scan, plus anyone not scanned in 24h so the 14-day window rolls forward.
@@ -3385,42 +4102,45 @@ async function runScheduled(env: Env): Promise<void> {
     // ceiling at ~26 operators; this puts it in the hundreds.
     // The batch cap keeps one tick inside the scheduled-worker time limit —
     // whatever it does not reach is still pending on the next tick.
-    const ops = await env.DB.prepare(
-      `SELECT * FROM operators
-        WHERE plan IN ('trial','active')
-          AND (scanned_version <> calendar_version
-               OR last_scan_at IS NULL
-               OR last_scan_at < ?)
-        ORDER BY last_scan_at IS NOT NULL, last_scan_at
-        LIMIT 200`,
-    ).bind(t - 86400).all<Operator & { calendar_version: number }>();
+    await step('rescan calendars', async () => {
+      const ops = await env.DB.prepare(
+        `SELECT * FROM operators
+          WHERE plan IN ('trial','active')
+            AND (scanned_version <> calendar_version
+                 OR last_scan_at IS NULL
+                 OR last_scan_at < ?)
+          ORDER BY last_scan_at IS NOT NULL, last_scan_at
+          LIMIT 200`,
+      ).bind(t - 86400).all<Operator & { calendar_version: number }>();
 
-    for (const op of ops.results ?? []) {
-      try {
-        await detectGaps(env, op, localDayStart(t, op.timezone), 14);
-        await env.DB.prepare(
-          `UPDATE operators SET scanned_version = ?, last_scan_at = ? WHERE id = ?`,
-        ).bind(op.calendar_version, t, op.id).run();
-      } catch (e) {
-        // Leave scanned_version alone so a failure retries on the next tick.
-        console.error('detect failed for', op.id, e);
+      for (const op of ops.results ?? []) {
+        try {
+          await detectGaps(env, op, localDayStart(t, op.timezone), 14);
+          await env.DB.prepare(
+            `UPDATE operators SET scanned_version = ?, last_scan_at = ? WHERE id = ?`,
+          ).bind(op.calendar_version, t, op.id).run();
+        } catch (e) {
+          // Leave scanned_version alone so a failure retries on the next tick.
+          console.error('detect failed for', op.id, e);
+        }
       }
-    }
+    });
 
     // Openings alerts. Runs after the rescan so it sees the gaps this tick
     // just found — a customer who asked to be told about a cancellation
     // should hear about it in the same quarter hour, not the next one.
-    try {
-      await matchWatches(env);
-    } catch (e) {
-      // A failure here must not stop cache hygiene below from running.
-      console.error('watch matching failed', e);
-    }
+    await step('match watches', () => matchWatches(env));
 
-    // Cache hygiene.
-    await env.DB.prepare(`DELETE FROM distance_cache WHERE expires_at < ?`).bind(t).run();
-    await env.DB.prepare(`DELETE FROM login_tokens WHERE expires_at < ?`).bind(t - 86400).run();
-    await env.DB.prepare(`DELETE FROM sessions WHERE expires_at < ?`).bind(t - 86400).run();
+    // Cache hygiene. The last two are credential hygiene as much as cache:
+    // a consumed magic link and a lapsed session have no reason to still be
+    // rows, and the sweep that removes them is the one most easily lost when
+    // something earlier in the tick throws.
+    await step('sweep distance cache', () =>
+      env.DB.prepare(`DELETE FROM distance_cache WHERE expires_at < ?`).bind(t).run());
+    await step('sweep login tokens', () =>
+      env.DB.prepare(`DELETE FROM login_tokens WHERE expires_at < ?`).bind(t - 86400).run());
+    await step('sweep sessions', () =>
+      env.DB.prepare(`DELETE FROM sessions WHERE expires_at < ?`).bind(t - 86400).run());
 
     // Retention. Everything above this line keeps the product working; this
     // is the pass that stops it accumulating people's home addresses,
@@ -3428,17 +4148,14 @@ async function runScheduled(env: Env): Promise<void> {
     // because nothing ever deleted anything. Each sweep catches its own
     // failure, so one broken query cannot quietly switch the rest off — see
     // lib/retention.ts, where all the intervals are gathered and argued.
-    try {
+    await step('retention', async () => {
       const swept = await sweepRetention(env);
       const moved = Object.entries(swept).filter(([, n]) => n !== 0);
       if (moved.length) console.log('retention', JSON.stringify(Object.fromEntries(moved)));
-    } catch (e) {
-      console.error('retention sweep failed', e);
-    }
+    });
   }
 }
 
-export { addLocalDays };
 
 // Cloudflare finds a Durable Object class by its export from the entry module.
 export { VanTracker } from './do/van';

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError, type Country } from '../api';
 import { useSession } from '../App';
 import Crumbs from '../components/Crumbs';
@@ -43,11 +43,30 @@ function Shell({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * Where to go once there is a session, when the visitor did not choose to be
+ * here.
+ *
+ * Protected in App.tsx bounces to this page carrying `state.from` — the screen
+ * they actually asked for — and nothing read it, so an operator who opened
+ * /app/schedule and was sent here landed on /app afterwards and had to find
+ * their way back. Only paths inside the operator app are honoured: `state` is
+ * router history, which a page can put anything into, and sending somebody to
+ * an arbitrary string after a successful sign-in is an open redirect wearing a
+ * different hat.
+ */
+function returnTo(state: unknown): string {
+  const from = (state as { from?: unknown } | null)?.from;
+  return typeof from === 'string' && /^\/app(\/|$)/.test(from) ? from : '/app';
+}
+
 export default function SignIn() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { operator, refresh } = useSession();
   const token = params.get('token');
+  const after = returnTo(location.state);
 
   const [stage, setStage] = useState<Stage>(token ? 'verifying' : 'form');
   useDocumentTitle(stage === 'sent' ? 'Check your email' : 'Sign in');
@@ -61,8 +80,8 @@ export default function SignIn() {
   const [devLink, setDevLink] = useState<string | null>(null);
 
   useEffect(() => {
-    if (operator) navigate('/app', { replace: true });
-  }, [operator, navigate]);
+    if (operator) navigate(after, { replace: true });
+  }, [operator, navigate, after]);
 
   useEffect(() => {
     api.countries()
@@ -86,13 +105,13 @@ export default function SignIn() {
         // A brand-new operator has nothing set up yet. Dropping them into an
         // empty dashboard is how someone decides the product does nothing.
         const { services } = await api.services().catch(() => ({ services: [] }));
-        navigate(services.length === 0 ? '/join' : '/app', { replace: true });
+        navigate(services.length === 0 ? '/join' : after, { replace: true });
       })
       .catch((e) => {
         setError(e instanceof ApiError ? e.message : 'That link did not work.');
         setStage('form');
       });
-  }, [token, refresh, navigate]);
+  }, [token, refresh, navigate, after]);
 
   const selected = countries.find((c) => c.iso2 === country);
 
@@ -208,7 +227,7 @@ export default function SignIn() {
             try {
               await api.startDemo();
               await refresh();
-              navigate('/app', { replace: true });
+              navigate(after, { replace: true });
             } catch (e) {
               setError(e instanceof ApiError ? e.message : 'The demo is not available.');
             } finally {

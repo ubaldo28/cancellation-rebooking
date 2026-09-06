@@ -23,7 +23,12 @@ CREATE TABLE postal_codes (
   country_code   TEXT NOT NULL,     -- ISO-3166-1 alpha-2
   postal_code    TEXT NOT NULL,     -- normalised: uppercase, no spaces or hyphens
   place_name     TEXT,
-  admin_name1    TEXT,              -- state / region, for display
+  -- State or region. Loaded by scripts/build-postal-codes.mjs and READ BY
+  -- NOTHING today: the launch is one state, so every page that needs the word
+  -- uses LAUNCH_STATE in src/lib/countries.ts instead. This is the column that
+  -- has the real answer on the day a second state is opened, which is why it
+  -- is loaded now rather than being a reseed later.
+  admin_name1    TEXT,
   lat            REAL NOT NULL,
   lng            REAL NOT NULL,
   accuracy       INTEGER,           -- GeoNames 1-6; 6 = centroid of the code

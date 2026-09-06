@@ -8,7 +8,8 @@ import PostcodeFinder from '../components/PostcodeFinder';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-trade.css';
 import { ENOUGH, formatMoney as money, median } from '../lib/format';
-import { nearTradeHref } from '../lib/seo';
+import { jsonLd, nearTradeHref } from '../lib/seo';
+import { distinctGaps } from '../lib/slots';
 import { useDocumentTitle } from '../lib/title';
 
 /**
@@ -117,24 +118,6 @@ function faqsFor(tradeName: string): { q: string; a: string }[] {
   ];
 }
 
-/**
- * JSON-LD, escaped so page data can never close the script element.
- *
- * The same four lines as the trade page's, deliberately copied rather than
- * shared. Putting it in a module both pages import would make one page's
- * bundle pull in the other's, and a five-line escape is a cheaper thing to
- * have twice than a page's worth of code to download once. HTML-escaping is
- * wrong inside a script — `&lt;` is not `<` to a JSON parser — so the three
- * dangerous characters are unicode-escaped instead, which keeps the block
- * parseable and inert as markup.
- */
-function jsonLd(data: unknown): string {
-  return JSON.stringify(data)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/&/g, '\\u0026');
-}
-
 export default function CostGuide() {
   const { trade } = useParams<{ trade: string }>();
   const slug = (trade ?? '').trim().toLowerCase();
@@ -210,10 +193,7 @@ export default function CostGuide() {
    * five areas each, and the Worker's copy of this page (seo.ts, via
    * `distinctGaps`) would have said something different on the same URL.
    */
-  const inTrade = useMemo(() => {
-    const seen = new Set<string>();
-    return tagged.filter((s) => (seen.has(s.gap_id) ? false : (seen.add(s.gap_id), true)));
-  }, [tagged]);
+  const inTrade = useMemo(() => distinctGaps(tagged), [tagged]);
 
   // Same rule as Trade's: a slug in no catalogue with nothing listed under it
   // gets the "we do not have this trade" page, so the tab must not promise a
@@ -439,6 +419,7 @@ export default function CostGuide() {
     { id: 'cg-why', label: 'What changes the price' },
     { id: 'cg-hire', label: `How to hire ${lower} on Slotfill` },
     { id: 'cg-faq', label: `Questions about what ${lower} costs` },
+    ...(stats.n > 0 ? [{ id: 'cg-method', label: 'How we worked these figures out' }] : []),
     { id: 'cg-near', label: `Find ${lower} near you` },
     { id: 'cg-how', label: 'How booking one works' },
     ...(related.length > 0 ? [{ id: 'cg-guides', label: 'Other cost guides' }] : []),
@@ -879,6 +860,129 @@ export default function CostGuide() {
           }}
         />
       </section>
+
+      {/* --- how the figures were arrived at ----------------------------
+          THE METHOD, WRITTEN OUT.
+
+          The reference marketplace closes its cost guides with "How do we know
+          these prices?", and it is the right block to have: a page of numbers
+          that never says where they came from is asking to be trusted on its
+          typography. Theirs answers it with a survey of jobs booked through
+          them. Ours cannot and does not — every sentence below describes the
+          arithmetic three hundred lines up in this file, and every figure in it
+          is one this render counted.
+
+          WHAT MUST NEVER APPEAR HERE. A national average, a typical cost, a
+          "most people pay", or any figure standing in for the trade at large.
+          The page's whole claim is that it counts what is listed and refuses to
+          estimate what is not, and a method section is exactly where somebody
+          would be tempted to smuggle one in as context. The third column below
+          exists to say plainly that this page does not have one — that is the
+          honest answer, and it is more useful than a number nobody measured. */}
+      {stats.n > 0 && currency && (
+        <section className="tr-sec" aria-labelledby="cg-method">
+          <h2 id="cg-method">How we worked these figures out</h2>
+          <p className="tr-sec-sub">
+            There is no survey behind this page and no editor. Here is the whole
+            method, and what it is and is not good for.
+          </p>
+          <div className="tr-drivers">
+            <div className="tr-driver">
+              <h3>Where the numbers come from</h3>
+              <p>
+                Every figure above is a price a business on Slotfill set on an
+                appointment it has free right now. When you opened this page we
+                read {stats.n} of them, listed by {stats.businesses}{' '}
+                {stats.businesses === 1 ? 'business' : 'businesses'} under{' '}
+                {services.length}{' '}
+                {services.length === 1 ? 'job name' : 'different job names'}
+                {located ? `, counting only businesses that can reach ${near}` : ''}.
+                Nothing is stored or carried over: open it again tomorrow and a
+                business that has since filled its Tuesday is no longer in the
+                count.
+              </p>
+              {/* The one piece of arithmetic on this page that is not simply a
+                  minimum or a maximum, so it is the one that has to be spelled
+                  out. Calling a median an average is how a single very large
+                  job ends up quietly describing a whole trade. */}
+              {stats.mid !== null && stats.n >= ENOUGH && (
+                <p>
+                  The middle figure is the median: line all {stats.n} prices up
+                  in order and it is the one in the centre, or the midpoint of
+                  the two in the centre when there is an even number of them. It
+                  is not an average, which one unusually big job would drag.
+                </p>
+              )}
+              {/* A business's whole free day is genuinely available in every
+                  neighbourhood it covers, so the map offers it in all of them.
+                  Anyone checking these counts against the listing page needs to
+                  know which of the two things was counted. */}
+              <p>
+                A business that covers five neighbourhoods offers the same free
+                hour in all five, and this page counts that hour once.
+              </p>
+              {stats.samples > 0 && (
+                <p>
+                  {stats.samples === stats.n
+                    ? (stats.n === 1
+                      ? 'The one listing behind these figures is a sample'
+                      : `All ${stats.n} listings behind these figures are samples`)
+                    : `${stats.samples} of the ${stats.n} listings behind these figures ${
+                      stats.samples === 1 ? 'is a sample' : 'are samples'}`}
+                  {' '}we seeded ourselves so the map is not blank, rather than a
+                  business trading today.
+                </p>
+              )}
+            </div>
+            <div className="tr-driver">
+              <h3>What that tells you</h3>
+              <p>
+                What this work is being asked for on this site today, by the
+                people who would do it. Every price above is attached to a
+                particular hour of a particular business's week, which is why
+                the cheapest of them has a link straight to it rather than a
+                phone number.
+              </p>
+              {/* Only where the rows can carry the claim. On a trade where no
+                  job name is listed twice there is no spread to point at, and
+                  the sentence would be describing a table the reader can see
+                  does not contain it. */}
+              {evidence.differing > 0 && (
+                <p>
+                  And where two businesses list the same job name, it tells you
+                  how far apart they are on it: {evidence.differing}{' '}
+                  {evidence.differing === 1 ? 'job name' : 'job names'} in the
+                  table above{' '}
+                  {evidence.differing === 1 ? 'is' : 'are'} listed by more than
+                  one business at more than one price.
+                </p>
+              )}
+            </div>
+            <div className="tr-driver">
+              <h3>What it does not tell you</h3>
+              <p>
+                What {lower} costs in general. {stats.n}{' '}
+                {stats.n === 1 ? 'listing' : 'listings'} from {stats.businesses}{' '}
+                {stats.businesses === 1 ? 'business' : 'businesses'} is not the
+                trade — it is the part of the trade that is on Slotfill and has
+                an hour free this week.
+              </p>
+              <p>
+                So there is no typical price on this page and no average for the
+                work at large, because we have not measured one and we are not
+                going to guess. If that is the figure you came for, this is not
+                the page that has it.
+              </p>
+              <p>
+                A listed price is also what the business is asking for the
+                labour, not necessarily the final bill: where a job needs a part
+                that has to be seen first, that price is quoted to you
+                separately and nothing is fitted until you approve it.
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* --- back to the listing, to a booking, and out to the map -------
           The two cross-links have always been here; what is new is the

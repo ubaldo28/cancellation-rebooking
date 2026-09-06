@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 import { threadByToken } from './chat';
-import { notify } from './feed';
+import { isDemoOperator } from './demo';
+import { FEED_EXCERPT_CHARS, notify } from './feed';
 import { redactContact } from './redact';
 import { badRequest, conflict, newId, notFound, now } from './util';
 
@@ -147,6 +148,99 @@ export async function listReviews(
       ORDER BY ${order} LIMIT ?`,
   ).bind(operatorId, limit).all<Review>();
   return withPhotos(env, rows.results ?? []);
+}
+
+// ---------------------------------------------------------------------------
+// Reviews for a trade, rather than for one business
+// ---------------------------------------------------------------------------
+
+/**
+ * One review as a trade page shows it: what was said, and whose page to open.
+ *
+ * Deliberately not a `Review`. The reply, the photos and the internal booking
+ * id belong to the business's own page, where there is room for them; a strip
+ * across a whole trade needs the words, the stars, and a link.
+ */
+export interface TradeReview {
+  id: string;
+  rating: number;
+  /** "Debra D." — cut here, exactly as every other public path cuts it. */
+  author_name: string;
+  body: string;
+  /** What that customer actually booked, copied at the time. */
+  details: string | null;
+  created_at: number;
+  business_name: string;
+  /** The `/p/:slug` segment. Never null: a row without one is not selected. */
+  profile_slug: string;
+  /** A seeded sample business, so the page can say so rather than imply a market. */
+  is_sample: boolean;
+}
+
+/** A strip of six is what the reference shows; more is a page nobody finishes. */
+const DEFAULT_TRADE_REVIEW_LIMIT = 6;
+const MAX_TRADE_REVIEW_LIMIT = 50;
+
+/**
+ * The newest reviews across every business in one trade.
+ *
+ * NOTHING IS INVENTED AND NOTHING IS FILLED IN. A trade nobody has reviewed
+ * returns an empty array, which the caller has to render as the absence it is
+ * — the temptation on a page like this is a placeholder, and a placeholder
+ * review is the one lie that would make every real one on the site worthless.
+ *
+ * Three conditions decide what is eligible, and each is doing separate work.
+ * `hidden_at IS NULL` is the same filter every other read applies. A body is
+ * required because this strip renders words: a bare five stars has nothing to
+ * put in it, the stars are already carried elsewhere, and rendering an empty
+ * quotation mark reads as the page being broken. And the business must have a
+ * published page, because every one of these is a link — a review pointing at
+ * a profile that 404s is worse than one fewer review.
+ */
+export async function reviewsForTrade(
+  env: Env, trade: string, limit = DEFAULT_TRADE_REVIEW_LIMIT,
+): Promise<TradeReview[]> {
+  const slug = (trade ?? '').trim().toLowerCase();
+  if (!slug) return [];
+
+  const capped = Math.min(Math.max(1, Math.floor(limit)), MAX_TRADE_REVIEW_LIMIT);
+
+  const rows = await env.DB.prepare(
+    `SELECT r.id, r.rating, r.author_name, r.body, r.details, r.created_at,
+            o.id AS operator_id, o.business_name, o.profile_slug
+       FROM reviews r JOIN operators o ON o.id = r.operator_id
+      -- trade is free text on the row, so it is compared the way every other
+      -- reader of that column compares it rather than by exact match.
+      WHERE LOWER(TRIM(o.trade)) = ?
+        AND o.is_published = 1
+        AND o.profile_slug IS NOT NULL
+        AND r.hidden_at IS NULL
+        AND r.body IS NOT NULL AND TRIM(r.body) <> ''
+      -- The id breaks the tie on the second, because created_at has one-second
+      -- resolution and a strip that reshuffles on every reload reads as broken.
+      ORDER BY r.created_at DESC, r.id DESC
+      LIMIT ?`,
+  ).bind(slug, capped).all<{
+    id: string; rating: number; author_name: string; body: string;
+    details: string | null; created_at: number;
+    operator_id: string; business_name: string; profile_slug: string;
+  }>();
+
+  return (rows.results ?? []).map((r) => ({
+    id: r.id,
+    rating: r.rating,
+    // The same helper the profile page and the listing cards use, so a
+    // reviewer is "Debra D." everywhere and the rule about surnames lives in
+    // exactly one function. operator_id is read for the sample check and then
+    // dropped: it is an internal key and has no business on a public page.
+    author_name: displayName(r.author_name),
+    body: r.body,
+    details: r.details,
+    created_at: r.created_at,
+    business_name: r.business_name,
+    profile_slug: r.profile_slug,
+    is_sample: isDemoOperator(r.operator_id),
+  }));
 }
 
 /**
@@ -319,7 +413,7 @@ export async function leaveReview(
   await notify(env, item.operator_id, {
     kind: 'chat_message',
     title: `${displayName(review.author_name)} left you ${rating} stars`,
-    body: review.body?.slice(0, 140) ?? null,
+    body: review.body?.slice(0, FEED_EXCERPT_CHARS) ?? null,
     thread_id: thread.id,
   });
 

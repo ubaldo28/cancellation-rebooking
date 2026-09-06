@@ -129,6 +129,30 @@ export function formatMoney(cents: number, currency: string, locale = 'en-US'): 
 }
 
 /**
+ * A discount off a real price, rounded to something a person would write.
+ *
+ * 10% off $189 is $170.10. Nobody prices a car wash at $170.10, and a price
+ * with stray cents on it reads as a bug rather than a deal, so the result is
+ * rounded to a whole unit of currency (or to the nearest 10 for zero-decimal
+ * currencies, where a single unit is worth very little).
+ *
+ * It lives HERE, beside formatMoney and ZERO_DECIMAL, because it is currency
+ * arithmetic and nothing to do with a listing. It used to live in ./public,
+ * which is what let ./offers quietly grow a second version of it: a bare
+ * percentage with no rounding at all. The same service at the same discount
+ * was then $58.50 in the text message an operator sent a regular client and
+ * $59.00 to a stranger reading the public page — and it was the unrounded
+ * figure that got stored as the offer's quoted price and written onto the
+ * appointment when they accepted. One function, one answer.
+ */
+export function discounted(cents: number, percent: number, currency: string): number {
+  if (!percent) return cents;
+  const raw = cents * (1 - percent / 100);
+  const step = ZERO_DECIMAL.has(currency.toUpperCase()) ? 10 : 100;
+  return Math.max(0, Math.round(raw / step) * step);
+}
+
+/**
  * Currencies with no minor unit. Storing these as "cents" would divide by 100
  * and quote a plumber ¥45 for a ¥4,500 job — so the minor unit is 1 here.
  */

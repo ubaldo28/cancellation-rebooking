@@ -54,7 +54,7 @@ const STEPS = [
     // does, so it is the step that would have been caught out first.
     title: 'Book it in one step',
     body:
-      'Take the slot and say what the job is. The time is yours from that '
+      'Take the opening and say what the job is. The time is yours from that '
       + 'moment — there is nothing to confirm and nobody to chase. Nothing is '
       + 'paid on the site yet, so no card is asked for and you settle the '
       + 'listed price with the business directly.',

@@ -14,10 +14,21 @@ import '../styles-slotcard.css';
  *
  * THE RULE THIS CARD IS BUILT AROUND: nothing is invented for a business that
  * does not have it. No "New" in the space where a rating would go, no "0
- * reviews", no greyed-out stars. Every row below is conditional and the whole
- * strip disappears when none of it is there. A grid of cards is read by
- * scanning, and at scanning speed a placeholder is indistinguishable from a
- * fact.
+ * reviews", no greyed-out stars. Every row below is conditional on the business
+ * having the thing. A grid of cards is read by scanning, and at scanning speed
+ * a placeholder is indistinguishable from a fact.
+ *
+ * THE ONE EXCEPTION, AND WHY IT IS NOT ONE.
+ * The rating's place is never empty: a business nobody has reviewed says so, in
+ * those words. Silence there is not neutral — every other card in the row has a
+ * score in that spot, so a gap reads as something the site knows and is not
+ * printing, when the truth is that no customer has got round to them yet.
+ * Saying so is not an invention: it is the one fact a marketplace
+ * with no history can state without a number behind it, and it is the reader's
+ * own sentence rather than a word we made up to stand in for a score. It is
+ * therefore deliberately not a badge — no fill, no border, no weight, nothing
+ * that could be mistaken at scanning speed for a mark of quality in either
+ * direction, and nothing that could be mistaken for a rating.
  *
  * The stylesheet is imported here rather than by the pages, so a page gets the
  * card's appearance by rendering the card — the previous arrangement, where the
@@ -74,14 +85,11 @@ export interface SlotCardProps {
 
 export default function SlotCard({ slot: s, showTrade = false, area = null }: SlotCardProps) {
   /* Everything in the strip under the business name is conditional on the
-     business actually having it, and the strip itself disappears when none of
-     it is there. A card that reserves a line for a rating and then fills it
-     with a placeholder is how a directory ends up implying that every business
-     has been graded. */
-  const hasMeta = s.online || s.rating !== null
-    || s.hired_count > 0 || s.background_check
-    || s.years_in_business !== null;
-
+     business actually having it, with the single exception argued at the top of
+     this file: the rating's place always says something, either the score or
+     the plain fact that nobody has left one. Which is why there is no longer a
+     `hasMeta` guard around the strip — it would now be a test that cannot come
+     out false, since every row either has a rating or has not. */
   /* The work photo wins over the headshot, because it is the one that answers
      the question a grid of these is being scanned for — what does this person's
      work look like — and the avatar is the fallback rather than the other way
@@ -110,9 +118,17 @@ export default function SlotCard({ slot: s, showTrade = false, area = null }: Sl
       <span className="slot-price">{s.price}</span>
       <span className="slot-when">{s.when}</span>
       <span className="slot-biz">
-        {s.business_name}{showTrade && s.trade ? ` · ${sentence(s.trade)}` : ''}
-        {/* Says what it is rather than passing a seeded business off as a real
-            one. The leading space and the extra word are for the read-aloud
+        {/* The name is the part that gives way. It used to be the whole line
+            that was one nowrap run with an ellipsis on the end, which meant
+            the thing clipped off a narrow card was whatever came last — and
+            what comes last is the SAMPLE badge. On a 375px screen "Roscoe
+            Mobile Mechanic" and a badge reading "SAMP" is the one truncation
+            this card must never produce, because the badge exists so a seeded
+            listing is not mistaken for a real business. */}
+        <span className="slot-biz-name">
+          {s.business_name}{showTrade && s.trade ? ` · ${sentence(s.trade)}` : ''}
+        </span>
+        {/* The leading space and the extra word are for the read-aloud
             version: the badge is a sibling with no whitespace between it and
             the business name, so name computation ran the two together into
             "Bright VansSample", and "sample" on its own does not say sample
@@ -129,72 +145,78 @@ export default function SlotCard({ slot: s, showTrade = false, area = null }: Sl
           in a row. Adding rows directly would put the slack in the middle of
           the card instead, and the Book buttons in a row would stop lining
           up. */}
-      {(hasMeta || s.review_snippet) && (
-        <span className="slot-more">
-          {hasMeta && (
-            <span className="slot-meta">
-              {/* The one thing on this card that is about right now rather than
-                  later this week, so it is the one thing wearing the accent. */}
-              {s.online && <span className="slot-now">Open now</span>}
+      <span className="slot-more">
+        <span className="slot-meta">
+          {/* The one thing on this card that is about right now rather than
+              later this week, so it is the one thing wearing the accent. */}
+          {s.online && <span className="slot-now">Open now</span>}
 
-              {s.rating !== null && (
-                <span className="slot-rate">
-                  <span className="slot-star" aria-hidden="true">★</span>
-                  {/* "Rated" as well as "out of 5", because without it the
-                      strip reads as a bare run of numbers — "4.8 out of 5,
-                      37 reviews, hired 12 times" — and the first of them is
-                      the only one whose subject is not stated. */}
-                  <span className="slot-sr">Rated </span>
-                  {s.rating.toFixed(1)}
-                  <span className="slot-sr"> out of 5</span>
-                  {s.review_count > 0 && (
-                    <span className="slot-rate-n">
-                      ({s.review_count}
-                      <span className="slot-sr"> reviews</span>)
-                    </span>
-                  )}
-                </span>
-              )}
-
-              {s.hired_count > 0 && (
-                <span className="slot-fact">
-                  Hired {s.hired_count}
-                  {s.hired_count === 1 ? ' time' : ' times'}
-                </span>
-              )}
-
-              {/* Records that a check was run. Not a licence, and not this site
-                  vouching for what came back — so it says the noun and nothing
-                  else. */}
-              {s.background_check && (
-                <span className="slot-chk">Background check</span>
-              )}
-
-              {s.years_in_business !== null && (
-                <span className="slot-fact">
-                  {s.years_in_business}
-                  {s.years_in_business === 1 ? ' year' : ' years'} in business
+          {s.rating !== null ? (
+            <span className="slot-rate">
+              <span className="slot-star" aria-hidden="true">★</span>
+              {/* "Rated" as well as "out of 5", because without it the
+                  strip reads as a bare run of numbers — "4.8 out of 5,
+                  37 reviews, hired 12 times" — and the first of them is
+                  the only one whose subject is not stated. */}
+              <span className="slot-sr">Rated </span>
+              {s.rating.toFixed(1)}
+              <span className="slot-sr"> out of 5</span>
+              {s.review_count > 0 && (
+                <span className="slot-rate-n">
+                  ({s.review_count}
+                  <span className="slot-sr"> reviews</span>)
                 </span>
               )}
             </span>
+          ) : (
+            /* THE ONE THING THIS CARD SAYS ABOUT WHAT IT DOES NOT HAVE.
+               In the rating's own place, in the sentence a person would use,
+               and the plainest thing in the strip: no star, no border, no
+               fill, nothing bold — every one of those belongs to something a
+               business has, and this is the absence of one. It says who has
+               not done what rather than filing the business under a word
+               ("New", "Unrated"), because the first is a fact about this
+               week and the second reads as a rank the site has awarded. */
+            <span className="slot-none">No one has reviewed them yet</span>
           )}
 
-          {/* One line, cut with an ellipsis. The author is a separate element
-              so it is the review that gets cut and never the name of the person
-              who wrote it — an anonymous quotation is worth less than no
-              quotation. */}
-          {s.review_snippet && (
-            <span className="slot-quote">
-              <span className="slot-quote-body">
-                “{s.review_snippet.body}”
-              </span>
-              <span className="slot-quote-by">
-                {s.review_snippet.author}
-              </span>
+          {s.hired_count > 0 && (
+            <span className="slot-fact">
+              Hired {s.hired_count}
+              {s.hired_count === 1 ? ' time' : ' times'}
+            </span>
+          )}
+
+          {/* Records that a check was run. Not a licence, and not this site
+              vouching for what came back — so it says the noun and nothing
+              else. */}
+          {s.background_check && (
+            <span className="slot-chk">Background check</span>
+          )}
+
+          {s.years_in_business !== null && (
+            <span className="slot-fact">
+              {s.years_in_business}
+              {s.years_in_business === 1 ? ' year' : ' years'} in business
             </span>
           )}
         </span>
-      )}
+
+        {/* One line, cut with an ellipsis. The author is a separate element
+            so it is the review that gets cut and never the name of the person
+            who wrote it — an anonymous quotation is worth less than no
+            quotation. */}
+        {s.review_snippet && (
+          <span className="slot-quote">
+            <span className="slot-quote-body">
+              “{s.review_snippet.body}”
+            </span>
+            <span className="slot-quote-by">
+              {s.review_snippet.author}
+            </span>
+          </span>
+        )}
+      </span>
 
       {/* WHERE, IN ONE PILL, AND THE BEST ANSWER WE HAVE.
           `proximity` is the strongest of the three because it is measured

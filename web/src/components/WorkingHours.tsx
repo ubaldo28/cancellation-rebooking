@@ -46,6 +46,11 @@ export const blankDay = (): DayHours => ({ on: false, start: '09:00', end: '17:0
 /**
  * The rows a page saves: the days that are switched on, in the Worker's shape,
  * with anything that ends before it starts dropped rather than sent.
+ *
+ * The drop is deliberate — the Worker refuses the whole week over one bad range
+ * — but it must never be the only thing that happens to such a day. Ask
+ * `backwardsDays` first and say so; a weekday that quietly does not arrive is a
+ * day of openings that never go up, and nothing on screen would explain it.
  */
 export function hoursPayload(hours: Record<number, DayHours>) {
   return Object.entries(hours)
@@ -54,6 +59,13 @@ export function hoursPayload(hours: Record<number, DayHours>) {
       weekday: Number(d), start_minute: toMin(v.start), end_minute: toMin(v.end),
     }))
     .filter((h) => h.end_minute > h.start_minute);
+}
+
+/** The switched-on days hoursPayload would throw away, named for a sentence. */
+export function backwardsDays(hours: Record<number, DayHours>): string[] {
+  return Object.entries(hours)
+    .filter(([, v]) => v.on && toMin(v.end) <= toMin(v.start))
+    .map(([d]) => DAY_NAMES[Number(d)] ?? `Day ${d}`);
 }
 
 export default function WorkingHours({ hours, onChange, fallback = blankDay }: {
@@ -70,21 +82,21 @@ export default function WorkingHours({ hours, onChange, fallback = blankDay }: {
       {DAY_NAMES.map((name, d) => {
         const h = hours[d] ?? fallback();
         return (
-          <div className="card row" key={name} style={{ gap: 10, padding: 12 }}>
-            <input type="checkbox" checked={h.on} style={{ width: 20, minHeight: 20 }}
+          <div className="wh-row card" key={name}>
+            <input type="checkbox" className="wh-on" checked={h.on}
               aria-label={`Work on ${name}`}
               onChange={(e) => set(d, { on: e.target.checked })} />
-            <span style={{ width: 38, fontWeight: 600 }} aria-hidden="true">
-              {name.slice(0, 3)}
+            {/* Three letters is what fits beside two time fields. The voice
+                version is spelled out on each control's own label. */}
+            <span className="wh-day" aria-hidden="true">{name.slice(0, 3)}</span>
+            <span className="wh-times">
+              <input type="time" value={h.start} disabled={!h.on}
+                aria-label={`${name} start`}
+                onChange={(e) => set(d, { start: e.target.value })} />
+              <input type="time" value={h.end} disabled={!h.on}
+                aria-label={`${name} end`}
+                onChange={(e) => set(d, { end: e.target.value })} />
             </span>
-            <input type="time" value={h.start} disabled={!h.on}
-              aria-label={`${name} start`}
-              style={{ minHeight: 40, padding: '8px 10px' }}
-              onChange={(e) => set(d, { start: e.target.value })} />
-            <input type="time" value={h.end} disabled={!h.on}
-              aria-label={`${name} end`}
-              style={{ minHeight: 40, padding: '8px 10px' }}
-              onChange={(e) => set(d, { end: e.target.value })} />
           </div>
         );
       })}

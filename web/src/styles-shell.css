@@ -154,6 +154,72 @@ main:focus { outline: none; }
   border: 1px solid var(--control-line);
   border-radius: 999px;
   background: #fff;
+  /* The anchor for the suggestion list, which hangs below the pill. That list
+     cannot be laid out in the flow: this pill is a flex row inside a bar that
+     wraps at 760px, so a list in the flow would either take a share of the
+     row's width or push the nav onto another line the moment somebody typed —
+     and the collapse behaviour described further down depends on this pill
+     being exactly as wide and as tall as it looks. */
+  position: relative;
+}
+
+/* --- the suggestions ----------------------------------------------------
+   A panel under the pill, the width of the pill, and out of the flow. At
+   760px and up the pill is a 480px column in the middle of the bar and the
+   list is that; on a phone the pill is the whole second row and so is the
+   list, which is the width the trade names need anyway.
+
+   It is drawn over the page rather than in it, so it is the one thing in this
+   file that gets an elevation: the bar's own translucency would otherwise
+   show the headings underneath through a menu somebody is choosing from. */
+.shell-sug {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 7px);
+  left: 0;
+  right: 0;
+  max-height: min(58vh, 384px);
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--lift-3);
+}
+
+/* 44px tall, because this is a menu on a phone before it is anything else,
+   and the name and its category are on one row with the category giving way
+   first — a trade name that is cut is a trade nobody can identify. */
+.shell-sug-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* The keyboard's row and the pointer's row look the same on purpose: there is
+   only ever one of them, and two different highlights would be two answers to
+   "which one am I about to get". */
+.shell-sug-opt:hover,
+.shell-sug-opt[aria-selected='true'] { background: var(--surface-2); }
+
+.shell-sug-name { min-width: 0; }
+
+.shell-sug-cat {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 550;
+  white-space: nowrap;
 }
 
 /* The ring belongs to the pill, not to the field inside it: the visible
@@ -181,7 +247,7 @@ main:focus { outline: none; }
 .shell-search input {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 2px 0 4px;
   border: 0;
   background: none;
@@ -334,7 +400,9 @@ main:focus { outline: none; }
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 8px;
-  margin-bottom: 18px;
+  /* Less than it was, because the links inside now carry a 44px floor and the
+     space that used to come from this margin comes from them. */
+  margin-bottom: 6px;
   font-size: 13px;
   line-height: 1.4;
   color: var(--muted);
@@ -349,7 +417,16 @@ main:focus { outline: none; }
   min-width: 0;
 }
 
-.shell-crumbs a { color: var(--muted); text-decoration: none; }
+/* A 44px target from a floor rather than from padding, so the trail still
+   wraps as one line of text. Its links were 18px tall — the shortest thing to
+   hit on every page that has a trail, which is most of them. */
+.shell-crumbs a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--muted);
+  text-decoration: none;
+}
 .shell-crumbs a:hover { color: var(--ink); text-decoration: underline; }
 
 .shell-crumbs a:focus-visible {
@@ -405,12 +482,16 @@ main:focus { outline: none; }
   color: var(--muted);
 }
 
+/* No gap, because the rows carry their own now. Each link is padded to a 44px
+   target — they were 20px tall with 9px between them, which is the smallest
+   thing to hit on any page and there are forty of them. Trading the gap for the
+   padding buys the target back for about half the height it would otherwise
+   have cost. */
 .site-foot .foot-col ul {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 9px;
 }
 
 /* Links carry the body ink, not the accent: forty accent-coloured links in a
@@ -423,6 +504,8 @@ main:focus { outline: none; }
   align-items: baseline;
   gap: 10px;
   width: 100%;
+  min-height: 44px;
+  padding: 11px 0;
   color: inherit;
   font-size: 14px;
   line-height: 1.4;
@@ -442,6 +525,10 @@ main:focus { outline: none; }
    told twice already, and the alternative is a route that 404s. */
 .site-foot .foot-soon {
   display: block;
+  /* Padded like the links beside it, not because it is a target — it is not —
+     but so one dead word in a column does not knock the whole column's rhythm
+     out. */
+  padding: 11px 0;
   font-size: 14px;
   line-height: 1.4;
   color: var(--faint);

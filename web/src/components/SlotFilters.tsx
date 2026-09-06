@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import type { PublicSlot } from '../api';
 import '../styles-slotcard.css';
 
@@ -31,9 +31,10 @@ import '../styles-slotcard.css';
 /**
  * What the list can be ordered by.
  *
- * 'near' is the one that is not always on offer: `detour_minutes` is null on
- * every row until a postcode has been given, so before that the option would be
- * a control that reorders nothing.
+ * Only 'soon' is always on offer. 'near' is the plainest of the others:
+ * `detour_minutes` is null on every row until a postcode has been given, so
+ * before that the option would be a control that reorders nothing. The memo
+ * below says when each of the rest is worth drawing.
  */
 export type Sort = 'soon' | 'price' | 'rating' | 'near';
 
@@ -50,6 +51,29 @@ const SORT_SUB: Record<Sort, string> = {
   price: 'cheapest first',
   rating: 'highest rated first',
   near: 'closest first',
+};
+
+/**
+ * What the order in force actually does to the list, in one line under the
+ * buttons.
+ *
+ * Each of these describes the comparator a few hundred lines down and nothing
+ * else — including the tie-break, which is the half nobody can infer from a
+ * two-word label and the half that explains why two cards at the same price
+ * are in the order they are in. "Highest rated" in particular hides a real
+ * decision about businesses nobody has reviewed, and a visitor is entitled to
+ * know which end of the list they went to before wondering where they went.
+ */
+const SORT_WHY: Record<Sort, string> = {
+  soon: 'The appointment that starts first is at the top, wherever it is and '
+    + 'whatever it costs.',
+  price: 'The cheapest appointment is at the top. Two at the same price keep '
+    + 'the sooner one first.',
+  rating: 'The best score is at the top, and the number of reviews behind it '
+    + 'breaks a tie. A business nobody has reviewed yet is last rather than '
+    + 'middling: no reviews is not a low score, but it is not evidence either.',
+  near: 'The van with the shortest way to come off its existing route to reach '
+    + 'you is at the top.',
 };
 
 /**
@@ -92,6 +116,18 @@ const dayOf = (s: PublicSlot): string => {
 export interface DayOption { key: string; label: string; n: number }
 
 /**
+ * A job on offer here, and how many appointments are for it.
+ *
+ * `name` is the service exactly as the cards print it in their first line,
+ * which is what the filter compares against, and it is a business's own words
+ * for the work it does — so it is neither normalised nor recapitalised on the
+ * way into this list. "Front brake pads and rotors" and "Half load" are what
+ * somebody scanning the grid has just read; an option saying anything else
+ * would be an option for a card that is not there.
+ */
+export interface ServiceOption { name: string; n: number }
+
+/**
  * "Today" and "Tomorrow", but only when they are demonstrably right.
  *
  * These are built by formatting the visitor's own clock the same way the
@@ -131,12 +167,15 @@ export interface PriceCap { cents: number; label: string }
 
 /** Which controls the current rows can honestly offer. */
 export interface FilterOffer {
+  /** One entry means no choice: the sort buttons are not drawn at all. */
   sorts: Sort[];
   openNow: boolean;
   caps: PriceCap[];
   floors: number[];
   /** Empty whenever the list is one day long — see the note in the memo. */
   days: DayOption[];
+  /** Empty whenever every appointment here is for the same job. */
+  services: ServiceOption[];
 }
 
 export interface SlotFilterState {
@@ -154,6 +193,7 @@ export interface SlotFilterState {
   priceCap: PriceCap | null;
   ratingFloor: number | null;
   day: DayOption | null;
+  service: ServiceOption | null;
   /** Whether anything is narrowing the list right now. */
   filtered: boolean;
   setSort: (sort: Sort) => void;
@@ -161,6 +201,7 @@ export interface SlotFilterState {
   setPriceCap: (cents: number | null) => void;
   setRatingFloor: (value: number | null) => void;
   setDay: (key: string | null) => void;
+  setService: (name: string | null) => void;
   clear: () => void;
 }
 
@@ -196,6 +237,8 @@ export function useSlotFilters(pool: PublicSlot[]): SlotFilterState {
   const [ratingPick, setRatingPick] = useState<number | null>(null);
   /** A day as the cards print it, always one of the days actually listed. */
   const [dayPick, setDayPick] = useState<string | null>(null);
+  /** A service name as the cards print it, always one actually on offer. */
+  const [servicePick, setServicePick] = useState<string | null>(null);
 
   const offer = useMemo<FilterOffer>(() => {
     const rated = pool.filter((s) => s.rating !== null);
@@ -220,9 +263,50 @@ export function useSlotFilters(pool: PublicSlot[]): SlotFilterState {
       }
     }
 
-    const sorts: Sort[] = ['soon', 'price'];
-    if (rated.length > 0) sorts.push('rating');
-    if (pool.some((s) => s.detour_minutes !== null)) sorts.push('near');
+    /*
+      WHAT MAY BE OFFERED AS AN ORDER.
+
+      The same test as everything else in here, applied to reordering instead
+      of to filtering: an order is offered when the rows can come out of it
+      differently, and withheld when they cannot. One row has no second
+      arrangement, so it gets no buttons at all; one price means "lowest
+      price" hands back the list it was given, which is the identical dead
+      control the price ceilings above already refuse to draw; and 'rating'
+      and 'near' were already conditional on the rows carrying the number
+      they order by. 'soon' is the one that is always true — every row has a
+      start time — which is why it is also the fallback below.
+    */
+    const sorts: Sort[] = ['soon'];
+    if (pool.length > 1) {
+      if (prices.length > 1) sorts.push('price');
+      if (rated.length > 0) sorts.push('rating');
+      if (pool.some((s) => s.detour_minutes !== null)) sorts.push('near');
+    }
+
+    /*
+      THE JOB ITSELF, WHICH IS THE QUESTION THE ROW COULD NOT ASK.
+
+      A trade page is thirty cards saying "locksmith" and the difference
+      between them is in their first line: a car key cut is not a lock change
+      and somebody who needs one of them does not want to read past the other
+      twenty times. The reference marketplace asks this first, before price
+      and before when, and it is the only filter here that narrows by what the
+      work actually is.
+
+      Every option is a service something on this page is listed for, counted
+      from these rows, so picking one always leaves those rows and drops the
+      rest. Below two distinct services there is nothing to split: one option
+      that keeps the whole list is the dead control this file exists to
+      refuse. Ordered by how many appointments are for it, because on a mixed
+      page — the front page is every trade in one neighbourhood — that is the
+      difference between the jobs a visitor can actually choose between and a
+      tail of one-offs, and ties are alphabetical so the order is stable.
+    */
+    const byService = new Map<string, number>();
+    for (const s of pool) byService.set(s.service_name, (byService.get(s.service_name) ?? 0) + 1);
+    const services: ServiceOption[] = byService.size < 2 ? [] : [...byService.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([name, n]) => ({ name, n }));
 
     /*
       THE DAYS, AND WHY THERE ARE SOMETIMES NONE.
@@ -259,6 +343,7 @@ export function useSlotFilters(pool: PublicSlot[]): SlotFilterState {
     return {
       sorts,
       days,
+      services,
       // Both halves have to exist: if every business here is switched on, the
       // toggle is a light switch in a room with no dark.
       openNow: pool.some((s) => s.online) && pool.some((s) => !s.online),
@@ -279,14 +364,16 @@ export function useSlotFilters(pool: PublicSlot[]): SlotFilterState {
   const ratingFloor = ratingPick !== null && offer.floors.includes(ratingPick)
     ? ratingPick : null;
   const day = offer.days.find((d) => d.key === dayPick) ?? null;
+  const service = offer.services.find((s) => s.name === servicePick) ?? null;
   const filtered = openFilter || priceCap !== null || ratingFloor !== null
-    || day !== null;
+    || day !== null || service !== null;
 
   const shown = useMemo(() => {
     const kept = pool.filter((s) => {
       if (openFilter && !s.online) return false;
       if (priceCap && s.price_cents > priceCap.cents) return false;
       if (day && dayOf(s) !== day.key) return false;
+      if (service && s.service_name !== service.name) return false;
       // A minimum rating hides everyone nobody has reviewed. That is the only
       // defensible reading of "4 and up" — an unrated business has not scored
       // 4, it has not scored anything — but it is a real consequence and the
@@ -320,7 +407,7 @@ export function useSlotFilters(pool: PublicSlot[]): SlotFilterState {
           return a.starts_at - b.starts_at;
       }
     });
-  }, [pool, openFilter, priceCap, ratingFloor, day, sort]);
+  }, [pool, openFilter, priceCap, ratingFloor, day, service, sort]);
 
   return {
     shown,
@@ -332,21 +419,30 @@ export function useSlotFilters(pool: PublicSlot[]): SlotFilterState {
     priceCap,
     ratingFloor,
     day,
+    service,
     filtered,
     setSort: setSortPick,
     toggleOpenNow: () => setOpenOnly((v) => !v),
     setPriceCap: setPricePick,
     setRatingFloor: setRatingPick,
     setDay: setDayPick,
+    setService: setServicePick,
     clear: () => {
       setOpenOnly(false); setPricePick(null);
-      setRatingPick(null); setDayPick(null);
+      setRatingPick(null); setDayPick(null); setServicePick(null);
     },
   };
 }
 
 export default function SlotFilters({ filters }: { filters: SlotFilterState }) {
-  const { offer, sort, openFilter, priceCap, ratingFloor, day, filtered } = filters;
+  const { offer, sort, openFilter, priceCap, ratingFloor, day, service, filtered } = filters;
+  /**
+   * The visible "Sort by" heading names the group of buttons rather than each
+   * button repeating it. The id has to be generated: a page can hold two of
+   * these — the front page renders one per neighbourhood pane — and a hardcoded
+   * id would point the second group at the first heading.
+   */
+  const sortLabelId = useId();
 
   // Nothing to sort and nothing to narrow. The controls are about the rows, so
   // with no rows there is nothing for them to be about.
@@ -354,6 +450,10 @@ export default function SlotFilters({ filters }: { filters: SlotFilterState }) {
 
   /** The filters in force, in the words the line under the controls uses. */
   const applied = [
+    // Verbatim, not lower-cased on the way in: the service is a business's own
+    // name for its work and "iPhone screen repair" is not "iphone screen
+    // repair". The sentence carries the capital rather than editing it out.
+    service ? `for ${service.name}` : null,
     // "on Today" is not a sentence. A nicknamed day is an adverb and goes in
     // lower case; a dated one is a place in the calendar and takes "on".
     day ? (day.label === day.key ? `on ${day.key}` : day.label.toLowerCase()) : null,
@@ -364,20 +464,73 @@ export default function SlotFilters({ filters }: { filters: SlotFilterState }) {
 
   return (
     <>
-      <div className="filters">
-        <label className="filt">
-          <span className="filt-lab">Sort by</span>
-          <select value={sort}
-            onChange={(e) => filters.setSort(e.target.value as Sort)}>
-            {offer.sorts.map((k) => (
-              <option key={k} value={k}>{SORT_LABEL[k]}</option>
-            ))}
-          </select>
-        </label>
+      {/*
+        THE ORDER, AS BUTTONS RATHER THAN AS A MENU.
 
-        {/* Directly after the order, because on a page of dated openings
-            "when" is the first thing narrowed and the last thing the row
-            used to be able to say. The count rides along in the option: it
+        This was a <select>, which meant the one decision that changes what is
+        at the top of the page — the part almost nobody scrolls past — was
+        folded shut behind a word. Two or three orders is few enough to show:
+        every choice is readable without opening anything, the one in force is
+        visible from across the room, and choosing another is one press rather
+        than open-scan-pick-close. It is also what the reference marketplace
+        does, for the same reason.
+
+        The filters below stay as native <select>s and should: they carry ten
+        or twenty options and a wall of pills is not a filter row. The rule
+        the stylesheet states — no disabled state anywhere — is unchanged
+        here; an order these rows cannot be put in is not among the buttons,
+        and if that leaves only one there is no choice to draw and the whole
+        block is absent.
+
+        aria-pressed rather than a radio group: these are buttons that act at
+        once and each one is on or off, which is what pressed means, and a
+        radio group would owe arrow-key roving focus that this row has no
+        other reason to own.
+      */}
+      {offer.sorts.length > 1 && (
+        <div className="sortrow">
+          <span className="sortrow-lab" id={sortLabelId}>Sort by</span>
+          <div className="sortrow-opts" role="group" aria-labelledby={sortLabelId}>
+            {offer.sorts.map((k) => (
+              <button key={k} type="button" aria-pressed={k === sort}
+                className={`sortb${k === sort ? ' on' : ''}`}
+                onClick={() => filters.setSort(k)}>
+                {SORT_LABEL[k]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* What the order in force does, under the button that is in force. Two
+          words on a button cannot say where the unreviewed businesses went or
+          which of two equal prices comes first, and those are exactly the
+          questions somebody asks about a list they did not order themselves. */}
+      {offer.sorts.length > 1 && <p className="sort-why">{SORT_WHY[sort]}</p>}
+
+      <div className="filters">
+        {/* First, because it is the only control here that narrows by what the
+            work is rather than by when, where or how much — and on a page of
+            one trade it is the difference between the jobs, which is what the
+            visitor came to choose between. The count is from the rows below
+            and it is what says which job is worth picking before picking it. */}
+        {offer.services.length > 0 && (
+          <label className="filt">
+            <span className="filt-lab">Job</span>
+            <select value={service?.name ?? ''}
+              onChange={(e) => filters.setService(e.target.value || null)}>
+              <option value="">Any job</option>
+              {offer.services.map((sv) => (
+                <option key={sv.name} value={sv.name}>{sv.name} ({sv.n})</option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {/* Second, because on a page of dated openings "when" is what a
+            visitor narrows once they know what they are looking for, and it
+            was the last thing the row could not say. The count rides along
+            in the option for the same reason as the job's: it
             is counted from the rows below and it is what tells somebody
             which day is worth choosing before they choose it. */}
         {offer.days.length > 0 && (

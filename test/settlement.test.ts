@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { ALL_MIGRATIONS, makeEnv } from './d1';
 import type { Env } from '../src/types';
 import { placeOrder } from '../src/lib/orders';
-import { cancelByCustomer, cancelByOperator, markArrived } from '../src/lib/bypass';
+import {
+  GRACE_FLOOR_SECONDS, GRACE_SECONDS, HALF_REFUND_SECONDS, NO_REFUND_SECONDS,
+  cancelByCustomer, cancelByOperator, leadFeeCents, markArrived, quoteRefund, refundFor,
+} from '../src/lib/bypass';
 import {
   answerWork, confirmArrival, flag, flagSummary, pendingQuestion, settleExpiredHolds,
 } from '../src/lib/settlement';
@@ -379,5 +382,132 @@ describe('flags are observations, not verdicts', () => {
       `SELECT suspended_until, banned_at FROM operators WHERE id = ?`, OP);
     expect(op!.suspended_until).toBeNull();
     expect(op!.banned_at).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('what a customer gets back, and what they are told before they ask', () => {
+  /**
+   * refundFor is the whole customer half of the money in this product and
+   * nothing exercised its four branches. The tests above cover what happens
+   * AFTER a cancellation — the freeze, the question, the settlement — with the
+   * amount only ever asserted in the two cases where it is the full price. The
+   * ladder itself, the boundaries it turns on and the figure quoted to a
+   * customer before they commit were untested, on a function whose output is
+   * the number a person is refunded.
+   */
+  const PRICE = 20000;
+  const item = (over: Partial<{
+    starts_at: number; price_cents: number; created_at: number; arrived_at: number | null;
+  }> = {}) => ({
+    // Booked a long time ago by default, so grace is out of the way unless a
+    // test asks for it.
+    starts_at: now() + 100 * 3600,
+    price_cents: PRICE,
+    created_at: now() - 30 * 86400,
+    arrived_at: null,
+    ...over,
+  });
+
+  const at = now();
+  const startingIn = (seconds: number) => item({ starts_at: at + seconds });
+
+  it('returns everything more than 48 hours out', () => {
+    const r = refundFor(startingIn(HALF_REFUND_SECONDS + 60), at);
+    expect(r.reason).toBe('full');
+    expect(r.percent).toBe(100);
+    expect(r.cents).toBe(PRICE);
+  });
+
+  it('returns three quarters between 12 and 48 hours', () => {
+    const r = refundFor(startingIn(HALF_REFUND_SECONDS), at);
+    expect(r.reason).toBe('most');
+    expect(r.cents).toBe(15000);
+    // The operator's fee is the remainder, on the same clock. The two ladders
+    // are one rule and a customer who reads both must not find them disagreeing.
+    expect(r.cents + leadFeeCents(PRICE, 'cancelled_late')).toBe(PRICE);
+  });
+
+  it('returns a quarter inside 12 hours', () => {
+    const r = refundFor(startingIn(NO_REFUND_SECONDS), at);
+    expect(r.reason).toBe('some');
+    expect(r.cents).toBe(5000);
+    expect(r.cents + leadFeeCents(PRICE, 'cancelled_last_hours')).toBe(PRICE);
+  });
+
+  it('draws both boundaries on the same side as the fee ladder does', () => {
+    // The exact second matters because feeFor and refundFor read the same two
+    // constants, and an off-by-one in either direction is a booking where the
+    // customer is refunded three quarters while the operator is charged for a
+    // quarter, or the other way about.
+    expect(refundFor(startingIn(HALF_REFUND_SECONDS + 1), at).reason).toBe('full');
+    expect(refundFor(startingIn(HALF_REFUND_SECONDS), at).reason).toBe('most');
+    expect(refundFor(startingIn(NO_REFUND_SECONDS + 1), at).reason).toBe('most');
+    expect(refundFor(startingIn(NO_REFUND_SECONDS), at).reason).toBe('some');
+    // Already started, and nobody came: still the bottom rung, never negative.
+    expect(refundFor(startingIn(-3600), at).cents).toBe(5000);
+  });
+
+  it('gives everything back to somebody who has just booked by mistake', () => {
+    const r = refundFor(
+      item({ created_at: at - 60, starts_at: at + GRACE_FLOOR_SECONDS + 60 }), at);
+    expect(r.reason).toBe('grace');
+    expect(r.cents).toBe(PRICE);
+  });
+
+  it('does not call it grace once the operator has driven there', () => {
+    // The airtight condition: whatever the clock says, somebody standing on
+    // the doorstep has already done the work grace exists to excuse.
+    const r = refundFor(
+      item({
+        created_at: at - 60, starts_at: at + GRACE_FLOOR_SECONDS + 60,
+        arrived_at: at - 10,
+      }), at);
+    expect(r.reason).not.toBe('grace');
+  });
+
+  it('does not call it grace on a job starting sooner than the floor', () => {
+    const r = refundFor(
+      item({ created_at: at - 60, starts_at: at + GRACE_FLOOR_SECONDS - 60 }), at);
+    // Booked minutes ago, but the operator has been asked to drop what they
+    // are doing, so this falls through to the ordinary bottom rung.
+    expect(r.reason).toBe('some');
+    expect(r.cents).toBe(5000);
+  });
+
+  it('does not call it grace half an hour after booking', () => {
+    const r = refundFor(
+      item({ created_at: at - GRACE_SECONDS - 1, starts_at: at + 100 * 3600 }), at);
+    expect(r.reason).toBe('full');
+  });
+
+  it('quotes the customer the figure their own cancellation then pays out', async () => {
+    // 30 hours out: inside 48, outside 12, so the rung with an amount that is
+    // neither nothing nor everything — the one a wrong answer hides in.
+    const { itemId, token } = await seed(30);
+    // Past the thirty-minute grace window. Everything placeOrder creates is
+    // seconds old, so without this the booking is still inside it and the
+    // ladder never runs.
+    await env.DB.prepare(`UPDATE order_items SET created_at = ? WHERE id = ?`)
+      .bind(now() - GRACE_SECONDS - 60, itemId).run();
+
+    const quoted = await quoteRefund(env, token, itemId);
+    expect(quoted.reason).toBe('most');
+    expect(quoted.cents).toBe(15000);
+
+    const result = await cancelByCustomer(env, token, itemId);
+    // The quote is not advice: it is the number written onto the booking.
+    expect(result.refund.cents).toBe(quoted.cents);
+    const row = await settlement(itemId);
+    expect(row!.refund_cents).toBe(quoted.cents);
+  });
+
+  it('will not quote on somebody else\'s booking', async () => {
+    const { token } = await seed(30);
+    const other = await seed(30);
+    // seed() rebuilds env, so `token` now belongs to a database this one is
+    // not in — the same answer a made-up id gets, which is the point.
+    await expect(quoteRefund(env, other.token, 'not-an-item')).rejects.toThrow();
+    await expect(quoteRefund(env, token, other.itemId)).rejects.toThrow();
   });
 });

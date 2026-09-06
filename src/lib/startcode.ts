@@ -1,7 +1,6 @@
 import type { Env } from '../types';
 import { threadByToken } from './chat';
 import { notify } from './feed';
-import { flag } from './settlement';
 import { badRequest, conflict, notFound, now } from './util';
 
 /**
@@ -243,8 +242,16 @@ export async function reportVehicle(
 
   if ((res.meta.changes ?? 0) === 0) throw notFound('That booking is not on your order.');
 
-  await flag(env, thread.operator_id, orderItemId, 'location_dark',
-    'The customer says the vehicle did not match the one on the account.');
+  // NOT A BYPASS FLAG, and it used to be filed as one — as 'location_dark',
+  // which means "no recent position fix at the moment they cancelled on
+  // arrival". Two different observations sharing one label costs twice. It put
+  // hire vans into the flag rate that flagSummary and flaggedOperators compare
+  // against peers, on a report migration 0026 says is commonly innocent; and
+  // because bypass_flags is unique on (order_item_id, kind), a genuine
+  // location_dark on the same booking afterwards would have been swallowed by
+  // the duplicate catch in flag(). The report is evidence in its own right,
+  // kept in its own columns on the booking, and reaches a person through
+  // vehicleReports() below.
 
   // The operator is told, and told neutrally. Somebody driving a hire van
   // because theirs is in the garage should hear this as "update your
@@ -256,4 +263,54 @@ export async function reportVehicle(
       + 'know what to look for.',
     thread_id: thread.id,
   });
+}
+
+/**
+ * The vehicle reports, newest first, for whoever is reading the review queue.
+ *
+ * This is the reader migration 0026 was written for: "what it does is put the
+ * booking in front of a person". Without it the two columns were written on
+ * every report and read by nothing, so a customer typing out what they saw on
+ * their own doorstep was typing into a column nobody could ever open.
+ *
+ * The note is the customer's own words and is returned as stored. It goes to
+ * an admin and to nobody else — the operator gets the neutral notification
+ * above instead, because "somebody said your van was wrong, here is what they
+ * wrote" is how a report about a hire van turns into an argument with the
+ * person who made it.
+ */
+export async function vehicleReports(env: Env, limit = 50) {
+  const rows = await env.DB.prepare(
+    `SELECT oi.id AS order_item_id, oi.operator_id, oi.starts_at,
+            oi.vehicle_reported_at, oi.vehicle_reported_note,
+            o.business_name,
+            o.vehicle_make, o.vehicle_model, o.vehicle_color, o.vehicle_plate
+       FROM order_items oi
+       LEFT JOIN operators o ON o.id = oi.operator_id
+      WHERE oi.vehicle_reported_at IS NOT NULL
+      ORDER BY oi.vehicle_reported_at DESC
+      LIMIT ?`,
+  ).bind(Math.min(Math.max(1, Math.floor(limit)), 200)).all<{
+    order_item_id: string; operator_id: string; starts_at: number;
+    vehicle_reported_at: number; vehicle_reported_note: string | null;
+    business_name: string | null;
+    vehicle_make: string | null; vehicle_model: string | null;
+    vehicle_color: string | null; vehicle_plate: string | null;
+  }>();
+
+  return (rows.results ?? []).map((r) => ({
+    order_item_id: r.order_item_id,
+    operator_id: r.operator_id,
+    business_name: r.business_name,
+    starts_at: r.starts_at,
+    reported_at: r.vehicle_reported_at,
+    note: r.vehicle_reported_note,
+    // The van as the account describes it today, which is the whole comparison
+    // the reader has to make. It may well have been changed since the report,
+    // and that is itself the answer in most cases.
+    vehicle_label: describeVehicle({
+      make: r.vehicle_make, model: r.vehicle_model,
+      color: r.vehicle_color, plate: r.vehicle_plate,
+    }),
+  }));
 }

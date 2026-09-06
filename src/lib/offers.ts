@@ -1,6 +1,6 @@
 import type { Candidate, Env, Operator } from '../types';
 import { hashOfferToken } from './auth';
-import { formatMoney, localeFor } from './countries';
+import { discounted, formatMoney, localeFor } from './countries';
 import { copy, pickLang } from './messages';
 import { formatTimeRange } from './tz';
 import { conflict, newId, newToken, notFound, now } from './util';
@@ -16,14 +16,13 @@ export function buildMessage(
   const t = copy(lang);
   const locale = localeFor(op.country, lang);
   const when = formatTimeRange(gap.starts_at, gap.starts_at + cand.duration_seconds, op.timezone, locale);
-  const discounted = op.discount_percent > 0
-    ? Math.round(cand.price_cents * (1 - op.discount_percent / 100))
-    : cand.price_cents;
+  // The shared rounding, not a percentage worked out here. See ./countries.
+  const offered = discounted(cand.price_cents, op.discount_percent, op.currency);
 
   const price = cand.price_cents > 0
     ? op.discount_percent > 0
-      ? ` ${money(discounted, op.currency, locale)} (${op.discount_percent}% off)`
-      : ` ${money(discounted, op.currency, locale)}`
+      ? ` ${money(offered, op.currency, locale)} (${op.discount_percent}% off)`
+      : ` ${money(offered, op.currency, locale)}`
     : '';
 
   return t.sms({
@@ -79,6 +78,28 @@ export async function createOffers(
   const t = now();
   const expiresAt = Math.min(t + op.offer_ttl_seconds, gap.starts_at);
 
+  /**
+   * The offer rows this gap already has, so a second wave keeps their ids.
+   *
+   * The INSERT below is an upsert on (gap_id, client_id, lead_id): re-offering
+   * the same opening to the same person is meant to refresh their row rather
+   * than make a second one. But a conflicting insert does NOT take the id it
+   * was given -- the existing row keeps its own -- while the `messages` row
+   * written a few lines further down was bound to the freshly minted one. That
+   * id names no offer, messages.offer_id is a foreign key onto gap_offers, and
+   * a batch is one transaction: the constraint failed and the WHOLE wave was
+   * rolled back. An operator re-sending an opening after a decline, or after
+   * the first offers expired, got a 500 and nobody was texted at all.
+   *
+   * Reading the ids first is one query for the whole wave, and it makes the
+   * upsert address the row it is actually going to update.
+   */
+  const held = await env.DB.prepare(
+    `SELECT id, client_id, lead_id FROM gap_offers WHERE gap_id = ?`,
+  ).bind(gap.id).all<{ id: string; client_id: string; lead_id: string | null }>();
+  const heldIds = new Map<string, string>();
+  for (const r of held.results ?? []) heldIds.set(`${r.client_id}:${r.lead_id ?? ''}`, r.id);
+
   const out: CreatedOffer[] = [];
   const writes: D1PreparedStatement[] = [];
 
@@ -87,10 +108,14 @@ export async function createOffers(
     const raw = newToken(24);
     const url = `${env.APP_URL.replace(/\/$/, '')}/o/${raw}`;
     const message = buildMessage(op, c, gap, url);
-    const offerId = newId();
-    const discounted = op.discount_percent > 0
-      ? Math.round(c.price_cents * (1 - op.discount_percent / 100))
-      : c.price_cents;
+    // The row this candidate already has on this gap, or a new one. Either way
+    // it is the id the upsert leaves behind, so everything below can use it.
+    const offerId = heldIds.get(`${c.client_id}:${c.lead_id ?? ''}`) ?? newId();
+    // The same rounding the public listing and checkout apply. This used to be
+    // a bare percentage, so an invited client was quoted -- and charged, since
+    // acceptOffer copies this onto the appointment -- a figure with stray cents
+    // that nobody else on the site would ever see. See ./countries.
+    const quoted = discounted(c.price_cents, op.discount_percent, op.currency);
 
     writes.push(env.DB.prepare(
       `INSERT INTO gap_offers
@@ -106,12 +131,18 @@ export async function createOffers(
          detour_seconds = excluded.detour_seconds,
          token_hash = excluded.token_hash,
          status = 'sent', sent_at = excluded.sent_at,
+         -- Refreshed with the rest of the wave, because buildMessage has just
+         -- put this figure in the text the customer is about to read and
+         -- acceptOffer copies it onto the appointment. A row left holding the
+         -- previous wave's price would book them at a number their message
+         -- never mentioned.
+         quoted_price_cents = excluded.quoted_price_cents,
          expires_at = excluded.expires_at, updated_at = excluded.updated_at`,
     ).bind(
       offerId, op.id, gap.id, c.kind, c.client_id, c.lead_id, c.service_id,
       i + 1, c.drive_in_seconds, c.drive_out_seconds, c.detour_seconds,
       c.overdue_days, c.urgency, c.score, await hashOfferToken(raw, env),
-      t, expiresAt, discounted, t, t,
+      t, expiresAt, quoted, t, t,
     ));
 
     writes.push(env.DB.prepare(

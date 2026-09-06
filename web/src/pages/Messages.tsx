@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, clockTime, shortDate, type ChatMessage, type Thread } from '../api';
 import { useOperator } from '../App';
 import Chat from '../components/Chat';
@@ -14,6 +14,17 @@ import { useDocumentTitle } from '../lib/title';
  * only place a question from a stranger can be answered. Missing one means
  * losing the job, which is why unread has to be visible at arm's length.
  */
+
+/**
+ * How often the inbox re-reads itself while it is being looked at.
+ *
+ * The same fifteen seconds the customer's side of the conversation uses in
+ * GuestThread, and for the same reason: the two people are often typing at each
+ * other in real time. This screen used to load once and never again, so an
+ * operator with the inbox open watched a customer's question not arrive — the
+ * one screen in the product where that costs the job.
+ */
+const POLL_MS = 15_000;
 export default function Messages() {
   useDocumentTitle('Messages');
   const op = useOperator();
@@ -44,6 +55,76 @@ export default function Messages() {
 
   useEffect(() => { void load(); }, [load]);
 
+  /**
+   * A quiet re-read for the poll: it must never blank the list, move the row
+   * under a thumb, or raise an error box. A dropped request in a van is not
+   * news, and the next one is fifteen seconds away.
+   *
+   * The open thread's own unread count is forced back to zero because this
+   * operator is looking at it — the Worker's copy may not have caught up with
+   * the mark-read yet, and a dot reappearing on the row you are reading is
+   * worse than no dot at all.
+   */
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
+
+  const refreshList = useCallback(async () => {
+    try {
+      const res = await api.threads();
+      const here = selectedRef.current;
+      const rows = here
+        ? res.threads.map((t) => (t.id === here ? { ...t, operator_unread: 0 } : t))
+        : res.threads;
+      setThreads(rows);
+      // Counted from the rows this render is drawing, not taken from
+      // res.unread, because the open thread has just been zeroed above and the
+      // Worker's number does not know that yet.
+      setUnread(rows.filter((t) => t.operator_unread > 0).length);
+    } catch { /* the next poll tries again */ }
+  }, []);
+
+  const refreshOpen = useCallback(async () => {
+    const id = selectedRef.current;
+    if (!id) return;
+    try {
+      const res = await api.thread(id);
+      // Checked again on the way back: a poll that started before the operator
+      // tapped a different row would otherwise drop one customer's transcript
+      // into the other customer's conversation.
+      if (selectedRef.current !== id) return;
+      setDetail(res.thread);
+      // Anything this response does not mention is kept: a poll already in
+      // flight when the operator pressed send comes back without their own
+      // message, and it must not disappear off the screen for fifteen seconds.
+      setMessages((prev) => {
+        const fetched = new Set(res.messages.map((m) => m.id));
+        const missed = prev.filter((m) => !fetched.has(m.id));
+        return missed.length ? [...res.messages, ...missed] : res.messages;
+      });
+      if (res.thread.operator_unread > 0) await api.markThreadRead(id).catch(() => {});
+    } catch { /* the next poll tries again */ }
+  }, []);
+
+  // Only while the tab is being looked at. This page sits open on a phone on a
+  // dashboard for hours, and a timer that keeps running there is a request
+  // every fifteen seconds for nobody.
+  useEffect(() => {
+    let timer: number | undefined;
+    const stop = () => {
+      if (timer !== undefined) { window.clearInterval(timer); timer = undefined; }
+    };
+    const tick = () => { void refreshList(); void refreshOpen(); };
+    const start = () => { stop(); timer = window.setInterval(tick, POLL_MS); };
+    const onVisibility = () => {
+      // Coming back, what is on screen may be an hour old, so read at once
+      // rather than waiting out the rest of an interval.
+      if (document.visibilityState === 'visible') { tick(); start(); } else stop();
+    };
+    if (document.visibilityState === 'visible') start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
+  }, [refreshList, refreshOpen]);
+
   const open = useCallback(async (id: string) => {
     setSelected(id); setDetail(null); setMessages([]);
     setThreadError(null); setLoadingThread(true);
@@ -53,12 +134,16 @@ export default function Messages() {
       setMessages(res.messages);
 
       if (res.thread.operator_unread > 0) {
-        const seen = res.thread.operator_unread;
         // Cleared here rather than by reloading the list: the row must not
         // move or restyle under the finger that just tapped it.
         setThreads((rows) => rows.map(
           (r) => (r.id === id ? { ...r, operator_unread: 0 } : r)));
-        setUnread((n) => Math.max(0, n - seen));
+        // One, not the thread's unread message count. `unread` is how many
+        // CONVERSATIONS have something in them — unreadThreadCount in
+        // src/lib/chat.ts counts rows, not messages — so subtracting three
+        // messages took the header from "2 unread" to "Up to date" while
+        // another customer was still waiting.
+        setUnread((n) => Math.max(0, n - 1));
         // A failed mark-read is not worth an error box — the thread is open on
         // screen and is being read. The next load will show the dot again.
         await api.markThreadRead(id).catch(() => {});
@@ -97,7 +182,14 @@ export default function Messages() {
   return (
     <>
       <header className="page-head">
-        <span className="eyebrow">{unread > 0 ? `${unread} unread` : 'Up to date'}</span>
+        {/* Conversations, not messages — see the note in open() below. A bare
+            "3 unread" over a list of conversations is read as three messages,
+            which is a different and usually smaller number. */}
+        <span className="eyebrow">
+          {unread === 0 ? 'Up to date'
+            : unread === 1 ? '1 unread conversation'
+              : `${unread} unread conversations`}
+        </span>
         <h1>Messages</h1>
       </header>
 

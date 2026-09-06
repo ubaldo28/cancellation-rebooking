@@ -13,7 +13,7 @@ import {
 import {
   confirmNoShow, customerStanding, operatorStanding, reportNoShow, saveOperatorCard,
 } from '../src/lib/standing';
-import { saveVehicle, verifyStartCode } from '../src/lib/startcode';
+import { saveVehicle } from '../src/lib/startcode';
 import { postAsGuest, postAsOperator, threadByToken } from '../src/lib/chat';
 import { maskClientRow, maskPhone, redactContact } from '../src/lib/redact';
 import { newId, now } from '../src/lib/util';
@@ -754,13 +754,20 @@ describe('a card on file', () => {
     expect(await listingBlock(env, MECHANIC)).toMatch(/Add a card/i);
   });
 
-  it('says what the card is for, and that using the site is not it', async () => {
+  it('says what the card is for, and that nothing is charged to it today', async () => {
     await seed();
     await env.DB.prepare(`UPDATE operators SET payment_ref = NULL WHERE id = ?`)
       .bind(MECHANIC).run();
     const msg = (await listingBlock(env, MECHANIC))!;
-    expect(msg).toMatch(/Nothing is charged to it for using the site/i);
+    // Somebody is being asked for a card, so the sentence has to say both
+    // halves: nothing is charged to it, and the ladder it will one day be
+    // charged on. Stating the ladder in the present tense is the drift that
+    // took four other surfaces with it — see PaymentState.tsx.
+    expect(msg).toMatch(/Nothing is charged to it/i);
+    expect(msg).toMatch(/no money moves through Slotfill yet/i);
+    expect(msg).toMatch(/once payment is switched on/i);
     expect(msg).toMatch(/48 hours/);
+    expect(msg).not.toMatch(/is a quarter of the job/);
   });
 
   it('refuses anything shaped like a card number instead of storing it', async () => {

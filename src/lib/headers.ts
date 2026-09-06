@@ -22,11 +22,14 @@
  *   fonts.googleapis.com the stylesheet link in web/index.html,
  *   fonts.gstatic.com    and the woff2 files that stylesheet points at.
  *   tiles.openfreemap.org the map's style JSON, vector tiles, glyphs and
- *                        sprites (CityMap.tsx). The style and the .pbf tiles
- *                        and glyphs are fetches, so they need connect-src;
- *                        the sprite sheet is an image, so it needs img-src
- *                        too. Allowing it in only one of the two is the usual
- *                        way to ship a map that renders roads and no labels.
+ *                        sprites. MAP_STYLE in web/src/lib/map.ts is the one
+ *                        URL both maps are built from — CityMap.tsx for the
+ *                        city view, VanTrack.tsx for the van on its way. The
+ *                        style and the .pbf tiles and glyphs are fetches, so
+ *                        they need connect-src; the sprite sheet is an image,
+ *                        so it needs img-src too. Allowing it in only one of
+ *                        the two is the usual way to ship a map that renders
+ *                        roads and no labels.
  *   challenges.cloudflare.com
  *                        Turnstile, the bot check in front of the public
  *                        forms. web/src/lib/turnstile.ts injects
@@ -35,7 +38,14 @@
  *                        iframe it creates. A script host and a frame host, so
  *                        two directives move and not one.
  *
- * ValleyMap.tsx draws its own SVG from coordinates and loads nothing.
+ * NEITHER FONT HOST IS IN connect-src, and web/index.html no longer
+ * preconnects to them because of it: Chromium checks a preconnect against
+ * connect-src, so those two hints were a reported violation on every page
+ * load. Dropping the hints was the fix rather than widening the directive —
+ * connect-src is what bounds where injected script may send data, and no
+ * webfont handshake is worth spending that on.
+ *
+ * CategoryArt.tsx draws its own SVG from coordinates and loads nothing.
  * Vite's built JS and CSS, the manifest, the service worker and every photo
  * (/api/public/photo/*) are same-origin and covered by 'self'.
  */

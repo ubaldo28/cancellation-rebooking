@@ -41,3 +41,25 @@ export function tradeSlug(trade: string): string {
  */
 export const nearTradeHref = (areaSlug: string, trade: string): string =>
   `/near/${encodeURIComponent(areaSlug)}/${tradeSlug(trade)}`;
+
+/**
+ * A structured-data payload, safe to drop inside <script type="application/ld+json">.
+ *
+ * HTML-escaping is wrong in there — `&lt;` is not `<` to a JSON parser — so
+ * the three characters that could close the element early are unicode-escaped
+ * instead, which leaves the block parseable and inert as markup. A trade or
+ * business name containing "</script>" then ends up as text rather than as a
+ * way out of the element.
+ *
+ * Trade.tsx, CostGuide.tsx and Crumbs.tsx each had this — the first two under
+ * a comment saying the duplication was the price of not making either page's
+ * bundle pull in the other's. There are no separate bundles: App.tsx imports
+ * every page eagerly and Vite emits one file, so the three copies bought
+ * nothing and could drift.
+ */
+export function jsonLd(data: unknown): string {
+  return JSON.stringify(data)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+}

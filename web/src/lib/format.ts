@@ -82,3 +82,13 @@ export function median(sorted: number[]): number | null {
  * few listings to give a range" on the page it links to makes both look wrong.
  */
 export const ENOUGH = 3;
+
+/**
+ * "1 opening" / "5 openings", chosen by the number in front of it.
+ *
+ * Areas, BrowseIndex, Metro and CostIndex each carried this line verbatim. It
+ * is trivial enough that four copies cost nothing to write and exactly one
+ * thing to get wrong — a page that says "1 businesses" is a page a reader
+ * stops trusting the arithmetic on.
+ */
+export const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);

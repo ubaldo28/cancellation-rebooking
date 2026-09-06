@@ -27,6 +27,33 @@ export function Icon({ name, size = 20, color = 'currentColor', stroke = 1.8 }: 
   );
 }
 
+/**
+ * A rating as five glyphs: one object, one name.
+ *
+ * `role="img"` is what makes the `aria-label` legal. ARIA will not name a bare
+ * <span>, so without the role the label is dropped and what gets read is the
+ * characters themselves — "black star black star black star white star white
+ * star", or in some voices nothing at all. It also collapses the run into a
+ * single object, which is what it already looks like to anybody who can see it.
+ *
+ * The profile page and the trade page both draw this and want it in different
+ * colours and sizes, so the class is the caller's; the `-off` half is derived
+ * from it, so a caller only names one thing. Both had their own copy of the
+ * component, each with its own copy of the reasoning above.
+ */
+export function Stars({ n, className = 'stars' }: { n: number; className?: string }) {
+  return (
+    <span className={className} role="img" aria-label={`${n} out of 5 stars`}>
+      <span aria-hidden="true">
+        {'\u2605\u2605\u2605\u2605\u2605'.slice(0, n)}
+        <span className={`${className}-off`}>
+          {'\u2605\u2605\u2605\u2605\u2605'.slice(0, 5 - n)}
+        </span>
+      </span>
+    </span>
+  );
+}
+
 export const Spinner = ({ label = 'Loading' }: { label?: string }) => (
   <div className="empty">{label}…</div>
 );

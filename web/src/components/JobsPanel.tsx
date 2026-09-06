@@ -33,6 +33,10 @@ export default function JobsPanel() {
         api.quotableBookings(), api.partsQuotes(), api.fees(),
       ]);
       setJobs(b.bookings); setQuotes(q.quotes); setFees(f);
+      // Cleared on the way through, not only set on the way out: this reloads
+      // after every action on a row, and without this a failure from an hour
+      // ago sat above a panel that had since loaded perfectly well.
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load your jobs.');
     } finally { setLoaded(true); }
@@ -75,6 +79,85 @@ export default function JobsPanel() {
   );
 }
 
+/**
+ * The three rungs of the cancellation ladder, and which one this job is on.
+ *
+ * These mirror leadFeeCents and feeFor in src/lib/bypass.ts exactly, because
+ * the number below the warning is a number the operator is about to be charged
+ * and the two must be the same. Before this the panel worked out half the price
+ * for anything inside 48 hours while the sentence beside it said "three
+ * quarters" under twelve hours and "a quarter" over — so whichever the operator
+ * read, one of the two was wrong, and neither matched the charge.
+ *
+ * Arrival first and it is the only rung that reaches the whole job: somebody
+ * who drove there and left has done the worst version of this, whatever the
+ * clock says. A job already past its start with nobody having arrived falls
+ * through to the twelve-hour rung, which is where a negative hoursOut lands.
+ */
+type CancelRung = 'none' | 'late' | 'last_hours' | 'on_arrival';
+
+function cancelRung(arrived: boolean, hoursOut: number): CancelRung {
+  if (arrived) return 'on_arrival';
+  if (hoursOut <= 12) return 'last_hours';
+  if (hoursOut <= 48) return 'late';
+  return 'none';
+}
+
+/**
+ * What that rung costs, in cents.
+ *
+ * The floor lifts a small fee to something worth collecting and is capped at
+ * the job, so a $10 job cancelled on the doorstep costs $10 rather than the $15
+ * the floor alone would make of it — and a job with no price costs nothing at
+ * all, because there is no introduction to charge for. All three of those are
+ * the Worker's rules; the panel used to apply the floor to a free job and quote
+ * $15 for a cancellation that is never billed.
+ */
+const LEAD_FEE_MIN_CENTS = 15_00;
+const FEE_PERCENT: Record<Exclude<CancelRung, 'none'>, number> = {
+  late: 25, last_hours: 75, on_arrival: 100,
+};
+
+function leadFeeCents(jobCents: number, rung: CancelRung): number {
+  if (rung === 'none') return 0;
+  const job = Math.max(0, Math.round(jobCents));
+  if (job === 0) return 0;
+  return Math.min(job, Math.max(
+    LEAD_FEE_MIN_CENTS, Math.round((job * FEE_PERCENT[rung]) / 100)));
+}
+
+/**
+ * Why the fee is the number it is, in one clause that continues "This one costs
+ * you £x".
+ *
+ * The fraction is only ever named when the fraction is what produced the
+ * figure. On a small job it is not: three quarters of a $10 job is $7.50, the
+ * floor lifts it to $15 and the cap brings it back to $10 — so the operator was
+ * being shown the whole price of the job under a sentence saying it was three
+ * quarters of it. An operator who does that arithmetic and finds it does not
+ * work stops believing the rest of the warning, which is the part that is
+ * meant to change what they do.
+ */
+function whyThisFee(
+  rung: Exclude<CancelRung, 'none'>, jobCents: number, feeCents: number,
+  currency: string,
+): string {
+  if (rung === 'on_arrival') {
+    return 'you have already marked that you arrived, so it is the whole job';
+  }
+  const share = Math.round((jobCents * FEE_PERCENT[rung]) / 100);
+  const when = rung === 'last_hours' ? 'within 12 hours' : 'within 48 hours';
+  const fraction = rung === 'last_hours' ? 'three quarters' : 'a quarter';
+  if (feeCents === share) return `it starts ${when}, so it is ${fraction} of it`;
+  if (feeCents === jobCents) {
+    return `it starts ${when}, and ${fraction} of this job is under the `
+      + `${formatMoney(LEAD_FEE_MIN_CENTS, currency)} minimum — a fee never goes `
+      + 'above the job itself, so it is the whole of it';
+  }
+  return `it starts ${when}, and ${fraction} of this job is under the `
+    + `${formatMoney(LEAD_FEE_MIN_CENTS, currency)} minimum fee`;
+}
+
 function JobRow(
   { job, op, quotes, onChange }: {
     job: QuotableBooking;
@@ -100,14 +183,9 @@ function JobRow(
   const live = quotes.find((q) => q.status === 'sent') ?? null;
   const arrived = job.arrived_at != null;
 
-  // The same ladder the Worker applies, so the warning and the charge agree.
-  // Half inside 48 hours; all of it once they have marked that they arrived.
   const hoursOut = (job.starts_at - Date.now() / 1000) / 3600;
-  const cancelFee = arrived
-    ? Math.max(1500, job.price_cents)
-    : hoursOut <= 48
-      ? Math.max(1500, Math.round(job.price_cents / 2))
-      : 0;
+  const rung = cancelRung(arrived, hoursOut);
+  const cancelFee = leadFeeCents(job.price_cents, rung);
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true); setErr(null);
@@ -268,22 +346,25 @@ function JobRow(
           <p style={{ margin: 0 }}>
             Cancel this job? The customer is refunded in full, whenever it
             happens.{' '}
-            {cancelFee > 0 ? (
+            {cancelFee > 0 && rung !== 'none' ? (
               <>
                 <strong>This one costs you {formatMoney(cancelFee, job.currency)}</strong>
-                {arrived
-                  ? ' — you have already marked that you arrived, so it is the '
-                    + 'whole job'
-                  : hoursOut <= 12
-                    ? ' — it starts within 12 hours, so it is three quarters of it'
-                    : ' — it starts within 48 hours, so it is a quarter of it'}
+                {` — ${whyThisFee(rung, job.price_cents, cancelFee, job.currency)}`}
                 . It comes out of your next payout, and your openings stay down
                 until it is settled.
               </>
-            ) : (
+            ) : rung === 'none' ? (
               <>
                 <strong>This one is free.</strong> It is more than 48 hours away,
                 so there is nothing to pay.
+              </>
+            ) : (
+              // A job with no price on it. The rung is a charging one and the
+              // fee is still nothing, so saying "more than 48 hours away" here
+              // would be plainly false to an operator cancelling on a doorstep.
+              <>
+                <strong>This one is free.</strong> There is no price on this
+                job, so there is nothing to take a share of.
               </>
             )}
           </p>

@@ -14,6 +14,21 @@ export type NotificationKind =
    */
   | 'parts_quote';
 
+/**
+ * How much of somebody's message a feed row is allowed to quote.
+ *
+ * A notification is a nudge, not a copy of the conversation. The excerpt is
+ * long enough to tell one message from another in a list and short enough that
+ * the feed does not become a second, longer-lived transcript of every chat —
+ * which matters because retention.ts sweeps the two on different clocks, and
+ * the feed's is the longer of them.
+ *
+ * The number lived as a bare 140 at three call sites and was quoted in four
+ * comments, one of them on the privacy page. One constant is what makes those
+ * sentences checkable.
+ */
+export const FEED_EXCERPT_CHARS = 140;
+
 /** One thing that happened to the operator's day. */
 export interface Notification {
   id: string;

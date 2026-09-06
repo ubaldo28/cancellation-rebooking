@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, lateLabel, shortDate, type Client, type Service } from '../api';
 import { useOperator } from '../App';
 import Sheet from '../components/Sheet';
@@ -109,6 +110,21 @@ export default function Clients() {
         <button className="btn ghost block" onClick={() => setAdding(true)}>
           <Icon name="plus" size={18} stroke={2} /> Add a client
         </button>
+
+        {/* /app/jobs was a route nothing linked to. It holds the quotes these
+            same people have not booked yet, and those quotes are half of what
+            FillSlot offers when a slot opens — so it belongs with the list of
+            who they belong to. */}
+        <Link to="/app/jobs" className="card spread" style={{ color: 'inherit' }}>
+          <div className="stack" style={{ gap: 2 }}>
+            <span className="name" style={{ fontSize: 15 }}>Open jobs</span>
+            <span className="muted">
+              Work you quoted that nobody has booked. It fills a slot when
+              nobody is due a repeat visit.
+            </span>
+          </div>
+          <Icon name="arrow" size={18} color="var(--muted)" />
+        </Link>
       </main>
 
       {adding && (
@@ -148,15 +164,24 @@ function AddClient({ services, onClose, onDone }: {
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm({ ...form, [k]: e.target.value });
 
+  /**
+   * Consent needs a number to be consent to anything, and the Worker says so
+   * with a 400. The box used to be ticked by default with the phone field
+   * blank, so the commonest first thing anybody does on this form — a name and
+   * nothing else — was a guaranteed error about a checkbox they never touched.
+   */
+  const hasPhone = form.phone_e164.trim().length > 0;
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
       await api.createClient({
         ...form,
+        phone_e164: form.phone_e164.trim(),
         default_service_id: form.default_service_id || undefined,
         language: form.language || undefined,
-        sms_consent: form.sms_consent,
+        sms_consent: hasPhone && form.sms_consent,
       });
       onDone();
     } catch (e) {
@@ -202,13 +227,19 @@ function AddClient({ services, onClose, onDone }: {
         </label>
 
         <label style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <input type="checkbox" checked={form.sms_consent} style={{ width: 20, minHeight: 20 }}
+          <input type="checkbox" checked={hasPhone && form.sms_consent}
+            disabled={!hasPhone} style={{ width: 20, minHeight: 20 }}
             onChange={(e) => setForm({ ...form, sms_consent: e.target.checked })} />
-          <span style={{ color: 'var(--ink)' }}>They agreed to receive texts</span>
+          <span style={{ color: hasPhone ? 'var(--ink)' : 'var(--muted)' }}>
+            They agreed to receive texts
+          </span>
         </label>
         <p className="faint" style={{ margin: 0 }}>
-          Without this they will never be offered a slot. Texting people who did
-          not agree is what gets your number blocked.
+          {hasPhone
+            ? 'Without this they will never be offered a slot. Texting people '
+              + 'who did not agree is what gets your number blocked.'
+            : 'Add their mobile number above to record this. Without a number '
+              + 'there is nowhere to send a slot, so they are never offered one.'}
         </p>
 
         <button className="btn block" type="submit" disabled={busy || !form.first_name.trim()}>

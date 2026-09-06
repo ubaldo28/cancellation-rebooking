@@ -125,13 +125,29 @@ function AddLead({ clients, onClose, onDone }: {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    // How long the job takes is what decides whether it fits an open slot, so
+    // a quote with no length is a quote nobody is ever offered. An emptied
+    // number field reads back as Number('') — nought — and the element's own
+    // min="0.25" only runs when the browser validates it, which it did here and
+    // then the value was used anyway. Checked before anything is sent.
+    const hours = Number(form.hours);
+    if (!Number.isFinite(hours) || hours <= 0) {
+      setError('Roughly how many hours is this job? It is what decides which '
+        + 'slot it fits.');
+      return;
+    }
+    const price = form.quoted_price.trim();
+    if (price && !Number.isFinite(Number(price))) {
+      setError('That price is not a number.');
+      return;
+    }
     setBusy(true); setError(null);
     try {
       await api.createLead({
         client_id: form.client_id,
         title: form.title,
-        quoted_price_cents: form.quoted_price ? Math.round(Number(form.quoted_price) * 100) : undefined,
-        estimated_duration_seconds: Math.round(Number(form.hours) * 3600),
+        quoted_price_cents: price ? Math.round(Number(price) * 100) : undefined,
+        estimated_duration_seconds: Math.round(hours * 3600),
         urgency: Number(form.urgency),
         parts_required: form.parts_required,
         parts_ready: form.parts_ready,

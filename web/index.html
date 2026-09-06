@@ -19,8 +19,22 @@
     <meta name="apple-mobile-web-app-title" content="Slotfill" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!--
+      No preconnect to the two font hosts, deliberately.
+
+      Chromium checks rel="preconnect" against connect-src, so the pair that
+      used to sit here raised a violation on every single page load: the
+      stylesheet host is allowed by style-src and the font files by font-src,
+      and neither is in connect-src.
+
+      The fix belongs here rather than in the policy. connect-src is the
+      directive that decides where injected script may send data, and widening
+      it to two Google hosts to save a handshake on a webfont spends the thing
+      the policy exists for on a latency hint. The hint was worth little in any
+      case: the stylesheet link below opens the googleapis connection itself
+      while the head is being parsed, which is exactly when the preconnect
+      would have.
+    -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
 
     <!--

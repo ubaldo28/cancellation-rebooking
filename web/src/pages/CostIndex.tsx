@@ -5,7 +5,7 @@ import Crumbs from '../components/Crumbs';
 import PublicPage from '../components/PublicPage';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-index.css';
-import { ENOUGH, formatMoney as money, median } from '../lib/format';
+import { ENOUGH, formatMoney as money, median, plural } from '../lib/format';
 import { useDocumentTitle } from '../lib/title';
 
 /**
@@ -30,7 +30,6 @@ import { useDocumentTitle } from '../lib/title';
  */
 
 
-const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 interface Priced {
   trade: Trade;

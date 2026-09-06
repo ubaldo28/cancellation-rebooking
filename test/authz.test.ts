@@ -401,4 +401,38 @@ describe('the unauthenticated endpoints that had no ceiling now have one', () =>
     }
     expect(last).toBe(429);
   });
+
+  /**
+   * A walk over a token space carries a different token every time, so a
+   * per-token bucket opens a fresh allowance for each guess and no ceiling is
+   * ever reached. The address is the only thing the walk has in common with
+   * itself, which is why every route in both token spaces is bucketed on it.
+   *
+   * PATCH on a watch is the one that was missed. It already had a ceiling —
+   * sixty an hour, on the token, for the geocode behind an edit — and that is
+   * exactly the shape that cannot see a walk.
+   */
+  const TOKEN_SPACE_ROUTES: Array<[string, string, unknown?]> = [
+    ['GET', '/api/public/watches/'],
+    ['DELETE', '/api/public/watches/'],
+    ['PATCH', '/api/public/watches/', { label: 'x' }],
+    ['GET', '/a/stop/'],
+    ['GET', '/api/public/online/requests/'],
+    ['DELETE', '/api/public/online/requests/'],
+  ];
+
+  for (const [method, prefix, payload] of TOKEN_SPACE_ROUTES) {
+    it(`bounds a walk over the token space on ${method} ${prefix}:token`, async () => {
+      // A different IP per route so the six do not share one bucket and pass
+      // on each other's refusals.
+      const ip = `198.51.100.${20 + TOKEN_SPACE_ROUTES.findIndex((r) => r[0] === method && r[1] === prefix)}`;
+      let last = 0;
+      for (let i = 0; i < 260; i++) {
+        last = (await call(method, `${prefix}walk-${i}`,
+          payload === undefined ? { ip } : { ip, body: payload })).status;
+        if (last === 429) break;
+      }
+      expect(last).toBe(429);
+    });
+  }
 });

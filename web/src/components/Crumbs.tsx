@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { jsonLd } from '../lib/seo';
 import '../styles-shell.css';
 
 export interface Crumb {
@@ -45,7 +46,7 @@ export default function Crumbs({ items }: { items: Crumb[] }) {
    */
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
 
-  const jsonLd = {
+  const breadcrumbs = {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: trail.map((c, i) => ({
@@ -79,26 +80,8 @@ export default function Crumbs({ items }: { items: Crumb[] }) {
         this component's own responsibility rather than React's.
       */}
       <script type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: safeJson(jsonLd) }} />
+        dangerouslySetInnerHTML={{ __html: jsonLd(breadcrumbs) }} />
     </nav>
   );
 }
 
-/**
- * JSON for an inline <script>.
- *
- * The parser ends the script at the first literal `</script` in the text,
- * wherever it appears — so a category one day labelled "Repairs </script>"
- * would close the block early and drop whatever followed straight into the
- * page as markup. Rewriting every `<` as a unicode escape prevents that, and
- * `>` and `&` go with it so a comment opener or an entity cannot start
- * anything either.
- * These are ordinary JSON string escapes, so the value a parser gets back is
- * character-for-character what went in.
- */
-function safeJson(value: unknown): string {
-  return JSON.stringify(value)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/&/g, '\\u0026');
-}

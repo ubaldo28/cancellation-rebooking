@@ -1,4 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import {
+  createContext, useCallback, useContext, useEffect, useRef, useState,
+} from 'react';
 import type { ReactNode } from 'react';
 import {
   BrowserRouter, NavLink, Navigate, Route, Routes, useLocation,
@@ -151,14 +153,35 @@ function Protected({ children }: { children: ReactNode }) {
   const [opening, setOpening] = useState(false);
   const [noDemo, setNoDemo] = useState(false);
 
+  /**
+   * The sample business is opened at most once per visit to this shell.
+   *
+   * Without the ref this was a loop rather than a fallback: `opening` is in the
+   * effect's own dependencies, so the moment it went back to false the effect
+   * ran again — and any outcome that leaves no operator behind (startDemo
+   * succeeds but the /me that follows it does not) sent another POST, and
+   * another, until the Worker's rate limiter refused one. What the operator saw
+   * was "Opening the app…" forever with a request every few hundred
+   * milliseconds behind it. One attempt, and a failure is a failure.
+   */
+  const demoTried = useRef(false);
+
   useEffect(() => {
-    if (loading || operator || opening || noDemo) return;
+    if (loading || operator || opening || noDemo || demoTried.current) return;
+    demoTried.current = true;
     setOpening(true);
     api.startDemo()
       .then(() => refresh())
       .catch(() => setNoDemo(true))
       .finally(() => setOpening(false));
   }, [loading, operator, opening, noDemo, refresh]);
+
+  // A demo that started but left nobody signed in is the same dead end as one
+  // that was refused, and it must land on the page that can do something about
+  // it rather than on a spinner nothing will ever resolve.
+  useEffect(() => {
+    if (!loading && !opening && !operator && demoTried.current) setNoDemo(true);
+  }, [loading, opening, operator]);
 
   if (loading || opening) return <Spinner label="Opening the app" />;
   // Only if the sample business is unavailable does anyone see a sign-in page.

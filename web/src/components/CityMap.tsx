@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { MapArea } from '../api';
+import { prefersReducedMotion } from '../lib/motion';
+import { MAP_STYLE, mapLib } from '../lib/map';
 
 /**
  * A real map: OpenStreetMap data, rendered by MapLibre GL.
@@ -10,21 +12,12 @@ import type { MapArea } from '../api';
  * draws the required attribution itself, so it is not duplicated in the page.
  *
  * MapLibre is loaded from a CDN in index.html rather than bundled, so this
- * component reads it off `window` and degrades to a plain list if the script
- * has not arrived.
+ * component reaches it through `mapLib()` and degrades to a plain list if the
+ * script has not arrived.
  */
-
-declare global {
-  interface Window { maplibregl?: any }
-}
-
-const STYLE = 'https://tiles.openfreemap.org/styles/positron';
 
 /** Framing the corridor leaves room on the right, where the labels hang. */
 const FIT = { padding: { top: 60, bottom: 60, left: 50, right: 150 }, maxZoom: 12.4 };
-
-const still = () => typeof window !== 'undefined'
-  && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
 
 export interface CityMapProps {
   areas: MapArea[];
@@ -47,12 +40,12 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
 
   // --- create once ---------------------------------------------------------
   useEffect(() => {
-    const gl = window.maplibregl;
+    const gl = mapLib();
     if (!gl || !host.current || map.current) return;
 
     const m = new gl.Map({
       container: host.current,
-      style: STYLE,
+      style: MAP_STYLE,
       // The Valley corridor, Calabasas to Burbank. fitBounds takes over once
       // the areas arrive; this is only what shows during the first paint.
       center: [-118.47, 34.18],
@@ -97,7 +90,7 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
 
   // --- markers follow the data --------------------------------------------
   useEffect(() => {
-    const gl = window.maplibregl;
+    const gl = mapLib();
     const m = map.current;
     if (!gl || !m || areas.length === 0) return;
 
@@ -148,7 +141,7 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
     // a zoom nobody asked for. The observer above re-frames it on the way in.
     const el = host.current;
     if (el && el.clientWidth > 0 && el.clientHeight > 0) {
-      m.fitBounds(b, { ...FIT, duration: still() ? 0 : 400 });
+      m.fitBounds(b, { ...FIT, duration: prefersReducedMotion() ? 0 : 400 });
     }
   }, [areas]);
 
@@ -169,13 +162,13 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
     if (area && map.current && el && el.clientWidth > 0) {
       map.current.easeTo({
         center: [area.lng, area.lat],
-        duration: still() ? 0 : 550,
+        duration: prefersReducedMotion() ? 0 : 550,
         padding: { right: 120 },
       });
     }
   }, [selected, areas]);
 
-  if (!window.maplibregl) {
+  if (!mapLib()) {
     return (
       // Every opening the map would have pinned is already on the page as a
       // card — beside this column on a desktop, above it on a phone — so the

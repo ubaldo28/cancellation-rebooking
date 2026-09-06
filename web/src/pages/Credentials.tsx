@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Credentials as CredentialsRow, type TradeRule } from '../api';
 import { useOperator } from '../App';
 import { ErrorNote, Spinner } from '../components/ui';
@@ -108,10 +108,16 @@ export default function CredentialsPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Cleared before each new message and on unmount: a bare setTimeout left the
+  // previous save's timer to wipe this one's line early, and a save followed by
+  // leaving the page set state on a screen that no longer existed.
+  const flashTimer = useRef<number | undefined>(undefined);
   const flash = (text: string) => {
+    window.clearTimeout(flashTimer.current);
     setNotice(text);
-    setTimeout(() => setNotice(null), 2500);
+    flashTimer.current = window.setTimeout(() => setNotice(null), 2500);
   };
+  useEffect(() => () => window.clearTimeout(flashTimer.current), []);
 
   /** A licence is claimed. 'none' and an unanswered field are both not that. */
   const holdsLicence = kind !== '' && kind !== 'none';

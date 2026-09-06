@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  api, clockTime, durationLabel, money, timeRange,
+  api, clockTime, durationLabel, localeFor, money, timeRange,
   type Appointment, type Gap,
 } from '../api';
 import { useOperator } from '../App';
@@ -61,8 +61,13 @@ export default function Today() {
   const urgent = holes.find((g) => g.created_by_cancellation_of) ?? holes[0];
   const others = holes.filter((g) => g.id !== urgent?.id);
 
+  // localeFor, not `${op.language}-${op.country}` spelled out again here.
+  // language is a plain column with no server-side validation, and an empty
+  // one makes that template "-US", which Intl rejects with a RangeError — from
+  // inside render, so the whole operator app goes white rather than the date
+  // going missing. localeFor falls back to 'en' for exactly that reason.
   const today = new Intl.DateTimeFormat(
-    op ? `${op.language}-${op.country}` : 'en-US',
+    localeFor(op),
     { timeZone: op?.timezone, weekday: 'long', day: 'numeric', month: 'long' },
   ).format(new Date());
 
@@ -93,6 +98,22 @@ export default function Today() {
             </span>
           </div>
           <Icon name="arrow" size={18} color="var(--accent-ink)" />
+        </Link>
+
+        {/* /app/bookings had no link to it from anywhere in the app, and it is
+            the screen that carries the "I'm open for work right now" switch,
+            the job requests with five minutes on them, and the doorstep buttons
+            — "I'm here", the customer's start code, a parts quote, cancel. An
+            operator standing in a driveway could not reach any of it. */}
+        <Link to="/app/bookings" className="card spread" style={{ color: 'inherit' }}>
+          <div className="stack" style={{ gap: 3 }}>
+            <span className="name">Open for work, and today's jobs</span>
+            <span className="muted">
+              Switch yourself on for work right now, start a job, send a parts
+              quote, or see what has come in.
+            </span>
+          </div>
+          <Icon name="arrow" size={18} color="var(--muted)" />
         </Link>
 
         {error && <ErrorNote error={error} onRetry={load} />}
@@ -167,7 +188,7 @@ export default function Today() {
 /** "Fri, 4 Sep" — an empty day is named by its date, not by a time range. */
 function dayLabel(gap: Gap, op: ReturnType<typeof useOperator>): string {
   return new Intl.DateTimeFormat(
-    op ? `${op.language}-${op.country}` : 'en-US',
+    localeFor(op),
     { timeZone: op?.timezone, weekday: 'short', day: 'numeric', month: 'short' },
   ).format(new Date(gap.starts_at * 1000));
 }

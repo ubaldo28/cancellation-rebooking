@@ -39,6 +39,11 @@ export default function VehicleForm() {
 
   const complete = !!v.make?.trim() && !!v.color?.trim() && !!v.plate?.trim();
 
+  // Editing a field takes "Saved." down with it. It used to stay up while the
+  // operator retyped the plate, which says the thing on screen is stored when
+  // it is not — on the one form a customer checks against a real van.
+  const edit = (patch: Partial<Vehicle>) => { setSaved(false); setV({ ...v, ...patch }); };
+
   return (
     <section className="stack">
       <span className="eyebrow">Your vehicle</span>
@@ -62,18 +67,18 @@ export default function VehicleForm() {
         <div className="field-row">
           <label>Make
             <input value={v.make ?? ''} placeholder="Ford"
-              onChange={(e) => setV({ ...v, make: e.target.value })} /></label>
+              onChange={(e) => edit({ make: e.target.value })} /></label>
           <label>Model (optional)
             <input value={v.model ?? ''} placeholder="Transit"
-              onChange={(e) => setV({ ...v, model: e.target.value })} /></label>
+              onChange={(e) => edit({ model: e.target.value })} /></label>
         </div>
         <div className="field-row">
           <label>Colour
             <input value={v.color ?? ''} placeholder="White"
-              onChange={(e) => setV({ ...v, color: e.target.value })} /></label>
+              onChange={(e) => edit({ color: e.target.value })} /></label>
           <label>Plate
             <input value={v.plate ?? ''} placeholder="8ABC123"
-              onChange={(e) => setV({ ...v, plate: e.target.value })} /></label>
+              onChange={(e) => edit({ plate: e.target.value })} /></label>
         </div>
 
         {!complete && (

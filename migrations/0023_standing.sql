@@ -189,6 +189,15 @@ CREATE INDEX idx_suspensions_subject
 -- typed in themselves -- are untouched by this and always will be. That list
 -- is theirs and taking it would break the product for the exact people it is
 -- built for.
+--
+-- READ BY NOTHING, and that is not a gap. `acquired` from migration 0006
+-- already carries the same fact -- it is set to 'public' on exactly these rows
+-- and it is what maskClientRow, the retention sweeps and the erasure path all
+-- branch on. This column is a second name for it, written alongside it and
+-- never asked. Kept rather than dropped because the UPDATE below is what
+-- cleared the contact details off the rows that already existed, and this flag
+-- is the record that it ran; do not add a reader for it without moving every
+-- existing one off `acquired` at the same time, or the two become two answers.
 ALTER TABLE clients ADD COLUMN platform_introduced INTEGER NOT NULL DEFAULT 0
   CHECK (platform_introduced IN (0,1));
 

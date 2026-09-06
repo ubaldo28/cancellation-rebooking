@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, type Service } from '../api';
 import { useOperator, useSession } from '../App';
 import CloseAccount from '../components/CloseAccount';
@@ -8,10 +9,22 @@ import PartsPolicyField, {
   EMPTY_PARTS, partsPayload, type PartsValue,
 } from '../components/PartsPolicyField';
 import WorkingHours, {
-  blankDay, hhmm, hoursPayload, type DayHours,
+  DAY_NAMES, blankDay, backwardsDays, hhmm, hoursPayload, type DayHours,
 } from '../components/WorkingHours';
 import { ErrorNote, Icon, Spinner } from '../components/ui';
 import { useDocumentTitle } from '../lib/title';
+
+/**
+ * How many people a wave may go to at once.
+ *
+ * The Worker writes every settable column straight through with no range check
+ * of its own, so this is the only guard there is — and the field it guards is
+ * an <input type="number"> an operator can empty, which makes Number('') zero.
+ * A saved zero is silent and total: FillSlot preselects nobody, the wave button
+ * sits disabled, and nothing about the screen says why.
+ */
+const WAVE_MIN = 1;
+const WAVE_MAX = 10;
 
 export default function Settings() {
   useDocumentTitle('Settings');
@@ -23,6 +36,24 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [savingHours, setSavingHours] = useState(false);
+
+  /**
+   * One timer for the "Saved." line, cleared on unmount and before each new
+   * message.
+   *
+   * There were three bare setTimeout calls here. Two saves inside two and a
+   * half seconds meant the first one's timer wiped the second one's message
+   * early, and leaving Settings while one was pending set state on a screen
+   * that no longer existed.
+   */
+  const flashTimer = useRef<number | undefined>(undefined);
+  const flash = useCallback((text: string) => {
+    window.clearTimeout(flashTimer.current);
+    setSaved(text);
+    flashTimer.current = window.setTimeout(() => setSaved(null), 2500);
+  }, []);
+  useEffect(() => () => window.clearTimeout(flashTimer.current), []);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -46,13 +77,37 @@ export default function Settings() {
 
   async function saveHours() {
     setError(null);
+    // hoursPayload drops any day that ends before it starts rather than sending
+    // it, which used to mean an operator who typed Monday 17:00 to 09:00 was
+    // told "Working hours saved." and lost Monday. The save is refused instead,
+    // naming the day, because a silently missing weekday is a day of openings
+    // that never go up.
+    const backwards = backwardsDays(hours);
+    if (backwards.length > 0) {
+      setError(backwards.length === 1
+        ? `${backwards[0]} ends before it starts. Fix that time and save again.`
+        : `${backwards.join(' and ')} end before they start. Fix those times and `
+          + 'save again.');
+      return;
+    }
+    setSavingHours(true);
     try {
       await api.setWorkingHours(hoursPayload(hours));
-      await api.detectGaps(14);
-      setSaved('Working hours saved.');
-      setTimeout(() => setSaved(null), 2500);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save.');
+      setSavingHours(false);
+      return;
+    }
+    // The hours are saved by this point. A failed re-detect is a stale gap
+    // list, not a lost save, and reporting it as "Could not save" sent
+    // operators back to retype a week that was already stored.
+    try {
+      await api.detectGaps(14);
+      flash('Working hours saved.');
+    } catch {
+      flash('Working hours saved. Your open slots will catch up shortly.');
+    } finally {
+      setSavingHours(false);
     }
   }
 
@@ -61,8 +116,7 @@ export default function Settings() {
     try {
       await api.updateSettings(patch);
       await refresh();
-      setSaved(label);
-      setTimeout(() => setSaved(null), 2500);
+      flash(label);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save.');
     }
@@ -89,7 +143,9 @@ export default function Settings() {
             Open slots are only ever found inside these hours.
           </p>
           <WorkingHours hours={hours} onChange={setHours} />
-          <button className="btn block" onClick={saveHours}>Save working hours</button>
+          <button className="btn block" onClick={saveHours} disabled={savingHours}>
+            {savingHours ? 'Saving…' : 'Save working hours'}
+          </button>
         </section>
 
         <section className="stack">
@@ -97,8 +153,28 @@ export default function Settings() {
 
           <label className="card" style={{ padding: 14 }}>
             How many people to ask at once
-            <input type="number" min={1} max={10} defaultValue={op?.offers_per_wave ?? 3}
-              onBlur={(e) => saveSetting({ offers_per_wave: Number(e.target.value) }, 'Saved.')} />
+            {/* min and max on the element alone are decoration: this field is
+                in no <form>, so nothing ever validates it, and the value went
+                to the Worker exactly as typed. An emptied box saved nought
+                people per wave. The value is put back to whatever is stored
+                rather than left showing a number that was not accepted. */}
+            <input type="number" min={WAVE_MIN} max={WAVE_MAX}
+              defaultValue={op?.offers_per_wave ?? 3}
+              onBlur={(e) => {
+                const current = op?.offers_per_wave ?? 3;
+                const typed = Number(e.target.value);
+                if (!Number.isFinite(typed) || e.target.value.trim() === ''
+                    || typed < WAVE_MIN || typed > WAVE_MAX) {
+                  e.target.value = String(current);
+                  setError(`Ask between ${WAVE_MIN} and ${WAVE_MAX} people at once.`);
+                  return;
+                }
+                const whole = Math.round(typed);
+                e.target.value = String(whole);
+                if (whole === current) return;
+                setError(null);
+                void saveSetting({ offers_per_wave: whole }, 'Saved.');
+              }} />
             <span className="faint">First to confirm gets the slot.</span>
           </label>
 
@@ -200,6 +276,37 @@ export default function Settings() {
             it. */}
         <PaymentMethod />
 
+        {/* WHY THESE TWO LINKS ARE HERE.
+            /app/profile and /app/credentials both existed as routes with
+            nothing in the app pointing at them: the profile was reachable only
+            from the last screen of the sign-up wizard, which an operator sees
+            once and never again, and the licence page was reachable from
+            nowhere at all. Both are settings about the business a customer
+            reads before booking, so they belong on the screen an operator opens
+            when they want to change one. */}
+        <section className="stack">
+          <span className="eyebrow">Your public page</span>
+          <Link to="/app/profile" className="card spread" style={{ color: 'inherit' }}>
+            <div className="stack" style={{ gap: 2 }}>
+              <span className="name" style={{ fontSize: 15 }}>Profile and photos</span>
+              <span className="muted">
+                What a customer reads before they let you onto their drive.
+              </span>
+            </div>
+            <Icon name="arrow" size={18} color="var(--muted)" />
+          </Link>
+          <Link to="/app/credentials" className="card spread" style={{ color: 'inherit' }}>
+            <div className="stack" style={{ gap: 2 }}>
+              <span className="name" style={{ fontSize: 15 }}>Licence and insurance</span>
+              <span className="muted">
+                What your trade requires, and what you hold. Missing details
+                keep your page private.
+              </span>
+            </div>
+            <Icon name="arrow" size={18} color="var(--muted)" />
+          </Link>
+        </section>
+
         <section className="stack">
           <span className="eyebrow">Account</span>
           <div className="card stack" style={{ gap: 4 }}>
@@ -240,11 +347,22 @@ function AddService({ onDone }: { onDone: () => void }) {
   return (
     <form className="card stack" onSubmit={async (e) => {
       e.preventDefault();
+      // A service with no length fits no gap and is offered to nobody, and an
+      // emptied number field is Number('') — nought — not a missing value. The
+      // element's own min="15" never runs, because the browser only validates a
+      // field a form submit passes through, and this one is checked below
+      // before anything is sent.
+      const minutes = Number(mins);
+      if (!Number.isFinite(minutes) || minutes <= 0) {
+        setError('How many minutes does this take? A service with no length is '
+          + 'never offered to anybody.');
+        return;
+      }
       setBusy(true); setError(null);
       try {
         await api.createService({
           name,
-          duration_seconds: Number(mins) * 60,
+          duration_seconds: Math.round(minutes) * 60,
           price_cents: price ? Math.round(Number(price) * 100) : 0,
           cadence_days: weeks ? Number(weeks) * 7 : undefined,
           ...partsPayload(parts),

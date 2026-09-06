@@ -462,6 +462,12 @@ CREATE TABLE messages (
   status         TEXT NOT NULL DEFAULT 'queued'
                    CHECK (status IN ('queued','handed_off','sent','delivered','failed','received')),
   error_code     TEXT,
+  -- What the carrier charged for this message. NOT WIRED: the Twilio status
+  -- webhook is the only place a price could come from and it does not read
+  -- one, so every row here is 0 and no screen totals it. Left in place because
+  -- 'device' mode -- the default -- costs nothing at all, and the column only
+  -- becomes worth filling in on the day somebody is paying a carrier bill and
+  -- wants it attributed per operator.
   cost_cents     INTEGER NOT NULL DEFAULT 0,
 
   created_at     INTEGER NOT NULL,

@@ -10,8 +10,12 @@
    own.
    ========================================================================== */
 
+/* A 44px target from a floor, not from padding: the row is the page's own
+   heading area and the link was 23px tall — the smallest thing to hit on either
+   screen that has one. */
 .po-back {
   gap: 8px;
+  min-height: 44px;
   color: var(--ink);
   margin-bottom: 8px;
   font-weight: 500;

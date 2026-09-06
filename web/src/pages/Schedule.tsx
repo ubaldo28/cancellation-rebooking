@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  api, clockTime, durationLabel, money,
+  api, clockTime, durationLabel, localeFor, money,
   type Appointment, type Gap,
 } from '../api';
 import { useOperator } from '../App';
@@ -20,6 +20,16 @@ export default function Schedule() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /**
+   * The appointment whose cancel is waiting on a second tap.
+   *
+   * "Done", "Cancelled" and "No-show" were three small buttons in a row, and
+   * only one of them frees a customer's slot, puts a hole back in the day and
+   * cannot be undone from this screen. On a phone in a moving van the middle
+   * one is a mis-tap. The other two are corrections an operator can make again;
+   * this one is a job somebody is expecting.
+   */
+  const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
 
   /**
    * WHOSE MIDNIGHT THIS IS.
@@ -58,10 +68,11 @@ export default function Schedule() {
   useEffect(() => { void load(); }, [load]);
 
   async function act(id: string, action: 'completed' | 'no_show' | 'cancel') {
-    setBusy(id);
+    setBusy(id); setError(null);
     try {
       if (action === 'cancel') await api.cancelAppointment(id, 'client');
       else await api.updateAppointment(id, { status: action });
+      setConfirmCancel(null);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That did not work.');
@@ -81,9 +92,14 @@ export default function Schedule() {
    *
    * Read back at noon UTC: a calendar date has no time of day, and any other
    * hour rolls it to the day before or after somewhere in the world.
+   *
+   * The locale comes from localeFor rather than being spelled out again: an
+   * operator whose language column is empty would otherwise make "-US", which
+   * Intl rejects with a RangeError from inside render and takes the screen
+   * with it.
    */
   const dayLabel = (by: number) => new Intl.DateTimeFormat(
-    op ? `${op.language}-${op.country}` : 'en-US',
+    localeFor(op),
     { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'short' },
   ).format(new Date(`${dateFor(by)}T12:00:00Z`));
 
@@ -154,14 +170,31 @@ export default function Schedule() {
               </span>
 
               {r.appt.status === 'scheduled' ? (
-                <div className="chips" style={{ marginTop: 8 }}>
-                  <button className="btn quiet sm" disabled={busy === r.appt.id}
-                    onClick={() => act(r.appt.id, 'completed')}>Done</button>
-                  <button className="btn quiet sm" disabled={busy === r.appt.id}
-                    onClick={() => act(r.appt.id, 'cancel')}>Cancelled</button>
-                  <button className="btn quiet sm" disabled={busy === r.appt.id}
-                    onClick={() => act(r.appt.id, 'no_show')}>No-show</button>
-                </div>
+                confirmCancel === r.appt.id ? (
+                  <div className="stack" style={{ marginTop: 8, gap: 8 }}>
+                    <span className="muted">
+                      Cancel this appointment? The time goes back into your day
+                      as an open slot and this screen cannot put it back.
+                    </span>
+                    <div className="chips">
+                      <button className="btn quiet sm" disabled={busy === r.appt.id}
+                        onClick={() => setConfirmCancel(null)}>Keep it</button>
+                      <button className="btn quiet sm" disabled={busy === r.appt.id}
+                        onClick={() => act(r.appt.id, 'cancel')}>
+                        {busy === r.appt.id ? 'Cancelling…' : 'Yes, cancel it'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="chips" style={{ marginTop: 8 }}>
+                    <button className="btn quiet sm" disabled={busy === r.appt.id}
+                      onClick={() => act(r.appt.id, 'completed')}>Done</button>
+                    <button className="btn quiet sm" disabled={busy === r.appt.id}
+                      onClick={() => setConfirmCancel(r.appt.id)}>Cancelled</button>
+                    <button className="btn quiet sm" disabled={busy === r.appt.id}
+                      onClick={() => act(r.appt.id, 'no_show')}>No-show</button>
+                  </div>
+                )
               ) : (
                 <span className="chip neutral" style={{ marginTop: 6, alignSelf: 'flex-start' }}>
                   {r.appt.status.replace('_', ' ')}

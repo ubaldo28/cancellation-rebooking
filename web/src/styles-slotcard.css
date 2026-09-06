@@ -24,16 +24,86 @@
 /* --------------------------------------------------------------------------
  * Sort and filter
  *
- * A single wrapping row above the list. Native <select> throughout rather than
- * drawn menus: the visitor this page is written for is on a phone, and the
- * platform's own picker is bigger, faster and more familiar than anything that
- * could be built here — and it is the one control that already works with
- * every assistive technology without help.
+ * A row of orders, and under it a single wrapping row of filters. Native
+ * <select> throughout the filters rather than drawn menus: the visitor this
+ * page is written for is on a phone, and the platform's own picker is bigger,
+ * faster and more familiar than anything that could be built here — and it is
+ * the one control that already works with every assistive technology without
+ * help. The orders are the exception and are buttons, because there are two or
+ * three of them and one of them is in force at all times; the argument is set
+ * out where they are rendered.
  *
- * Every control in this row is conditional in the markup. There is deliberately
+ * Every control in both rows is conditional in the markup. There is deliberately
  * no disabled state to style, because a control this list cannot answer for is
  * not rendered at all.
  * ----------------------------------------------------------------------- */
+
+/* --- the order ----------------------------------------------------------
+   Everything below borrows the pressed-is-ink treatment from `.filt-toggle`
+   further down, because it is the same kind of control — a thing that is
+   either in force or not — and two different ways of drawing "on" in the
+   controls above one list is one too many. */
+.sortrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: 0 0 8px;
+}
+
+.sortrow-lab {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.sortrow-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.sortb {
+  min-height: 44px;
+  padding: 0 15px;
+  border: 1px solid var(--control-line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.sortb:hover { border-color: var(--line-strong); color: var(--ink); }
+
+.sortb.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+.sortb:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+/* The sentence under the buttons. Same type, colour and measure as
+   `.filt-applied`, because the two say the same kind of thing — what is in
+   force, in words — and saying them in two different voices would read as two
+   features rather than as one answer. */
+.sort-why {
+  margin: 0 0 12px;
+  max-width: 68ch;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sortb { transition: none; }
+}
+
 .filters {
   display: flex;
   flex-wrap: wrap;
@@ -72,7 +142,7 @@
   border: 0;
   background: none;
   padding: 0 4px 0 0;
-  min-height: 38px;
+  min-height: 44px;
   max-width: 46vw;
   font-family: inherit;
   /* 16px, because anything smaller makes iOS Safari zoom the page when the
@@ -93,7 +163,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 15px;
   border: 1px solid var(--control-line);
   border-radius: 999px;
@@ -264,15 +334,23 @@
 
 .slot-rate-n { font-weight: 600; color: var(--muted); }
 
+/* WHAT A BUSINESS WITH NO REVIEWS SAYS IN THE RATING'S PLACE.
+   Everything it does not do is the point. It has no star, no fill, no border
+   and no weight, so nothing about it can be read as a small award; it is not
+   --faint either, because it is real text somebody is meant to read and not a
+   watermark. What is left is the strip's own quiet grey and the strip's own
+   size — a note in the row of facts, sitting exactly where the number would
+   be, distinguishable from a rating at a glance in a grid of thirty because
+   the rating is the one thing in the strip wearing the body ink. */
+.slot-none { min-width: 0; color: var(--muted); font-weight: 400; }
+
 .slot-fact { min-width: 0; }
 
-/* Screen readers only. "★ 4.8 (37)" is unambiguous to somebody looking at it
-   and is read aloud as two bare numbers, so the two missing words are supplied
-   here rather than spelled out on a card with no room for them. */
-
-/* PINNED TO THE CARD, NOT LEFT WHERE IT FELL. An absolutely positioned box is
-   clipped by an `overflow: hidden` ancestor only when that ancestor is also its
-   containing block, and `.slot-biz` is not positioned — so the hidden word
+/* PINNED TO THE CARD, NOT LEFT WHERE IT FELL. `.slot-sr` below holds the words
+   a card has no room to print — "stars" after a rating, "reviews" after a
+   count, "listing" after SAMPLE. An absolutely positioned box is clipped by an
+   `overflow: hidden` ancestor only when that ancestor is also its containing
+   block, and `.slot-biz` is not positioned — so the hidden word
    inside the SAMPLE badge kept the static position it would have had on an
    untruncated line, roughly sixty pixels past the right edge of a 375px screen,
    and gave the whole document a sideways scroll on the front page and in search

@@ -5,6 +5,7 @@ import Crumbs from '../components/Crumbs';
 import PublicPage from '../components/PublicPage';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-index.css';
+import { plural } from '../lib/format';
 import { useDocumentTitle } from '../lib/title';
 
 /**
@@ -26,7 +27,6 @@ import { useDocumentTitle } from '../lib/title';
  * counted it, and stated in words when the answer is nothing.
  */
 
-const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 export default function BrowseIndex() {
   const [cats, setCats] = useState<TradeCategory[] | null>(null);

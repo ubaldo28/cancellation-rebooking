@@ -42,7 +42,7 @@ export default function Bookings() {
   useEffect(() => { void load(); }, [load]);
 
   const markAll = useCallback(async () => {
-    setMarking(true);
+    setMarking(true); setError(null);
     const at = Math.floor(Date.now() / 1000);
     try {
       await api.markNotificationsRead();

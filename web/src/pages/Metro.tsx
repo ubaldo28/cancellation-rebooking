@@ -5,6 +5,8 @@ import Crumbs from '../components/Crumbs';
 import PublicPage from '../components/PublicPage';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-index.css';
+import { plural } from '../lib/format';
+import { distinctGaps } from '../lib/slots';
 import { useDocumentTitle } from '../lib/title';
 
 /**
@@ -30,26 +32,6 @@ import { useDocumentTitle } from '../lib/title';
 const METRO = 'Los Angeles';
 const LAUNCH_STATE = 'California';
 
-/**
- * One row per genuine opening.
- *
- * The map offers a whole free day in every neighbourhood its owner covers,
- * because it genuinely is available in all of them — right for a pin, and
- * double counting the moment a page adds the whole city up. Every total on
- * this page is over the openings, not over the rows.
- */
-function distinctGaps(slots: PublicSlot[]): PublicSlot[] {
-  const seen = new Set<string>();
-  const out: PublicSlot[] = [];
-  for (const s of slots) {
-    if (seen.has(s.gap_id)) continue;
-    seen.add(s.gap_id);
-    out.push(s);
-  }
-  return out;
-}
-
-const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 /** How many trades the ranked list shows before it stops being a list. */
 const TOP = 12;

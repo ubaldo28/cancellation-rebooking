@@ -1,4 +1,6 @@
 import type { Env } from '../types';
+import { isDemoOperator } from './demo';
+import { CARD_COLUMNS, cardFacts, type CardFacts, type CardRow } from './public';
 import {
   displayName, listReviews, mentionedWords, ratingFor,
   type RatingSummary, type Review,
@@ -114,6 +116,16 @@ export interface PublicProfile {
   services: PublicService[];
   /** When they work. Empty when they have not said. */
   working_hours: PublicHours[];
+  /**
+   * A few other businesses doing the same work on the same patch.
+   *
+   * Carried on the profile payload rather than fetched separately because the
+   * page needs it to render its own foot, and a second round trip for three
+   * rows is a second round trip. Empty when this business is the only one in
+   * its trade, or has no trade set — which the page has to render as the
+   * absence it is rather than filling with anybody.
+   */
+  similar: SimilarBusiness[];
 }
 
 export interface PhotoInput {
@@ -249,7 +261,7 @@ export async function getPublicProfile(env: Env, slug: string): Promise<PublicPr
   // because it is the first thing a person reads, and the whole page is
   // arranged around the decision they are making: do I let this stranger into
   // my house.
-  const [photos, rating, reviews, mentions, faqs, areas, services, hours] =
+  const [photos, rating, reviews, mentions, faqs, areas, services, hours, similar] =
     await Promise.all([
       listPhotos(env, id),
       ratingFor(env, id),
@@ -276,6 +288,10 @@ export async function getPublicProfile(env: Env, slug: string): Promise<PublicPr
           WHERE operator_id = ?
           ORDER BY weekday, start_minute`,
       ).bind(id).all<PublicHours>(),
+      // Keyed on the slug this function was called with rather than on `id`,
+      // because "not me" is a statement about the page being rendered and the
+      // slug is what identifies it.
+      similarBusinesses(env, slug),
     ]);
 
   return {
@@ -288,7 +304,142 @@ export async function getPublicProfile(env: Env, slug: string): Promise<PublicPr
     areas: (areas.results ?? []).map((a) => a.name),
     services: services.results ?? [],
     working_hours: hours.results ?? [],
+    similar,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Other businesses doing the same work nearby
+// ---------------------------------------------------------------------------
+
+/**
+ * An alternative business, as the foot of a profile page shows one.
+ *
+ * It carries exactly the facts a card carries — through cardFacts, so this
+ * business cannot show four stars at the bottom of one page and nothing at the
+ * top of its own — plus where it works and how much of that overlaps with the
+ * business whose page this is. Nothing here is a recommendation: the ordering
+ * is stated in `shared_areas` and `rating` and the reader can see both.
+ */
+export interface SimilarBusiness extends CardFacts {
+  business_name: string;
+  /** The `/p/:slug` segment. Never null: a row without one is not selected. */
+  profile_slug: string;
+  trade: string | null;
+  tagline: string | null;
+  /** Neighbourhoods this business works, by name. */
+  areas: string[];
+  /**
+   * How many of those neighbourhoods the business whose page this is also
+   * works. This is what "nearby" means here, and it is a count rather than a
+   * distance because a mobile trade has no single address to measure from.
+   */
+  shared_areas: number;
+  is_sample: boolean;
+}
+
+/** Three is what the reference shows under a profile, with a "see all" beside it. */
+const DEFAULT_SIMILAR = 3;
+const MAX_SIMILAR = 12;
+
+/**
+ * Other businesses in this trade whose patch overlaps this one's.
+ *
+ * The profile page dead-ends without this: a visitor who has decided against
+ * the business they are looking at has nowhere to go but back to a search.
+ *
+ * "Nearby" is measured as shared service areas rather than as a distance,
+ * because none of these businesses has a fixed address to measure from — they
+ * are vans, and `service_areas` is the only statement any of them makes about
+ * where they will actually go. Businesses sharing no area at all are still
+ * returned, after the ones that do: a trade with three operators spread across
+ * the Valley should show the other two rather than nothing, and the count is
+ * on every row so the caller can say which is which.
+ *
+ * THE BUSINESS WHOSE PAGE IT IS IS EXCLUDED, in the WHERE clause rather than
+ * filtered out afterwards, so it cannot reappear because a limit was applied
+ * before the filter.
+ */
+export async function similarBusinesses(
+  env: Env, slug: string, limit = DEFAULT_SIMILAR,
+): Promise<SimilarBusiness[]> {
+  const me = (slug ?? '').trim();
+  if (!me) return [];
+
+  const capped = Math.min(Math.max(1, Math.floor(limit)), MAX_SIMILAR);
+  const t = now();
+
+  const rows = await env.DB.prepare(
+    `SELECT o.id, o.business_name, o.profile_slug, o.trade, o.tagline,
+            ${CARD_COLUMNS},
+            (SELECT COUNT(*) FROM service_areas a
+              WHERE a.operator_id = o.id AND a.is_active = 1
+                AND a.place_slug IS NOT NULL
+                AND a.place_slug IN (SELECT m.place_slug FROM service_areas m
+                                      WHERE m.operator_id = mine.id
+                                        AND m.is_active = 1
+                                        AND m.place_slug IS NOT NULL))
+              AS shared_areas
+       FROM operators o
+       JOIN operators mine ON mine.profile_slug = ?
+      WHERE o.id <> mine.id
+        -- Same work. trade is free text on the row, compared the way every
+        -- other reader of that column compares it.
+        AND LOWER(TRIM(COALESCE(o.trade,''))) = LOWER(TRIM(COALESCE(mine.trade,'')))
+        AND LOWER(TRIM(COALESCE(mine.trade,''))) <> ''
+        -- Every one of these is a link, so it has to lead somewhere. The rest
+        -- are the same conditions the listing applies before it will show a
+        -- business to a stranger at all: a suspended business is not offered
+        -- as an alternative to anybody.
+        AND o.is_published = 1
+        AND o.profile_slug IS NOT NULL
+        AND o.accept_public_bookings = 1
+        AND o.plan IN ('trial','active')
+        AND o.banned_at IS NULL
+        AND (o.suspended_until IS NULL OR o.suspended_until <= ?)
+      -- Overlapping patch first, then the businesses a reader has most to go
+      -- on. business_name breaks the tie so the list is stable between loads.
+      ORDER BY shared_areas DESC, o.rating_count DESC, o.hired_count DESC,
+               o.business_name
+      LIMIT ?`,
+  ).bind(me, t, capped).all<CardRow & {
+    id: string; business_name: string; profile_slug: string;
+    trade: string | null; tagline: string | null; shared_areas: number;
+  }>();
+
+  const found = rows.results ?? [];
+  if (found.length === 0) return [];
+
+  // One query for everybody's areas rather than one per business, for the same
+  // reason withPhotos batches: three round trips to name three neighbourhoods
+  // is three round trips too many on the page every customer lands on.
+  const ids = found.map((r) => r.id);
+  const areaRows = await env.DB.prepare(
+    `SELECT operator_id, name FROM service_areas
+      WHERE is_active = 1 AND operator_id IN (${ids.map(() => '?').join(',')})
+      ORDER BY name`,
+  ).bind(...ids).all<{ operator_id: string; name: string }>();
+
+  const byOperator = new Map<string, string[]>();
+  for (const a of areaRows.results ?? []) {
+    byOperator.set(a.operator_id, [...(byOperator.get(a.operator_id) ?? []), a.name]);
+  }
+
+  return found.map((r) => ({
+    business_name: r.business_name,
+    profile_slug: r.profile_slug,
+    trade: r.trade,
+    tagline: r.tagline,
+    areas: byOperator.get(r.id) ?? [],
+    shared_areas: r.shared_areas ?? 0,
+    is_sample: isDemoOperator(r.id),
+    // The same facts the listing card shows, from the same function, with no
+    // defaults: a business nobody has reviewed gets null rather than a number
+    // this platform made up about somebody a reader is deciding whether to
+    // let into their house. o.id is read for the sample check and the areas
+    // above, and is not returned — it is an internal key.
+    ...cardFacts(r, t),
+  }));
 }
 
 /** The questions this business chose to answer, in the order they chose. */

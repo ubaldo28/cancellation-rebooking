@@ -20,6 +20,8 @@ const BIO_MAX = 600;
 const PHOTO_MAX_BYTES = 5_000_000;
 /** Matches MAX_PHOTOS on the Worker. */
 const PHOTO_MAX_COUNT = 12;
+/** The most years the Worker will take. Past it the save is refused. */
+const YEARS_MAX = 80;
 const ACCEPT = 'image/jpeg,image/png,image/webp';
 
 /**
@@ -78,18 +80,36 @@ export default function Profile() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const flash = (text: string) => {
+  // One timer, cleared before each new message and on the way out. Two saves
+  // inside two and a half seconds used to leave the first one's timer to wipe
+  // the second one's "Saved." early, and leaving the page mid-flash set state
+  // on a screen that had gone.
+  const flashTimer = useRef<number | undefined>(undefined);
+  const flash = useCallback((text: string) => {
+    window.clearTimeout(flashTimer.current);
     setNotice(text);
-    setTimeout(() => setNotice(null), 2500);
-  };
+    flashTimer.current = window.setTimeout(() => setNotice(null), 2500);
+  }, []);
+  useEffect(() => () => window.clearTimeout(flashTimer.current), []);
 
   async function save() {
+    // min="0" and max="80" on the field are decoration — nothing here is inside
+    // a <form>, so the browser never validates it, and 999 went to the Worker
+    // and came back as "That does not look right", which names no field and no
+    // limit. Checked here, in the words of the limit.
+    const typed = years.trim();
+    const n = Number(typed);
+    if (typed && (!Number.isFinite(n) || n < 0 || n > YEARS_MAX)) {
+      setError(`Years doing this has to be a whole number up to ${YEARS_MAX}, `
+        + 'or blank.');
+      return;
+    }
     setSaving(true); setError(null);
     try {
       await api.saveProfile({
         tagline: tagline.trim(),
         bio: bio.trim(),
-        years_experience: years.trim() ? Number(years) : undefined,
+        years_experience: typed ? Math.round(n) : undefined,
       });
       flash('Saved.');
     } catch (e) {
@@ -208,7 +228,13 @@ export default function Profile() {
             {publicUrl ? (
               <>
                 <span className="name" style={{ fontSize: 15 }}>Your page is live</span>
-                <a href={publicUrl} className="mono" style={{ fontSize: 13, wordBreak: 'break-all' }}>
+                {/* Padded to a 44px target: it is the one control in this
+                    block and it was 39px of thin monospace. */}
+                <a href={publicUrl} className="mono"
+                  style={{
+                    fontSize: 13, wordBreak: 'break-all',
+                    display: 'inline-flex', alignItems: 'center', minHeight: 44,
+                  }}>
                   {publicUrl}
                 </a>
               </>
@@ -249,7 +275,7 @@ export default function Profile() {
 
           <label className="card" style={{ padding: 14 }}>
             Years doing this
-            <input type="number" min="0" max="80" value={years}
+            <input type="number" min="0" max={YEARS_MAX} value={years}
               onChange={(e) => setYears(e.target.value)} placeholder="6" />
             <span className="faint">Leave it blank if you would rather not say.</span>
           </label>

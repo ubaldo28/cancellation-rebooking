@@ -395,7 +395,6 @@ export async function hasOperatorCard(env: Env, operatorId: string): Promise<boo
   return !!row?.payment_ref;
 }
 
-/** The sentence an operator sees when they have not added one. */
 /** Location is evidence now, not a nicety, so it gates listing. */
 export const NEEDS_LOCATION_OPERATOR =
   'Turn location sharing back on to put openings up. It is what shows a '
@@ -409,23 +408,22 @@ export const NEEDS_VEHICLE_OPERATOR =
   + 'what a customer checks before they open the door to somebody they have '
   + 'never met, and it takes about twenty seconds.';
 
+/**
+ * The sentence an operator sees when they have not added a card.
+ *
+ * Every amount in it is the ladder leadFeeCents() computes and none of it can
+ * move a penny today, so it is written as the design rather than as something
+ * that happens — the same tense /pros, the checkout and PaymentState.tsx use.
+ * Stating the rules at all is still right: somebody is being asked for a card
+ * and is entitled to know what it is for before they hand one over.
+ */
 export const NEEDS_CARD_OPERATOR =
-  'Add a card before your openings go up. Nothing is charged to it for using '
-  + 'the site. It is there for one thing: cancelling a job late. Inside 48 '
-  + 'hours that is a quarter of the job, inside 12 hours three quarters, and '
-  + 'the whole job once you have said you arrived — the same amounts the '
-  + 'customer forfeits if they are the one who cancels. More than 48 hours out '
-  + 'costs you nothing.';
-
-/** The sentence a customer sees at checkout. Kept in step with refundFor(). */
-export const NEEDS_CARD_CUSTOMER =
-  'Your card is charged for the appointment when you book. If you cancel, how '
-  + 'much comes back depends on how close it is: all of it more than 48 hours '
-  + 'out, three quarters from 12 to 48 hours, a quarter inside 12 — the '
-  + 'business has kept that time free and turned other work away for it. '
-  + 'Change your mind within 30 minutes of booking and you get everything '
-  + 'back, as long as the appointment is still at least three hours away. You '
-  + 'always see the exact amount before you confirm.';
+  'Add a card before your openings go up. Nothing is charged to it, and no '
+  + 'money moves through Slotfill yet. It is there for one thing, once payment '
+  + 'is switched on: cancelling a job late. Inside 48 hours that will be a '
+  + 'quarter of the job, inside 12 hours three quarters, and the whole job '
+  + 'once you have said you arrived — the same amounts the customer forfeits '
+  + 'if they are the one who cancels. More than 48 hours out costs nothing.';
 
 /**
  * Records the processor's reference to a card. Never the card.

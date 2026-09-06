@@ -35,7 +35,9 @@ export function startPinging(): () => void {
       heading: Number.isFinite(pos.coords.heading) ? pos.coords.heading : null,
       speed_mps: Number.isFinite(pos.coords.speed) ? pos.coords.speed : null,
       recorded_at: Math.floor(pos.timestamp / 1000),
-      // A dropped ping is not worth telling anyone about; the next one is 30s away.
+    // A dropped ping is not worth telling anyone about; the next one is
+    // EVERY_MS away, which is a minute. The comment used to say thirty seconds
+    // and sat inside the request body, where it read as a note about a field.
     }).catch(() => {});
   };
 

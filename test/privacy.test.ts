@@ -386,3 +386,218 @@ describe('the admin surface leaves a record of itself', () => {
     expect(row?.subject_ref).toBe(await sha256(`+13105550147:${env.SESSION_PEPPER}`));
   });
 });
+
+// ---------------------------------------------------------------------------
+describe('the doorstep, released to the operator and taken back again', () => {
+  /**
+   * Migration 0022 released the street address at the moment a booking exists
+   * and cleared `order_items.address_released_at` when it is cancelled, saying
+   * in as many words that the column exists so that "can they see it" is not
+   * re-derived from booking status in four different queries. Nothing read it.
+   * Cancelling therefore cleared the column and the schedule went on printing
+   * the address off the appointment row, so somebody who booked and cancelled
+   * had handed a stranger their address until the retention sweep caught up
+   * with it months later.
+   */
+  const ADDRESS = '18 Camrose Avenue';
+
+  async function booking(opId: string, released: number | null) {
+    const t = now();
+    await env.DB.prepare(
+      `INSERT INTO clients (id,operator_id,first_name,acquired,platform_introduced,
+         is_active,created_at,updated_at)
+       VALUES ('c-rel',?,'Rosa','public',1,1,?,?)`,
+    ).bind(opId, t, t).run();
+    await env.DB.prepare(
+      `INSERT INTO appointments (id,operator_id,client_id,starts_at,ends_at,is_mobile,
+         address_line,postcode,lat,lng,status,source,created_at,updated_at)
+       VALUES ('a-rel',?,'c-rel',?,?,1,?, '91403', 34.16, -118.44,
+         'scheduled','online',?,?)`,
+    ).bind(opId, t + 3600, t + 7200, ADDRESS, t, t).run();
+    await env.DB.prepare(
+      `INSERT INTO orders (id,status,guest_name,currency,total_cents,created_at,updated_at)
+       VALUES ('o-rel','confirmed','Rosa','USD',6500,?,?)`,
+    ).bind(t, t).run();
+    await env.DB.prepare(
+      `INSERT INTO order_items (id,order_id,operator_id,appointment_id,starts_at,ends_at,
+         duration_seconds,price_cents,address_released_at,created_at)
+       VALUES ('i-rel','o-rel',?, 'a-rel',?,?,3600,6500,?,?)`,
+    ).bind(opId, t + 3600, t + 7200, released, t).run();
+  }
+
+  const appointments = async (cookie: string) => {
+    const res = await call('GET', '/api/appointments', { cookie });
+    expect(res.status).toBe(200);
+    return (await res.json() as any).appointments as any[];
+  };
+
+  it('gives the operator the address while the booking is live', async () => {
+    const op = await signIn('live@example.com');
+    await booking(op.opId, now());
+    const [a] = await appointments(op.cookie);
+    // They have to drive there, so this half is the product working.
+    expect(a.address_line).toBe(ADDRESS);
+    expect(a.lat).toBeCloseTo(34.16, 5);
+  });
+
+  it('stops giving it out the moment the release is withdrawn', async () => {
+    const op = await signIn('gone@example.com');
+    await booking(op.opId, null);
+    const [a] = await appointments(op.cookie);
+    expect(a.address_line).toBeNull();
+    // The coordinates go with the street line. Five decimal places of latitude
+    // is the address written differently, so leaving them would be releasing
+    // it under another name.
+    expect(a.lat).toBeNull();
+    expect(a.lng).toBeNull();
+    // Everything the operator still legitimately needs survives.
+    expect(a.id).toBe('a-rel');
+    expect(a.starts_at).toBeGreaterThan(0);
+    expect(a.first_name).toBe('Rosa');
+    expect(a.postcode).toBe('91403');
+  });
+
+  it('leaves an operator\'s own booking alone, which has no release to withdraw',
+    async () => {
+      const op = await signIn('own@example.com');
+      const t = now();
+      await env.DB.prepare(
+        `INSERT INTO clients (id,operator_id,first_name,phone_e164,acquired,is_active,
+           created_at,updated_at)
+         VALUES ('c-own',?,'Marta','+13105550188','operator',1,?,?)`,
+      ).bind(op.opId, t, t).run();
+      await env.DB.prepare(
+        `INSERT INTO appointments (id,operator_id,client_id,starts_at,ends_at,is_mobile,
+           address_line,lat,lng,status,source,created_at,updated_at)
+         VALUES ('a-own',?,'c-own',?,?,1,'4 Otter Lane',34.2,-118.5,
+           'scheduled','manual',?,?)`,
+      ).bind(op.opId, t + 3600, t + 7200, t, t).run();
+
+      const [a] = await appointments(op.cookie);
+      // No order item, so no release model: this is a customer out of their own
+      // book whose address they typed in themselves.
+      expect(a.address_line).toBe('4 Otter Lane');
+      expect(a.lat).toBe(34.2);
+    });
+});
+
+// ---------------------------------------------------------------------------
+describe('a customer saying the van was not the one on the app', () => {
+  /**
+   * The report was written to two columns nothing read, and filed as a
+   * 'location_dark' bypass flag — which means "no recent position fix at the
+   * moment they cancelled on arrival". So the customer's own words went
+   * nowhere, and a hire van counted against the operator's flag rate.
+   */
+  async function jobWithGuestLink(opId: string) {
+    const t = now();
+    await env.DB.prepare(
+      `INSERT INTO appointments (id,operator_id,starts_at,ends_at,is_mobile,status,
+         source,created_at,updated_at)
+       VALUES ('a-van',?,?,?,1,'scheduled','online',?,?)`,
+    ).bind(opId, t + 3600, t + 7200, t, t).run();
+    await env.DB.prepare(
+      `INSERT INTO orders (id,status,guest_name,currency,total_cents,created_at,updated_at)
+       VALUES ('o-van','confirmed','Rosa','USD',6500,?,?)`,
+    ).bind(t, t).run();
+    await env.DB.prepare(
+      `INSERT INTO order_items (id,order_id,operator_id,appointment_id,starts_at,ends_at,
+         duration_seconds,price_cents,address_released_at,created_at)
+       VALUES ('i-van','o-van',?, 'a-van',?,?,3600,6500,?,?)`,
+    ).bind(opId, t + 3600, t + 7200, t, t).run();
+
+    const raw = `guest-${opId}`;
+    await env.DB.prepare(
+      `INSERT INTO threads (id,operator_id,appointment_id,guest_name,guest_token_hash,
+         status,last_message_at,created_at,updated_at)
+       VALUES ('t-van',?, 'a-van','Rosa',?, 'open',?,?,?)`,
+    ).bind(opId, await sha256(`${raw}:${env.SESSION_PEPPER}`), t, t, t).run();
+    return raw;
+  }
+
+  it('records what they wrote and puts it in front of an admin', async () => {
+    const op = await signIn('van@example.com');
+    await env.DB.prepare(
+      `UPDATE operators SET business_name='Hard Rain', vehicle_make='Ford',
+         vehicle_model='Transit', vehicle_color='white', vehicle_plate='8ABC123'
+        WHERE id=?`,
+    ).bind(op.opId).run();
+    const token = await jobWithGuestLink(op.opId);
+
+    const res = await call('POST', `/api/public/threads/${token}/vehicle/i-van`,
+      { body: { note: 'It was a red hire van with no signwriting.' } });
+    expect(res.status).toBe(200);
+
+    const admin = await signIn('ops@slotfill.app');
+    env.ADMIN_EMAILS = 'ops@slotfill.app';
+    const queue = await (await call('GET', '/api/admin/flags',
+      { cookie: admin.cookie })).json() as any;
+
+    expect(queue.vehicle_reports).toHaveLength(1);
+    const report = queue.vehicle_reports[0];
+    // The customer's own words, as typed. A summary of them is not evidence.
+    expect(report.note).toBe('It was a red hire van with no signwriting.');
+    expect(report.order_item_id).toBe('i-van');
+    expect(report.business_name).toBe('Hard Rain');
+    // The van as the account describes it now, which is the comparison the
+    // person reading this has to make.
+    expect(report.vehicle_label).toBe('white Ford Transit · 8ABC123');
+    expect(report.reported_at).toBeGreaterThan(0);
+  });
+
+  it('does not count as a bypass flag against the business', async () => {
+    const op = await signIn('van2@example.com');
+    const token = await jobWithGuestLink(op.opId);
+    await call('POST', `/api/public/threads/${token}/vehicle/i-van`,
+      { body: { note: 'Different van.' } });
+
+    // A hire van is the ordinary explanation. Counting it would put it into
+    // the rate flagSummary compares against peers, and — because bypass_flags
+    // is unique on (order_item_id, kind) — would swallow a real location_dark
+    // on the same booking afterwards.
+    const flags = await one<{ n: number }>(`SELECT COUNT(*) AS n FROM bypass_flags`);
+    expect(flags?.n).toBe(0);
+
+    const summary = await (await call('GET', '/api/flags',
+      { cookie: op.cookie })).json() as any;
+    expect(summary.summary.flags).toBe(0);
+  });
+
+  it('tells the operator, without repeating the accusation at them', async () => {
+    const op = await signIn('van3@example.com');
+    const token = await jobWithGuestLink(op.opId);
+    await call('POST', `/api/public/threads/${token}/vehicle/i-van`,
+      { body: { note: 'The driver would not say who he was.' } });
+
+    const note = await one<{ title: string; body: string }>(
+      `SELECT title, body FROM notifications WHERE operator_id = ?`, op.opId);
+    expect(note?.title).toContain('did not recognise your van');
+    // Somebody driving a hire van because theirs is in the garage should read
+    // this as "update your details", not as a report of what a customer said
+    // about them.
+    expect(note?.body).not.toContain('would not say who he was');
+  });
+
+  it('refuses a booking that is not on the caller\'s own order', async () => {
+    const mine = await signIn('van4@example.com');
+    const theirs = await signIn('van5@example.com');
+    const token = await jobWithGuestLink(mine.opId);
+    const t = now();
+    await env.DB.prepare(
+      `INSERT INTO orders (id,status,guest_name,currency,total_cents,created_at,updated_at)
+       VALUES ('o-other','confirmed','Sam','USD',6500,?,?)`,
+    ).bind(t, t).run();
+    await env.DB.prepare(
+      `INSERT INTO order_items (id,order_id,operator_id,starts_at,ends_at,duration_seconds,
+         price_cents,created_at)
+       VALUES ('i-other','o-other',?,?,?,3600,6500,?)`,
+    ).bind(theirs.opId, t + 3600, t + 7200, t).run();
+
+    const res = await call('POST', `/api/public/threads/${token}/vehicle/i-other`,
+      { body: { note: 'nothing to do with me' } });
+    expect(res.status).toBe(404);
+    const row = await one<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM order_items WHERE vehicle_reported_at IS NOT NULL`);
+    expect(row?.n).toBe(0);
+  });
+});

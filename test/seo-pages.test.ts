@@ -482,8 +482,13 @@ describe('site chrome', () => {
     expect(page).toContain('Browse by category');
     expect(page).toContain('Browse by service');
     expect(page).toContain('Open near you');
-    // A label with no page behind it is text, not a link that lies.
-    expect(page).toContain('<span class="foot-soon">Terms</span>');
+    // A label with no page behind it is still text rather than a link that
+    // lies. 'Careers' is one of those; 'Terms' used to be, and is now a link
+    // in the legal line under the columns because the page exists — see the
+    // footer pins in two-trees.test.ts.
+    expect(page).toContain('<span class="foot-soon">Careers</span>');
+    expect(page).toContain('<a href="/terms">Terms of service</a>');
+    expect(page).not.toContain('<span class="foot-soon">Terms</span>');
   });
 });
 

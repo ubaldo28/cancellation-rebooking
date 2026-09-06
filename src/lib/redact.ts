@@ -280,3 +280,31 @@ export function maskClientRow<T extends Record<string, unknown>>(
   if ('last_name' in out) out.last_name = null;
   return out as T;
 }
+
+/**
+ * The doorstep, withdrawn again once the booking it was released for is gone.
+ *
+ * Migration 0022 released the street address to the operator at the moment a
+ * booking exists and cleared `order_items.address_released_at` when it is
+ * cancelled, saying in as many words that the column exists so that "can they
+ * see it" is not re-derived from booking status in four different queries. It
+ * then had no reader at all: cancelling a job cleared the column and the
+ * schedule went on printing the address off the appointment row, so somebody
+ * who booked and cancelled had handed a stranger their address permanently —
+ * until the retention sweep caught up with it months later.
+ *
+ * Only rows that HAVE an order item are touched, and `released` is that item's
+ * column. An appointment with no item is the operator's own booking, taken
+ * from their own client list, and the release model has nothing to say about
+ * an address they typed in themselves.
+ */
+export function maskWithdrawnAddress<T extends Record<string, unknown>>(
+  row: T, orderItemId: string | null | undefined, released: number | null | undefined,
+): T {
+  if (!orderItemId || released != null) return row;
+  const out: Record<string, unknown> = { ...row };
+  // The coordinates go with the street line. A latitude and longitude to five
+  // decimal places is the address, written differently.
+  for (const k of ['address_line', 'lat', 'lng']) if (k in out) out[k] = null;
+  return out as T;
+}

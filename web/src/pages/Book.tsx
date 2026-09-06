@@ -31,7 +31,70 @@ import { useDocumentTitle } from '../lib/title';
  * Nothing on this page is calculated in the browser. Every price, length and
  * time comes back from the Worker's priceOrder, which is read-only and safe to
  * call on every tick; the browser only decides when to ask.
+ *
+ * WHY IT IS FOUR STEPS RATHER THAN ONE LONG PAGE.
+ *
+ * The reference marketplace never asks its questions all at once. It opens a
+ * modal and asks one thing per screen, and the screen that asks for something
+ * it does not strictly need — photographs — is headed "Optional" and carries a
+ * Skip. An account is only demanded once every question has been answered.
+ * They do that because a checkout is a sequence of small decisions, and a
+ * single screen carrying all of them at once reads as a form to be endured
+ * rather than a set of questions to be answered.
+ *
+ * Their questions are not ours and are not copied. Theirs describe a project
+ * that does not exist yet — what kind of property, what is wrong with it, when
+ * would you like it to start. Ours is a particular hour of a particular
+ * business's day that already exists and has a price on it, so the only things
+ * left to settle are which of their services to spend it on, where to send
+ * them, anything they should know before they set off, and whether the whole
+ * thing is right.
+ *
+ * What the split must not cost:
+ *   - the basket. It spans up to ten openings at different businesses on
+ *     different days, and it is still one basket priced by one call.
+ *   - anything typed. Every field is state on this component, so a step is
+ *     only ever a different view of it — going back changes nothing.
+ *   - a way forward. No step may be a dead end: where a button is off, the
+ *     sentence under it says what to do, and the thing to do is on the same
+ *     screen.
+ *   - the account that is never required. Nothing below asks for one.
  */
+
+/** The four questions, in the order they are asked. */
+type Step = 'what' | 'where' | 'extra' | 'confirm';
+
+const STEPS: readonly Step[] = ['what', 'where', 'extra', 'confirm'];
+
+/** What the progress trail calls each step. Short enough to sit on a phone. */
+const STEP_LABEL: Record<Step, string> = {
+  what: 'What you want',
+  where: 'Where you are',
+  extra: 'Anything to add',
+  confirm: 'Confirm',
+};
+
+/** What the step itself is headed, in the words somebody would use out loud. */
+const STEP_HEADING: Record<Step, string> = {
+  what: 'What would you like done?',
+  where: 'Where you are, and how to reach you',
+  extra: 'Anything the business should know?',
+  confirm: 'Check this over, then book',
+};
+
+const STEP_SUB: Record<Step, string> = {
+  what: 'Tick what you want from this opening. You can add openings from other '
+    + 'businesses and other days before you go on.',
+  where: 'Asked once, and it covers every appointment in your basket. There is '
+    + 'no account to create, here or later.',
+  extra: 'Optional. Skip it and nothing is lost — you can write to them in your '
+    + 'messages the moment this is booked.',
+  confirm: 'Nothing is booked until you press the button at the bottom. Every '
+    + 'answer above this can still be changed.',
+};
+
+const stepAfter = (s: Step): Step => STEPS[STEPS.indexOf(s) + 1] ?? s;
+const stepBefore = (s: Step): Step => STEPS[STEPS.indexOf(s) - 1] ?? s;
 
 /** Openings the Worker will take in one order. Its own limit is the same. */
 const MAX_ITEMS = 10;
@@ -188,9 +251,60 @@ export default function Book() {
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [zip, setZip] = useState(params.get('postcode') ?? '');
+  /**
+   * The optional message, sent into the booking's own conversation the moment
+   * the order exists.
+   *
+   * There is no note field on an order and one is not invented here: what a
+   * customer writes is a message, so it is posted as one with `guestSend` on
+   * the token the order comes back with. That means it lands in the same
+   * thread the business reads everything else in, and it means a failure to
+   * send it cannot cost anybody a booking that has already been taken.
+   */
+  const [note, setNote] = useState('');
 
   const [placing, setPlacing] = useState(false);
   const [placeError, setPlaceError] = useState<string | null>(null);
+
+  // --- which question is on screen ------------------------------------------
+  const [step, setStep] = useState<Step>('what');
+  /** Whatever stopped the step being left, said next to the control. */
+  const [stepError, setStepError] = useState<string | null>(null);
+  const heading = useRef<HTMLHeadingElement | null>(null);
+  const nameField = useRef<HTMLInputElement | null>(null);
+  const phoneField = useRef<HTMLInputElement | null>(null);
+  /**
+   * Whether a step has been changed yet.
+   *
+   * The focus move below is the whole point of the effect, and it is exactly
+   * wrong on the first paint: arriving on a page and having it grab your
+   * caret is the behaviour that makes an autofocused search box hated. So the
+   * first render is left alone and only a deliberate move is followed.
+   */
+  const stepped = useRef(false);
+
+  /**
+   * The one thing a multi-step form has to get right.
+   *
+   * Swapping the body of the page under a keyboard or a screen reader leaves
+   * focus on a control that no longer exists, and the reader goes quiet — the
+   * new question has been asked of somebody who cannot tell it was asked. So
+   * every move puts focus on the new step's heading, which is the first thing
+   * a sighted person reads too. The scroll is done separately because
+   * `preventScroll` keeps the browser from parking the heading halfway up the
+   * viewport with the page's own title scrolled off above it.
+   */
+  useEffect(() => {
+    if (!stepped.current) return;
+    window.scrollTo(0, 0);
+    heading.current?.focus({ preventScroll: true });
+  }, [step]);
+
+  const go = useCallback((to: Step) => {
+    stepped.current = true;
+    setStepError(null);
+    setStep(to);
+  }, []);
 
   /**
    * The bot check, when there is one.
@@ -344,6 +458,44 @@ export default function Book() {
     setPlaceError(null);
   }, []);
 
+  /**
+   * An empty basket has nothing to confirm, so nobody is left standing on a
+   * step asking where to send a van for no appointments. Removing the last
+   * line of a basket from the confirm step is the ordinary way to arrive here,
+   * and it must land on the step that can start one again rather than on three
+   * questions about nothing.
+   */
+  useEffect(() => {
+    if (wanted.length === 0 && step !== 'what') go('what');
+  }, [wanted.length, step, go]);
+
+  /**
+   * Leaving a step forwards.
+   *
+   * Each step is its own form, so Enter in a field does what Enter in a field
+   * should do and the browser's own required-field messages appear where the
+   * browser puts them. This adds the one check `required` cannot make — a
+   * field holding nothing but spaces passes it — and puts focus on the field
+   * it is complaining about, because a message about a control the caret is
+   * nowhere near is a message nobody acts on.
+   */
+  const advance = useCallback((e: FormEvent) => {
+    e.preventDefault();
+    if (step === 'where') {
+      if (!name.trim()) {
+        setStepError(PROBLEM.no_name!);
+        nameField.current?.focus();
+        return;
+      }
+      if (!phone.trim()) {
+        setStepError('Add a mobile number, so the business can reach you on the day.');
+        phoneField.current?.focus();
+        return;
+      }
+    }
+    go(stepAfter(step));
+  }, [step, name, phone, go]);
+
   const submit = useCallback(async (e: FormEvent) => {
     e.preventDefault();
     if (placing || wanted.length === 0) return;
@@ -365,6 +517,16 @@ export default function Book() {
         setPlaceError('Your booking went through, but we could not open your '
           + `conversation. Keep this reference and contact the business: ${res.order_id}`);
         return;
+      }
+      // What they wrote on the optional step, posted into the conversation the
+      // order just opened. Deliberately after the order and deliberately
+      // swallowed on failure: the appointment is booked either way, and
+      // showing somebody an error over a courtesy note would tell them the
+      // booking failed when it did not. They land in the thread a second
+      // later and can see whether it is there.
+      const aside = note.trim();
+      if (aside) {
+        try { await api.guestSend(res.thread_token, aside); } catch { /* see above */ }
       }
       // The basket is spent. Leaving it would re-offer slots that are now
       // theirs the next time they open the site in this tab.
@@ -389,7 +551,7 @@ export default function Book() {
     } finally {
       setPlacing(false);
     }
-  }, [placing, wanted, name, phone, address, zip, threadToken, navigate]);
+  }, [placing, wanted, name, phone, address, zip, note, threadToken, navigate]);
 
   // Named after the business once we know it. An opening that has gone says so
   // in the tab too, because that is the branch the page renders.
@@ -401,6 +563,33 @@ export default function Book() {
   const orderProblems = priced?.problems ?? [];
   const ready = Boolean(priced?.ok) && wanted.length > 0;
   const isSample = menu?.slot?.is_sample ?? false;
+
+  const stepNo = STEPS.indexOf(step) + 1;
+  /** The businesses in the basket, by name, from the priced rows and nowhere else. */
+  const businesses = [...new Set((priced?.items ?? []).map((i) => i.business_name))];
+  /**
+   * The wizard is drawn whenever there is anything to book — which includes an
+   * opening that has since gone while a basket built somewhere else is still
+   * held. Losing the checkout because the one opening in the URL was claimed
+   * would strand a customer holding nine other appointments.
+   */
+  const wizard = menuState === 'ready' || menuState === 'nolist' || basket.length > 0;
+  /**
+   * Why the first step cannot be left yet, or null when it can.
+   *
+   * Worked out here rather than in the markup so that the button's disabled
+   * state and the sentence explaining it are the same decision and cannot come
+   * to disagree. Both of the reasons below are answerable on the step itself:
+   * the services are above the button, and every broken basket line carries
+   * its own Remove.
+   */
+  const heldUp: string | null = step !== 'what' ? null
+    : wanted.length === 0
+      ? 'Tick a service above and this button turns on.'
+      : priced !== null && !priced.ok
+        ? 'One of the appointments above needs sorting out first. The note is '
+          + 'on the line it belongs to, and Remove keeps the rest of the basket.'
+        : null;
 
   return (
     <div className="land">
@@ -437,7 +626,11 @@ export default function Book() {
 
         {menuState === 'loading' && <Spinner label="Opening this appointment" />}
 
-        {menuState === 'error' && (
+        {/* Both panels below are about the opening in the URL, which is a
+            question the first step asks and the later ones have moved past.
+            Left on screen at the confirm step they would read as a fresh
+            failure of the thing about to be booked. */}
+        {menuState === 'error' && step === 'what' && (
           <div className="blank" style={{ marginTop: 20 }}>
             {menuError ?? 'Could not open this opening.'}
             <div style={{ marginTop: 14 }}>
@@ -448,7 +641,7 @@ export default function Book() {
           </div>
         )}
 
-        {menuState === 'gone' && (
+        {menuState === 'gone' && step === 'what' && (
           <div className="blank" style={{ marginTop: 20 }}>
             <p style={{ margin: '0 0 14px' }}>
               {goneWhy
@@ -466,9 +659,22 @@ export default function Book() {
 
         {menu && (menuState === 'ready' || menuState === 'nolist') && (
           <>
+            {/* THE TITLE HAS TO SURVIVE A BASKET.
+                It named the business in the URL, which was right when this page
+                sold one opening and stopped being right the moment a second
+                business went into the basket: a confirm step listing two
+                companies under one company's name tells the reader the wrong
+                thing about what they are buying. Both lines are counted from
+                the priced order — the businesses that are actually in it, and
+                how many appointments — and fall back to the opening in the URL,
+                which is all there is before anything has been ticked. */}
             <section className="book-head">
-              <span className="eyebrow">Book an appointment</span>
-              <h1>{menu.businessName}</h1>
+              <span className="eyebrow">
+                {wanted.length > 1 ? `Book ${wanted.length} appointments` : 'Book an appointment'}
+              </span>
+              <h1>
+                {businesses.length > 1 ? 'Your booking' : businesses[0] ?? menu.businessName}
+              </h1>
               {menu.slot && (
                 <p className="book-when">
                   Listed as {menu.slot.when}. The opening runs for up to{' '}
@@ -494,210 +700,301 @@ export default function Book() {
                 real company, nobody will arrive, and it holds no licence.
               </p>
             )}
+          </>
+        )}
 
-            <section className="card book-card" aria-labelledby="pick">
-              <h2 id="pick">What would you like?</h2>
-              <p className="book-sub">
-                Tick as many as you want. They are done in the one visit, and
-                the total below updates as you go.
+        {/* --- where you are in the four questions -------------------------
+            The trail is a real list of four items rather than four coloured
+            dots, so it says what the steps are and not merely how many are
+            left. A step already answered is a button back to it — the
+            shortest way to change an answer from the confirm step, and a
+            second route back beside the Back control on every step. A step
+            not yet reached is plain text: it is not a shortcut past the
+            question in front of it. */}
+        {wizard && (
+          <>
+            <nav className="book-trail" aria-label="Booking steps">
+              <ol>
+                {STEPS.map((s, i) => {
+                  const done = i < stepNo - 1;
+                  const now = s === step;
+                  return (
+                    <li key={s} className={now ? 'now' : done ? 'done' : ''}>
+                      {done ? (
+                        <button type="button" onClick={() => go(s)}>
+                          <span className="book-trail-i" aria-hidden="true">{i + 1}</span>
+                          {STEP_LABEL[s]}
+                          <span className="sr-only"> — done, go back to it</span>
+                        </button>
+                      ) : (
+                        <span {...(now ? { 'aria-current': 'step' as const } : {})}>
+                          <span className="book-trail-i" aria-hidden="true">{i + 1}</span>
+                          {STEP_LABEL[s]}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            </nav>
+
+            {/* The heading takes focus on every move, so it is the thing a
+                screen reader reads when the page changes under it. The count
+                beside it is a live region as well as a visible line: the
+                heading answers "what am I being asked", and this answers "how
+                much of this is left", which is the question a wizard owes
+                somebody who cannot see the trail above. */}
+            <header className="book-step-head">
+              <p className="book-step-n" role="status" aria-live="polite">
+                Step {stepNo} of {STEPS.length}
               </p>
+              <h2 id="book-step" tabIndex={-1} ref={heading}>{STEP_HEADING[step]}</h2>
+              <p className="book-step-sub">{STEP_SUB[step]}</p>
+            </header>
 
-              {menuState === 'nolist' ? (
-                <p className="book-problem">
-                  We could not list what this business does in this opening.
-                  That is a gap on our side, not a sign the opening is gone.
-                  Try again, or pick another opening from the map.
-                </p>
-              ) : (
-                <div className="book-svcs">
-                  {menu.services.map((s) => {
-                    const on = chosen.includes(s.service_id);
-                    // A service longer than the whole opening can never be
-                    // bought here. Showing it greyed out with the reason beats
-                    // letting somebody tick it and meet too_long.
-                    const overruns = s.duration_seconds > menu.windowSeconds;
-                    const blocked = (!on && full) || (!on && overruns);
-                    return (
-                      <button key={s.service_id} type="button" className="book-svc"
-                        aria-pressed={on} disabled={blocked}
-                        onClick={() => toggle(s.service_id)}>
-                        <span className="book-tick" aria-hidden="true">
-                          <Icon name="tick" size={15} stroke={2.6} />
-                        </span>
-                        <span className="book-svc-name">{s.name}</span>
-                        <span className="book-svc-price">{s.price}</span>
-                        <span className="book-svc-len">
-                          {durationLabel(s.duration_seconds)}
-                          {overruns && ' · longer than this opening'}
-                          {!overruns && blocked && ' · basket is full'}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* The one number the whole page is about, announced when it
-                  changes rather than only redrawn. */}
-              <div className={`book-sum${priced && !priced.ok ? ' tight' : ''}`}
-                role="status" aria-live="polite">
-                <div className="book-sum-row">
-                  <span className="book-sum-label">
-                    {wanted.length > 1 ? `Total · ${wanted.length} appointments` : 'Total'}
-                  </span>
-                  <span className="book-sum-total">
-                    {pricing && !priced ? '—' : priced?.total ?? '—'}
-                  </span>
-                </div>
-                <span className="book-sum-note">
-                  {pricing ? 'Working out your total…'
-                    : priceError ? priceError
-                    : !priced ? 'Nothing ticked yet.'
-                    : `${durationLabel(priced.duration_seconds)} of work in total`
-                      + `${priced.ok ? ' · everything fits' : ''}`}
+            {/* The total, on the two steps that are not about it.
+                Splitting a checkout into screens is only worth doing if the
+                number the whole thing is for stays in sight; a form that has
+                quietly stopped saying what it costs is how somebody arrives at
+                a Book button unsure what they are agreeing to. The first step
+                prints it in full and the last one itemises it, so this is only
+                for the two in between. */}
+            {(step === 'where' || step === 'extra') && priced && (
+              <p className="book-mini">
+                <span className="book-mini-total">{priced.total}</span>
+                <span>
+                  {wanted.length === 1 ? '1 appointment' : `${wanted.length} appointments`}
+                  {' · '}{durationLabel(priced.duration_seconds)} of work
                 </span>
-                {/* This used to read "This is the full price. Nothing is
-                    added on top." for every basket, which was simply false for
-                    half the trades on the site: a mobile mechanic cannot know
-                    whether your car needs a $40 sensor or a $400 alternator
-                    until they are under the hood. So the promise is now made
-                    per basket and only where it is true, and where it is not
-                    true the customer is told exactly what happens instead —
-                    which is a better promise anyway, because it is one that
-                    can be kept. */}
-                {priced && priced.items.length > 0 && (
-                  partsLines.length === 0 ? (
-                    <span className="book-sum-note">
-                      This is the full price. Nothing is added on top.
-                    </span>
-                  ) : (
-                    <span className="book-sum-note">
-                      This covers the work itself. Nothing else is ever charged
-                      unless you approve it first — see below.
-                    </span>
-                  )
-                )}
-              </div>
-
-              {/* Parts, said plainly, once per service that has anything to
-                  say. Nobody reads a disclaimer at the bottom of a checkout;
-                  they read the line attached to the thing they just ticked. */}
-              {partsLines.length > 0 && (
-                <div className="book-parts">
-                  {partsLines.map((p) => (
-                    <p key={p.key} className="book-parts-row">
-                      <strong>{p.name}</strong> — {p.line}
-                      {p.note && <><br /><span className="faint">“{p.note}”</span></>}
-                    </p>
-                  ))}
-                </div>
-              )}
-
-              {priceError && (
-                <button className="btn quiet sm" type="button"
-                  onClick={() => setRecheck((n) => n + 1)}>
-                  Try again
-                </button>
-              )}
-            </section>
-
-            {full && (
-              <p className="book-problem">{PROBLEM.too_many_items}</p>
+              </p>
             )}
           </>
         )}
 
-        {/* --- the basket ------------------------------------------------ */}
-        {basket.length > 0 && (
-          <section className="card book-card" aria-labelledby="basket">
-            <h2 id="basket">Your basket</h2>
-            <p className="book-sub">
-              Openings from different businesses and different days can sit here
-              together. They are held in this tab only, and nothing is booked
-              until you finish below.
-            </p>
+        {/* --- 1. what you want done --------------------------------------- */}
+        {wizard && step === 'what' && (
+          <form className="book-step" onSubmit={advance}>
+            {menu && (menuState === 'ready' || menuState === 'nolist') && (
+              <section className="card book-card" aria-labelledby="pick">
+                <h3 id="pick">Services in this opening</h3>
+                <p className="book-sub">
+                  Tick as many as you want. They are done in the one visit, and
+                  the total below updates as you go.
+                </p>
 
-            <div className="book-items">
-              {basket.map((row) => {
-                const p = byGap.get(row.gap_id) ?? null;
-                const problems = p?.problems ?? [];
-                const broken = problems.some((x) => FATAL.has(x.code));
-                const here = row.gap_id === gapId;
-                return (
-                  <article key={row.gap_id}
-                    className={`book-item${broken ? ' bad' : here ? ' here' : ''}`}>
-                    <div className="book-item-top">
-                      <h3>{p?.business_name || 'This appointment'}</h3>
-                      {p && !broken && <span className="book-item-price">{p.price}</span>}
-                    </div>
-
-                    {p?.when && !broken && <p className="book-item-when">{p.when}</p>}
-
-                    {p && p.services.length > 0 && (
-                      <ul>
-                        {p.services.map((s) => (
-                          <li key={s.service_id}>
-                            {s.name} · {durationLabel(s.duration_seconds)} · {s.price}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-
-                    {!p && pricing && <p className="book-item-when">Checking this one…</p>}
-
-                    {problems.map((x) => (
-                      <p key={x.code} className="book-problem">{say(x.code, x.message)}</p>
-                    ))}
-
-                    <div className="book-item-ops">
+                {menuState === 'nolist' ? (
+                  <>
+                    <p className="book-problem">
+                      We could not list what this business does in this opening.
+                      That is a gap on our side, not a sign the opening is gone.
+                    </p>
+                    {/* A step with nothing on it to tick would otherwise be the
+                        one place in this flow with no way forward, so the two
+                        things that can still be done are put in it. */}
+                    <div className="book-nav">
                       <button className="btn quiet sm" type="button"
-                        onClick={() => remove(row.gap_id)}>
-                        Remove{broken ? ' and keep the rest' : ''}
+                        onClick={() => void loadMenu()}>
+                        Try again
                       </button>
-                      {!here && (
-                        <Link className="btn quiet sm" to={`/book/${row.gap_id}`}>
-                          Change services
-                        </Link>
-                      )}
+                      <Link className="btn quiet sm" to="/">Pick another opening</Link>
                     </div>
-                  </article>
-                );
-              })}
-            </div>
+                  </>
+                ) : (
+                  <div className="book-svcs">
+                    {menu.services.map((s) => {
+                      const on = chosen.includes(s.service_id);
+                      // A service longer than the whole opening can never be
+                      // bought here. Showing it greyed out with the reason beats
+                      // letting somebody tick it and meet too_long.
+                      const overruns = s.duration_seconds > menu.windowSeconds;
+                      const blocked = (!on && full) || (!on && overruns);
+                      return (
+                        <button key={s.service_id} type="button" className="book-svc"
+                          aria-pressed={on} disabled={blocked}
+                          onClick={() => toggle(s.service_id)}>
+                          <span className="book-tick" aria-hidden="true">
+                            <Icon name="tick" size={15} stroke={2.6} />
+                          </span>
+                          <span className="book-svc-name">{s.name}</span>
+                          <span className="book-svc-price">{s.price}</span>
+                          <span className="book-svc-len">
+                            {durationLabel(s.duration_seconds)}
+                            {overruns && ' · longer than this opening'}
+                            {!overruns && blocked && ' · basket is full'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
 
-            {orderProblems.map((x) => (
-              <p key={x.code} className="book-problem">{say(x.code, x.message)}</p>
-            ))}
+                {/* The one number the whole page is about, announced when it
+                    changes rather than only redrawn. */}
+                <div className={`book-sum${priced && !priced.ok ? ' tight' : ''}`}
+                  role="status" aria-live="polite">
+                  <div className="book-sum-row">
+                    <span className="book-sum-label">
+                      {wanted.length > 1 ? `Total · ${wanted.length} appointments` : 'Total'}
+                    </span>
+                    <span className="book-sum-total">
+                      {pricing && !priced ? '—' : priced?.total ?? '—'}
+                    </span>
+                  </div>
+                  <span className="book-sum-note">
+                    {pricing ? 'Working out your total…'
+                      : priceError ? priceError
+                      : !priced ? 'Nothing ticked yet.'
+                      : `${durationLabel(priced.duration_seconds)} of work in total`
+                        + `${priced.ok ? ' · everything fits' : ''}`}
+                  </span>
+                  {/* This used to read "This is the full price. Nothing is
+                      added on top." for every basket, which was simply false for
+                      half the trades on the site: a mobile mechanic cannot know
+                      whether your car needs a $40 sensor or a $400 alternator
+                      until they are under the hood. So the promise is now made
+                      per basket and only where it is true, and where it is not
+                      true the customer is told exactly what happens instead —
+                      which is a better promise anyway, because it is one that
+                      can be kept. */}
+                  {priced && priced.items.length > 0 && (
+                    partsLines.length === 0 ? (
+                      <span className="book-sum-note">
+                        This is the full price. Nothing is added on top.
+                      </span>
+                    ) : (
+                      <span className="book-sum-note">
+                        This covers the work itself. Nothing else is ever charged
+                        unless you approve it first — see below.
+                      </span>
+                    )
+                  )}
+                </div>
 
-            {!full && (
-              <Link className="btn ghost" to="/">
-                <Icon name="plus" size={18} />
-                Add another appointment
-              </Link>
+                {/* Parts, said plainly, once per service that has anything to
+                    say. Nobody reads a disclaimer at the bottom of a checkout;
+                    they read the line attached to the thing they just ticked. */}
+                {partsLines.length > 0 && (
+                  <div className="book-parts">
+                    {partsLines.map((p) => (
+                      <p key={p.key} className="book-parts-row">
+                        <strong>{p.name}</strong> — {p.line}
+                        {p.note && <><br /><span className="faint">“{p.note}”</span></>}
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                {priceError && (
+                  <button className="btn quiet sm" type="button"
+                    onClick={() => setRecheck((n) => n + 1)}>
+                    Try again
+                  </button>
+                )}
+              </section>
             )}
-          </section>
+
+            {full && (
+              <p className="book-problem">{PROBLEM.too_many_items}</p>
+            )}
+
+            {/* --- the basket ------------------------------------------------ */}
+            {basket.length > 0 && (
+              <section className="card book-card" aria-labelledby="basket">
+                <h3 id="basket">Your basket</h3>
+                <p className="book-sub">
+                  Openings from different businesses and different days can sit here
+                  together. They are held in this tab only, and nothing is booked
+                  until you press the button on the last step.
+                </p>
+
+                <div className="book-items">
+                  {basket.map((row) => {
+                    const p = byGap.get(row.gap_id) ?? null;
+                    const problems = p?.problems ?? [];
+                    const broken = problems.some((x) => FATAL.has(x.code));
+                    const here = row.gap_id === gapId;
+                    return (
+                      <article key={row.gap_id}
+                        className={`book-item${broken ? ' bad' : here ? ' here' : ''}`}>
+                        <div className="book-item-top">
+                          <h4>{p?.business_name || 'This appointment'}</h4>
+                          {p && !broken && <span className="book-item-price">{p.price}</span>}
+                        </div>
+
+                        {p?.when && !broken && <p className="book-item-when">{p.when}</p>}
+
+                        {p && p.services.length > 0 && (
+                          <ul>
+                            {p.services.map((s) => (
+                              <li key={s.service_id}>
+                                {s.name} · {durationLabel(s.duration_seconds)} · {s.price}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        {!p && pricing && <p className="book-item-when">Checking this one…</p>}
+
+                        {problems.map((x) => (
+                          <p key={x.code} className="book-problem">{say(x.code, x.message)}</p>
+                        ))}
+
+                        <div className="book-item-ops">
+                          <button className="btn quiet sm" type="button"
+                            onClick={() => remove(row.gap_id)}>
+                            Remove{broken ? ' and keep the rest' : ''}
+                          </button>
+                          {!here && (
+                            <Link className="btn quiet sm" to={`/book/${row.gap_id}`}>
+                              Change services
+                            </Link>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+
+                {orderProblems.map((x) => (
+                  <p key={x.code} className="book-problem">{say(x.code, x.message)}</p>
+                ))}
+
+                {!full && (
+                  <Link className="btn ghost" to="/">
+                    <Icon name="plus" size={18} />
+                    Add another appointment
+                  </Link>
+                )}
+              </section>
+            )}
+
+            {basket.length === 0 && menuState === 'ready' && (
+              <div className="blank">
+                Your basket is empty. Tick a service above to start one.
+              </div>
+            )}
+
+            <div className="book-nav">
+              <button className="btn block" type="submit" disabled={heldUp !== null}>
+                Continue
+              </button>
+              {heldUp && <p className="book-nav-why">{heldUp}</p>}
+            </div>
+          </form>
         )}
 
-        {basket.length === 0 && menuState === 'ready' && (
-          <div className="blank">
-            Your basket is empty. Tick a service above to start one.
-          </div>
-        )}
-
-        {/* --- details, then the review ---------------------------------- */}
-        {wanted.length > 0 && (
-          <form className="card book-card" onSubmit={submit} aria-labelledby="details">
-            <h2 id="details">Your details</h2>
-            <p className="book-sub">
-              Asked once, and it covers every appointment in the basket. There is
-              no account to create.
-            </p>
-
+        {/* --- 2. where you are -------------------------------------------
+            The same four fields the single page asked for, in the same order,
+            with the same rules about which are needed. Nothing here is new;
+            it is only no longer sharing a screen with a basket, a price, a
+            cancellation policy and a bot check. */}
+        {wizard && step === 'where' && (
+          <form className="card book-card book-step" onSubmit={advance}>
             <div className="book-fields">
               <label htmlFor="bk-name">
                 Your name
                 <input id="bk-name" name="name" value={name} required
-                  autoComplete="given-name" enterKeyHint="next"
+                  ref={nameField} autoComplete="given-name" enterKeyHint="next"
                   onChange={(e) => setName(e.target.value)} />
               </label>
 
@@ -705,7 +1002,7 @@ export default function Book() {
                 <label htmlFor="bk-phone">
                   Mobile number
                   <input id="bk-phone" name="phone" type="tel" value={phone} required
-                    autoComplete="tel" inputMode="tel" enterKeyHint="next"
+                    ref={phoneField} autoComplete="tel" inputMode="tel" enterKeyHint="next"
                     aria-describedby="bk-phone-hint"
                     onChange={(e) => setPhone(e.target.value)} />
                 </label>
@@ -731,12 +1028,63 @@ export default function Book() {
               <label htmlFor="bk-zip">
                 Postcode or ZIP
                 <input id="bk-zip" name="postcode" value={zip}
-                  autoComplete="postal-code" enterKeyHint="done"
+                  autoComplete="postal-code" enterKeyHint="next"
                   onChange={(e) => setZip(e.target.value)} />
               </label>
             </div>
 
-            <h2>Before you book</h2>
+            {stepError && <div className="error">{stepError}</div>}
+
+            <div className="book-nav">
+              <button className="btn quiet" type="button" onClick={() => go(stepBefore(step))}>
+                Back
+              </button>
+              <button className="btn" type="submit">Continue</button>
+            </div>
+          </form>
+        )}
+
+        {/* --- 3. anything they should know -------------------------------
+            The optional one. It is skippable in a single press and says so on
+            the button itself rather than beside it: a customer who has typed
+            nothing gets a button that reads Skip, and one who has typed
+            something gets Continue. A separate Skip sitting next to a box with
+            words in it asks a question nobody should have to answer — whether
+            pressing it throws the words away. */}
+        {wizard && step === 'extra' && (
+          <form className="card book-card book-step" onSubmit={advance}>
+            <div className="book-field">
+              <label htmlFor="bk-note">
+                A message for the business
+                <textarea id="bk-note" name="note" rows={5} value={note}
+                  aria-describedby="bk-note-hint" maxLength={2000}
+                  onChange={(e) => setNote(e.target.value)} />
+              </label>
+              <p className="book-hint" id="bk-note-hint">
+                Where to park, which gate, the dog in the yard, the make of the
+                car — whatever saves them a phone call. You do not need to
+                include your name or number: they already have both from the
+                last step. It is sent as the first message in your booking, and
+                you can add to it any time afterwards.
+              </p>
+            </div>
+
+            <div className="book-nav">
+              <button className="btn quiet" type="button" onClick={() => go(stepBefore(step))}>
+                Back
+              </button>
+              <button className="btn" type="submit">
+                {note.trim() ? 'Continue' : 'Skip this step'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* --- 4. confirm --------------------------------------------------- */}
+        {wizard && step === 'confirm' && wanted.length > 0 && (
+          <form className="card book-card book-step" onSubmit={submit}
+            aria-labelledby="book-step">
+            <h3>What you are booking</h3>
             <div className="book-sum">
               <div className="book-sum-row">
                 <span className="book-sum-label">
@@ -750,6 +1098,85 @@ export default function Book() {
                   : 'Working out your total…'}
               </span>
             </div>
+
+            {/* The lines themselves, read-only. The basket with its Remove
+                buttons is one step back and the trail above reaches it in one
+                press, so this is a statement of what is about to happen rather
+                than a second place to edit it. Every word of it comes from the
+                priced order, so it cannot describe a basket different from the
+                one the button sends. */}
+            {priced && priced.items.length > 0 && (
+              <ul className="book-recap">
+                {priced.items.map((it) => (
+                  <li key={it.gap_id}>
+                    <span className="book-recap-top">
+                      <strong>{it.business_name}</strong>
+                      <span className="book-recap-price">{it.price}</span>
+                    </span>
+                    {it.when && <span className="book-recap-when">{it.when}</span>}
+                    <span className="book-recap-svc">
+                      {it.services.map((s) => s.name).join(' · ')}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {/* The two answers that are not visible anywhere else on this
+                step, each with the way back to the step that set it. A confirm
+                screen that shows only the price is asking somebody to confirm
+                a thing they cannot see. */}
+            <dl className="book-answers">
+              <div>
+                <dt>Booked for</dt>
+                <dd>
+                  {name.trim() || '—'}
+                  {phone.trim() ? ` · ${phone.trim()}` : ''}
+                  {address.trim() ? ` · ${address.trim()}` : ''}
+                  {zip.trim() ? ` · ${zip.trim()}` : ''}
+                  {' '}
+                  <button type="button" className="linkish" onClick={() => go('where')}>
+                    Change<span className="sr-only"> where you are and how to reach you</span>
+                  </button>
+                </dd>
+              </div>
+              <div>
+                <dt>Your message</dt>
+                <dd>
+                  {note.trim() || 'None — you left that step blank.'}
+                  {' '}
+                  <button type="button" className="linkish" onClick={() => go('extra')}>
+                    Change<span className="sr-only"> your message for the business</span>
+                  </button>
+                </dd>
+              </div>
+            </dl>
+
+            {/* A slot lost while the last three questions were being answered
+                is the common failure on a checkout, and the fix for it is one
+                step back rather than a sentence apologising here. */}
+            {(orderProblems.length > 0 || (priced !== null && !priced.ok)) && (
+              <div className="book-problem">
+                {orderProblems.map((x) => (
+                  <p key={x.code} style={{ margin: 0 }}>{say(x.code, x.message)}</p>
+                ))}
+                {/* Not `not_bookable`, whose wording — "check the notes on each
+                    opening above" — was written for the page where the basket
+                    and the button shared a screen. On this step there are no
+                    notes above: the lines they are attached to are a step back,
+                    which is what this says and what the button under it does. */}
+                <p style={{ margin: orderProblems.length ? '8px 0 0' : 0 }}>
+                  One of the appointments in your basket cannot be booked as it
+                  stands. The line it is about says why, one step back, and
+                  removing it keeps the rest.
+                </p>
+                <div className="book-nav" style={{ marginTop: 10 }}>
+                  <button className="btn quiet sm" type="button" onClick={() => go('what')}>
+                    Back to your basket
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Says what the button does, FIRST, and before the rules rather
                 than after them. The old page promised money changes hands
@@ -840,12 +1267,22 @@ export default function Book() {
 
             {placeError && <div className="error">{placeError}</div>}
 
-            <button className="btn block" type="submit" disabled={!ready || placing}>
-              {placing ? 'Holding your appointments…' : 'Book — no payment taken yet'}
-            </button>
+            <div className="book-nav">
+              {/* Back is beside the button that spends the money on every
+                  step, this one included. A last screen that can only be gone
+                  forward from is the shape that makes people abandon a
+                  checkout rather than correct one answer in it. */}
+              <button className="btn quiet" type="button" disabled={placing}
+                onClick={() => go(stepBefore(step))}>
+                Back
+              </button>
+              <button className="btn" type="submit" disabled={!ready || placing}>
+                {placing ? 'Holding your appointments…' : 'Book — no payment taken yet'}
+              </button>
+            </div>
 
             {!ready && !placing && (
-              <p className="book-sub" style={{ marginTop: 0 }}>
+              <p className="book-nav-why">
                 {pricing
                   ? 'Checking your basket is still bookable…'
                   : 'Sort out the notes above and this button turns on.'}

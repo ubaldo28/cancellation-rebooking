@@ -220,7 +220,7 @@ export async function priceOrder(
   if (list.length > MAX_ITEMS) {
     problems.push({
       code: 'too_many_items',
-      message: `An order can hold at most ${MAX_ITEMS} slots.`,
+      message: `An order can hold at most ${MAX_ITEMS} openings.`,
     });
   }
 
@@ -245,24 +245,24 @@ export async function priceOrder(
     if (!gap || barred || gap.accept_public_bookings !== 1
         || !['trial', 'active'].includes(gap.plan)) {
       priced.push(emptyItem(gapId, [{
-        code: 'slot_gone', message: 'That slot is no longer listed.',
+        code: 'slot_gone', message: 'That opening is no longer listed.',
       }]));
       continue;
     }
     if (seenGaps.has(gapId)) {
       priced.push(emptyItem(gapId, [{
         code: 'duplicate_gap',
-        message: `That slot at ${gap.business_name} is already in your basket.`,
+        message: `That opening at ${gap.business_name} is already in your basket.`,
       }]));
       continue;
     }
     seenGaps.add(gapId);
 
     if (!['open', 'offering'].includes(gap.status) || gap.claimed > 0) {
-      itemProblems.push({ code: 'slot_taken', message: 'Sorry — that slot has just been taken.' });
+      itemProblems.push({ code: 'slot_taken', message: 'Sorry — that opening has just been taken.' });
     }
     if (gap.starts_at <= t) {
-      itemProblems.push({ code: 'slot_passed', message: 'That slot has already started.' });
+      itemProblems.push({ code: 'slot_passed', message: 'That opening has already started.' });
     }
 
     const locale = localeFor(gap.country, gap.language);
@@ -294,7 +294,7 @@ export async function priceOrder(
       if (allow && !allow.has(id)) {
         itemProblems.push({
           code: 'service_not_in_slot',
-          message: `${svc.name} is not offered in that slot.`,
+          message: `${svc.name} is not offered in that opening.`,
         });
         continue;
       }
@@ -320,8 +320,8 @@ export async function priceOrder(
     if (chosen.length > 0 && !fits) {
       itemProblems.push({
         code: 'too_long',
-        message: `That is ${Math.ceil((duration - window) / 60)} minutes more than the slot at `
-          + `${gap.business_name} can take. Drop a service or pick a longer slot.`,
+        message: `That is ${Math.ceil((duration - window) / 60)} minutes more than the opening at `
+          + `${gap.business_name} can take. Drop a service or pick a longer opening.`,
       });
     }
 
@@ -481,7 +481,7 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
     if (detour > row.max_detour_seconds
         || item.duration_seconds + travel > row.ends_at - row.starts_at) {
       throw conflict(
-        `${row.business_name} is now too far from their route for that slot.`, 'too_far');
+        `${row.business_name} is now too far from their route for that opening.`, 'too_far');
     }
     detours.set(item.gap_id, detour);
   }
@@ -655,7 +655,7 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
   } catch (e) {
     if (String(e).includes('UNIQUE') || String(e).includes('constraint')) {
       throw conflict(
-        'One of those slots was taken while you were checking out. '
+        'One of those openings was taken while you were checking out. '
         + 'Nothing has been booked — please pick again.', 'slot_taken');
     }
     throw e;
@@ -664,7 +664,7 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
   // A gap that changed zero rows was not taken by another claim — that would
   // have hit the unique index and rolled the batch back — it was withdrawn by
   // the operator between pricing and paying. Rare, but it leaves an order
-  // pointing at a slot that is no longer for sale, so the order is voided
+  // pointing at an opening that is no longer for sale, so the order is voided
   // rather than left looking successful.
   const stolen = [...gapUpdateIndex.entries()]
     .filter(([, i]) => (res[i]?.meta.changes ?? 0) === 0);
@@ -681,7 +681,7 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
       ).bind(t, t, p.appointment_id)),
     ]);
     throw conflict(
-      'One of those slots was withdrawn while you were checking out. '
+      'One of those openings was withdrawn while you were checking out. '
       + 'Nothing has been booked — please pick again.', 'slot_taken');
   }
 

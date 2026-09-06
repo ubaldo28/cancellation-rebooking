@@ -35,12 +35,94 @@
 }
 .wrap.book .book-back:hover { color: var(--ink); }
 
+/* --- the four steps ------------------------------------------------------
+   The trail is a list, not a row of dots: it says what the four questions are
+   and which one you are on. It wraps on a narrow screen rather than scrolling
+   sideways — a horizontal scroller with no focusable child is something a
+   keyboard cannot reach at all, and the four items are the same four on every
+   step, so wrapping costs no stability. */
+.wrap.book .book-trail { margin: 4px 0 -4px; }
+.wrap.book .book-trail ol {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px;
+  margin: 0; padding: 0; list-style: none;
+}
+.wrap.book .book-trail li { flex: 0 0 auto; }
+/* The rule between two steps only reads as a connector while the row is
+   unbroken, so on the widths where the trail wraps it is not drawn at all. */
+@media (min-width: 620px) {
+  .wrap.book .book-trail li + li::before {
+    content: ''; display: inline-block; width: 10px; height: 1px;
+    margin-right: 6px; vertical-align: middle; background: var(--line-strong);
+  }
+}
+.wrap.book .book-trail button,
+.wrap.book .book-trail span[aria-current],
+.wrap.book .book-trail li > span {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 11px; border-radius: 999px;
+  font-size: 13px; font-weight: 600; white-space: nowrap;
+  color: var(--muted); background: transparent; border: 1px solid transparent;
+}
+.wrap.book .book-trail button {
+  cursor: pointer; color: var(--ink-3); border-color: var(--line);
+  background: var(--surface);
+}
+.wrap.book .book-trail button:hover { color: var(--ink); border-color: var(--line-strong); }
+.wrap.book .book-trail li.now > span {
+  color: var(--accent-ink); background: var(--accent-soft); border-color: var(--accent-line);
+}
+.wrap.book .book-trail .book-trail-i {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 19px; height: 19px; border-radius: 50%;
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+  background: var(--surface-2); color: var(--muted);
+}
+.wrap.book .book-trail li.now .book-trail-i { background: var(--accent); color: #fff; }
+.wrap.book .book-trail li.done .book-trail-i { background: var(--ink-3); color: var(--surface); }
+
+.wrap.book .book-step-head { display: flex; flex-direction: column; gap: 7px; }
+.wrap.book .book-step-n {
+  margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+}
+/* The heading takes focus on every step change, so it has to have a visible
+   focus ring like anything else that can hold it. */
+.wrap.book .book-step-head h2 {
+  margin: 0; font-size: clamp(20px, 4.6vw, 24px); font-weight: 750; letter-spacing: -0.025em;
+}
+.wrap.book .book-step-sub {
+  margin: 0; font-size: 14px; line-height: 1.55; color: var(--ink-3);
+}
+
+.wrap.book .book-step { display: flex; flex-direction: column; gap: 18px; }
+.card.book-card.book-step { gap: 14px; }
+
+/* The price, kept in sight on the two steps that are not about it. */
+.wrap.book .book-mini {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin: 0; padding: 11px 14px; border-radius: var(--r-md);
+  font-size: 13px; color: var(--muted);
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.wrap.book .book-mini .book-mini-total {
+  font-family: var(--mono); font-size: 18px; font-weight: 700;
+  letter-spacing: -0.02em; color: var(--ink);
+}
+
+/* Back and forward, side by side, with Back never below the fold on a phone. */
+.wrap.book .book-nav { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.wrap.book .book-nav .btn { flex: 1 1 auto; justify-content: center; }
+.wrap.book .book-nav .btn.quiet { flex: 0 1 auto; }
+.wrap.book .book-nav-why {
+  flex-basis: 100%; margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted);
+}
+
 /* --- sections ------------------------------------------------------------ */
 .card.book-card {
   display: flex; flex-direction: column; gap: 14px;
   border-radius: var(--r-lg); padding: 18px; box-shadow: var(--lift-1);
 }
-.card.book-card > h2 { font-size: 17px; }
+.card.book-card > h3 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
 .card.book-card .book-sub { margin: -8px 0 0; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
 
 /* --- one service, ticked or not ----------------------------------------- */
@@ -113,7 +195,7 @@
 .book-item .book-item-top {
   display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
 }
-.book-item h3 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+.book-item h4 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
 .book-item .book-item-price { font-family: var(--mono); font-size: 15px; font-weight: 650; }
 .book-item .book-item-when { margin: 0; font-size: 13.5px; color: var(--ink-3); }
 .book-item ul { margin: 0; padding-left: 18px; font-size: 13.5px; color: var(--ink-3); }
@@ -135,6 +217,48 @@
 .book-fields .book-hint {
   margin: 0; font-size: 12.5px; font-weight: 400; line-height: 1.45; color: var(--muted);
 }
+
+/* The message box. Sized so five lines are visible without scrolling, which
+   is about as much as anybody types into "anything we should know". */
+.book-fields textarea,
+.wrap.book textarea#bk-note {
+  width: 100%; min-height: 108px; resize: vertical;
+  font: inherit; line-height: 1.5;
+}
+
+/* --- what the confirm step shows back ------------------------------------ */
+.wrap.book .book-recap { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.wrap.book .book-recap li {
+  display: grid; gap: 3px;
+  padding: 11px 13px; border-radius: var(--r-md);
+  border: 1px solid var(--line); background: var(--surface);
+}
+.book-recap .book-recap-top {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  font-size: 15px;
+}
+.book-recap .book-recap-price { font-family: var(--mono); font-weight: 650; }
+.book-recap .book-recap-when { font-size: 13.5px; color: var(--ink-3); }
+.book-recap .book-recap-svc { font-size: 13px; color: var(--muted); }
+
+.wrap.book .book-answers { display: grid; gap: 10px; margin: 0; }
+.book-answers dt {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--muted);
+}
+.book-answers dd {
+  margin: 3px 0 0; font-size: 14px; line-height: 1.55; color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+/* The "Change" beside each answer. A button rather than a link because it
+   changes which step is on screen and navigates nowhere, and styles.css's
+   .linkish lives in a stylesheet this page does not load. */
+.wrap.book .linkish {
+  padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; font-weight: 650; color: var(--accent-ink);
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.wrap.book .linkish:hover { color: var(--accent); }
 
 /* --- the last word before the button ------------------------------------- */
 .wrap.book .book-pay {

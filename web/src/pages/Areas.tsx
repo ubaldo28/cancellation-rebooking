@@ -5,6 +5,8 @@ import Crumbs from '../components/Crumbs';
 import PublicPage from '../components/PublicPage';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-index.css';
+import { plural } from '../lib/format';
+import { distinctGaps } from '../lib/slots';
 import { nearTradeHref } from '../lib/seo';
 import { useDocumentTitle } from '../lib/title';
 
@@ -30,27 +32,6 @@ import { useDocumentTitle } from '../lib/title';
  * nothing on this page about how many neighbourhoods we wish we covered.
  */
 
-/**
- * One row per genuine opening.
- *
- * The map deliberately offers a whole free day in every neighbourhood its
- * owner covers, because it genuinely is available in all of them — right for a
- * pin, and double counting the moment a page adds the city up rather than one
- * place. Counting the openings instead of the rows is what makes the total in
- * the heading agree with the sum a reader could do themselves.
- */
-function distinctGaps(slots: PublicSlot[]): PublicSlot[] {
-  const seen = new Set<string>();
-  const out: PublicSlot[] = [];
-  for (const s of slots) {
-    if (seen.has(s.gap_id)) continue;
-    seen.add(s.gap_id);
-    out.push(s);
-  }
-  return out;
-}
-
-const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 export default function Areas() {
   const [areas, setAreas] = useState<MapArea[]>([]);

@@ -28,12 +28,13 @@ import type { Env } from '../types';
 import { LAUNCH_STATE, ZERO_DECIMAL, formatMoney, localeFor } from './countries';
 import { CONTRACTOR_THRESHOLD_LABEL, TRADE_RULES, rulesFor } from './credentials';
 import { isDemoOperator } from './demo';
-import { getPublicProfile } from './profile';
+import { getPublicProfile, type SimilarBusiness } from './profile';
 import { mapData, type MapArea, type PublicSlot } from './public';
+import { reviewsForTrade, type TradeReview } from './reviews';
 import {
   ALL_TRADES, TRADE_CATEGORIES, categoryOf, tradeBySlug,
   tradeLabel as catalogueLabel,
-  type Trade, type TradeCategory,
+  type Trade,
 } from './trades';
 import { formatLocal } from './tz';
 import { escapeHtml, haversineMeters, now } from './util';
@@ -178,11 +179,11 @@ export interface SeoPageOptions {
 // Site chrome
 //
 // A static equivalent of SiteHeader.tsx and SiteFooter.tsx: the wordmark, a
-// real search form, the three nav links, the four footer columns and the
-// directory. Written out here rather than imported because those are React
-// components compiled into the browser bundle and this file runs in the
-// Worker — but the contents are theirs, and the two are meant to say the same
-// things.
+// real search form, the four nav links, the four footer columns, the
+// directory and the legal line. Written out here rather than imported because
+// those are React components compiled into the browser bundle and this file
+// runs in the Worker — but the contents are theirs, and the two are meant to
+// say the same things. test/two-trees.test.ts holds them to it.
 //
 // Before this existed a visitor who arrived on a /near page from a search
 // engine could leave it by exactly one link in the middle of a sentence. That
@@ -195,6 +196,13 @@ export interface SeoPageOptions {
  * The search box is a plain GET form at /search with one field named `q`,
  * which produces precisely the `/search?q=…` URL SiteHeader navigates to — so
  * it works with no JavaScript at all and lands on the same page it would have.
+ *
+ * "Browse" leads, as it does in SiteHeader, and it was missing here for longer
+ * than anywhere else it could have been. These pages are the ones a stranger
+ * arrives on from a search engine, which is the exact visitor SiteHeader's own
+ * note says it exists for: without it a trade page offers a search box and a
+ * way home, and going home is not what somebody does to find a list of
+ * categories.
  */
 function siteHeader(): string {
   return `<a class="skip" href="#main">Skip to main content</a>
@@ -207,6 +215,7 @@ function siteHeader(): string {
 <button type="submit">Search</button>
 </form>
 <nav class="site-nav" aria-label="Main">
+<a href="/browse">Browse</a>
 <a href="/a">Alert me</a>
 <a href="/signin">Sign in</a>
 <a class="solid" href="/join">List your van</a>
@@ -215,11 +224,23 @@ function siteHeader(): string {
 }
 
 /**
- * The four columns, with the same entries SiteFooter carries.
+ * The four columns, with the same entries SiteFooter.tsx carries.
  *
  * A label with no page behind it is rendered as text, exactly as the React
  * footer renders it: linking those at `/` would be a footer quietly lying
  * about where a dozen of its own links go.
+ *
+ * FIVE OF THEM WERE STILL TEXT AFTER THE PAGES ARRIVED. About, Help centre,
+ * Safety, Terms and Privacy all exist as React routes and are all links in
+ * SiteFooter; here they stayed inert, so the surface a crawler and a visitor
+ * with no JavaScript actually get was the one surface from which the legal
+ * pages could not be reached at all. "How Slotfill works for pros" was worse
+ * than inert — it pointed at /join, which is a different page.
+ *
+ * Terms and Privacy are deliberately not in a column: they are in the legal
+ * line under the directory, which is where SiteFooter moved them and where
+ * anybody looking for them looks first. test/two-trees.test.ts pins the two
+ * footers together, because this is the second time they have drifted.
  */
 const FOOT_COLUMNS: Array<{ heading: string; links: Array<{ label: string; href?: string }> }> = [
   {
@@ -232,6 +253,7 @@ const FOOT_COLUMNS: Array<{ heading: string; links: Array<{ label: string; href?
       // costIndexPage — so they are links here as they are in SiteFooter. They
       // were plain text while the only thing behind them was the SPA shell.
       { label: 'Cost guides', href: '/cost' },
+      { label: 'What is covered', href: '/covered' },
       { label: 'Alert me', href: '/a' },
     ],
   },
@@ -240,21 +262,40 @@ const FOOT_COLUMNS: Array<{ heading: string; links: Array<{ label: string; href?
     links: [
       { label: 'List your business', href: '/join' },
       { label: 'Sign in', href: '/signin' },
-      { label: 'How Slotfill works for pros', href: '/join' },
+      { label: 'How Slotfill works for pros', href: '/pros' },
       { label: 'Pricing' },
     ],
   },
   {
     heading: 'Company',
-    links: [{ label: 'About' }, { label: 'Careers' }, { label: 'Press' }, { label: 'Blog' }],
+    links: [
+      { label: 'About', href: '/about' },
+      { label: 'Careers' }, { label: 'Press' }, { label: 'Blog' },
+    ],
   },
   {
     heading: 'Support',
     links: [
-      { label: 'Help centre' }, { label: 'Contact' }, { label: 'Safety' },
-      { label: 'Terms' }, { label: 'Privacy' },
+      { label: 'Help centre', href: '/help' },
+      { label: 'Contact' },
+      { label: 'Safety', href: '/safety' },
     ],
   },
+];
+
+/**
+ * The line under the directory, the same one SiteFooter draws.
+ *
+ * The year is read off the clock rather than typed in, and "Notice at
+ * Collection" points at the privacy page because that is where the notice is.
+ * There is deliberately no "Do not sell or share my personal information":
+ * Slotfill does neither, so the link would describe a choice that does not
+ * exist. See the note in SiteFooter.tsx.
+ */
+const FOOT_LEGAL: Array<{ label: string; href: string }> = [
+  { label: 'Terms of service', href: '/terms' },
+  { label: 'Privacy policy', href: '/privacy' },
+  { label: 'Notice at Collection', href: '/privacy' },
 ];
 
 /**
@@ -322,6 +363,10 @@ check one.</p>
 <p>Map data © OpenStreetMap contributors, tiles by OpenFreeMap.
 Postcode centroids from GeoNames, CC BY 4.0.</p>
 <p>Prices are set by the business doing the work.</p>
+<p class="foot-fine"><span>© ${new Date().getFullYear()} ${escapeHtml(SITE_NAME)}</span>${
+    FOOT_LEGAL.map((l) =>
+      `<a href="${escapeHtml(l.href)}">${escapeHtml(l.label)}</a>`).join('')
+  }</p>
 </div>
 </div></footer>`;
 }
@@ -335,7 +380,7 @@ Postcode centroids from GeoNames, CC BY 4.0.</p>
  * sideways. The palette is the React site's, restated rather than imported —
  * light ground, near-black ink with a blue cast, one green for what is open.
  *
- * WHY THIS IS A FUNCTION RATHER THAN A CONSTANT. Four of these pages are also
+ * WHY THIS IS A FUNCTION RATHER THAN A CONSTANT. Six of these pages are also
  * React routes, so their markup is delivered inside the SPA's own document
  * (see `intoShell`) and this sheet lands in a head that already holds the
  * app's stylesheet. Loose `body`, `h1` and `:root` rules there would outlive
@@ -482,6 +527,13 @@ ${s} .foot-soon{font-size:.9rem;color:var(--muted)}
 ${s} .foot-n{color:var(--muted);font-size:.8rem;margin-left:5px}
 ${s} .foot-legal{margin-top:24px;padding-top:16px;border-top:1px solid var(--line);
 color:var(--muted);font-size:.82rem}
+/* The legal line, as SiteFooter draws it. Underlined rather than merely
+   coloured, because these sit on the same muted ink as the sentences around
+   them; and 44px tall without a 44px pill, so the target extends above and
+   below the text rather than boxing it. */
+${s} .foot-fine{display:flex;flex-wrap:wrap;align-items:center;gap:2px 20px;margin:10px 0 0}
+${s} .foot-fine a{display:inline-flex;align-items:center;min-height:44px;color:inherit;
+text-decoration:underline;text-underline-offset:2px}
 ${s} .foot{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);
 color:var(--muted);font-size:.85rem}
 ${s} :focus-visible{outline:3px solid var(--accent);outline-offset:2px;border-radius:4px}
@@ -1066,7 +1118,7 @@ between two that are booked. The business is already going to be in
 ${escapeHtml(place.name)}, so the alternative is driving past the time empty.
 That is the whole reason it is listed.</p>
 <p class="note">There is no bidding and no quote to wait for. The price shown is
-the price the business set for that piece of work, and the time is a real slot
+the price the business set for that piece of work, and the time is a real opening
 in a real calendar.</p>
 </section>`;
 
@@ -1359,6 +1411,56 @@ function tradesByOpenings(slots: PlacedSlot[]): Array<{ trade: Trade; n: number 
 // 3a. /s/:trade — one trade, everything open in it
 // ---------------------------------------------------------------------------
 
+/**
+ * The strip of recent reviews a trade page carries, or nothing at all.
+ *
+ * Every row is a real review of a real business in this trade, linked to the
+ * page it belongs to, and a trade nobody has reviewed renders NOTHING — not a
+ * placeholder, not "be the first", not an average of something else. That is
+ * the first rule at the top of this file applied to the one kind of content
+ * most worth faking, and it is why there is no fallback branch below.
+ *
+ * The stars are drawn for a reader and are deliberately not marked up. Emitting
+ * Review or AggregateRating nodes on a page that is not about one business is
+ * how a site ends up submitting somebody else's rating as its own, and the
+ * per-business markup on /p/:slug already carries these same rows once.
+ */
+function tradeReviewStrip(reviews: TradeReview[], label: string): string {
+  if (reviews.length === 0) return '';
+
+  const samples = reviews.filter((r) => r.is_sample).length;
+
+  // Its own sentence rather than sampleNote, which says "sample listings" —
+  // correct for an opening and wrong for a review, and on this of all blocks
+  // the words have to say exactly what the thing is.
+  const sampleLine = samples === 0 ? '' : `<p class="note">${escapeHtml(
+    samples === reviews.length
+      ? (reviews.length === 1
+        ? 'That review belongs to a sample business we seeded ourselves'
+        : `All ${reviews.length} belong to sample businesses we seeded ourselves`)
+      : `${samples} of them ${plural(samples, 'belongs', 'belong')} to a sample business `
+        + 'we seeded ourselves')} rather than a business trading today. Each one is
+labelled where it appears.</p>`;
+
+  return `<section>
+<h2>Recent reviews in ${escapeHtml(label.toLowerCase())}</h2>
+<p class="note">The ${reviews.length} most recent ${plural(reviews.length, 'review', 'reviews')}
+left for ${escapeHtml(label.toLowerCase())} on ${escapeHtml(SITE_NAME)}. Only somebody
+who booked here and had the work done can leave one, and each is signed with a
+first name and an initial.</p>
+${sampleLine}
+${reviews.map((r) => `<div class="box">
+<p><strong>${escapeHtml(r.author_name)}</strong>
+<span class="note">${escapeHtml(reviewDate(r.created_at))}</span></p>
+<p><span aria-hidden="true">${STARS(r.rating)}</span>
+<span class="note">${r.rating} out of 5${r.is_sample ? ' · sample review' : ''}</span></p>
+<p>${escapeHtml(r.body)}</p>
+${r.details ? `<p class="note">Booked: ${escapeHtml(r.details)}</p>` : ''}
+<p><a href="/p/${escapeHtml(r.profile_slug)}">${escapeHtml(r.business_name)}</a></p>
+</div>`).join('')}
+</section>`;
+}
+
 export async function tradePage(
   env: Env, segment: string, opts: PageOptions = {},
 ): Promise<string | null> {
@@ -1366,7 +1468,12 @@ export async function tradePage(
   if (!entry) return null;                      // the SPA says "we do not have this trade"
 
   const base = baseUrlOf(env);
-  const idx = await liveIndex(env);
+  // Fetched alongside the live index rather than after it: neither reads the
+  // other, and this page is built on every crawl of every trade.
+  const [idx, tradeReviews] = await Promise.all([
+    liveIndex(env),
+    reviewsForTrade(env, entry.slug, 6),
+  ]);
   const path = tradePath(entry.slug);
   const url = `${base}${path}`;
   const label = entry.label;
@@ -1487,6 +1594,7 @@ There is nothing to sign up for on this page — <a href="/a">a standing alert</
 is the one thing we can offer, and it is the only thing that will tell you.</p>
 </div>`}
 </section>
+${tradeReviewStrip(tradeReviews, label)}
 <section>
 <h2>What does ${escapeHtml(lower)} cost?</h2>
 <p class="note">Every price listed for this trade right now — the lowest, the
@@ -2471,6 +2579,62 @@ const reviewDate = (epochSeconds: number) =>
   new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     .format(new Date(epochSeconds * 1000));
 
+/**
+ * The three alternatives the foot of a profile page offers.
+ *
+ * The reference ends a profile with three other businesses and a "see all",
+ * and this page ended with two links to itself — a visitor who had decided
+ * against this business had nowhere to go but back to a search.
+ *
+ * EVERY LINE IS COUNTED OFF THE OTHER BUSINESS'S OWN ROW and nothing is filled
+ * in: a business nobody has reviewed says nothing about a score rather than
+ * being described as new-and-probably-fine, and one that shares no
+ * neighbourhood says so instead of being called nearby. `shared_areas` is
+ * printed rather than turned into a word like "local", because it is the whole
+ * basis on which these three were picked and a reader is entitled to see it.
+ */
+function similarBlock(similar: SimilarBusiness[], label: string): string {
+  if (similar.length === 0) {
+    return `<p class="note">No other ${escapeHtml(label.toLowerCase())} business has a
+page on ${escapeHtml(SITE_NAME)} yet.</p>`;
+  }
+
+  const samples = similar.filter((s) => s.is_sample).length;
+
+  // Its own sentence rather than sampleNote, which counts listings. These are
+  // businesses, and calling a seeded business a "sample listing" is the kind of
+  // near-miss that lets a reader take it for a real one.
+  const sampleLine = samples === 0 ? '' : `<p class="note">${escapeHtml(
+    samples === similar.length
+      ? (similar.length === 1
+        ? 'That is a sample business we seeded ourselves'
+        : `All ${similar.length} are sample businesses we seeded ourselves`)
+      : `${samples} of them ${plural(samples, 'is a sample business', 'are sample businesses')} `
+        + 'we seeded ourselves')} rather than a business trading today. Each one is
+labelled where it appears.</p>`;
+
+  return `${sampleLine}
+<ul class="links">${similar.map((s) => {
+    const facts = [
+      s.rating != null
+        ? `${s.rating.toFixed(1)} from ${s.review_count} ${
+          plural(s.review_count, 'review', 'reviews')}`
+        : 'no reviews yet',
+      ...(s.hired_count > 0 ? [`hired ${s.hired_count} times`] : []),
+      ...(s.years_in_business != null
+        ? [`${s.years_in_business} ${plural(s.years_in_business, 'year', 'years')} in business`]
+        : []),
+      ...(s.shared_areas > 0
+        ? [`${s.shared_areas} ${plural(s.shared_areas, 'neighbourhood', 'neighbourhoods')} in common`]
+        : []),
+      ...(s.is_sample ? ['sample business'] : []),
+    ];
+    return `<li><a href="/p/${escapeHtml(s.profile_slug)}">${escapeHtml(s.business_name)}</a>
+<span class="note">${escapeHtml(facts.join(' · '))}</span>${s.areas.length
+      ? `<br><span class="note">Serves ${escapeHtml(s.areas.join(', '))}</span>` : ''}</li>`;
+  }).join('')}</ul>`;
+}
+
 export async function profilePage(
   env: Env, slug: string, opts: PageOptions = {},
 ): Promise<string | null> {
@@ -2565,7 +2729,9 @@ ${entry
     ? `<p><a class="book" href="${escapeHtml(tradePath(entry.slug))}">See what is open in ${
       escapeHtml(entry.label.toLowerCase())}</a></p>`
     : '<p><a class="book" href="/">See what is open near you</a></p>'}
-<p class="note">Messages go through the app. No phone numbers are exchanged.</p>
+<p class="note">You can message ${escapeHtml(o.business_name)} or ask them for a quote
+without booking anything first — both are on this page, and neither needs an
+account. Messages go through the app. No phone numbers are exchanged.</p>
 ${o.bio ? `<section><h2>About</h2><p>${escapeHtml(o.bio)}</p></section>` : ''}
 <section>
 <h2>Overview</h2>
@@ -2616,8 +2782,9 @@ ${faqs.length ? `<section><h2>FAQs</h2>${faqs.map((f) => `<details>
     escapeHtml(f.answer)}</p></details>`).join('')}</section>` : ''}
 ${entry ? `<section>
 <h2>Other ${escapeHtml(entry.label.toLowerCase())} businesses</h2>
+${similarBlock(data.similar, entry.label)}
 ${linkList([
-    { href: tradePath(entry.slug), text: `${entry.label} — what is open now` },
+    { href: tradePath(entry.slug), text: `See all ${entry.label.toLowerCase()} — what is open now` },
     { href: costPath(entry.slug), text: `What ${entry.label.toLowerCase()} costs` },
   ])}
 </section>` : ''}`;

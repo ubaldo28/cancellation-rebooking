@@ -768,21 +768,31 @@ export async function expireRequests(env: Env): Promise<number> {
   const rows = due.results ?? [];
   if (rows.length === 0) return 0;
 
-  const res = await env.DB.prepare(
+  // One guarded statement PER ROW rather than one over the whole set, and that
+  // is the point of the batch rather than a style choice: a D1 batch reports
+  // the change count of each statement separately, so this can tell which
+  // requests it actually expired.
+  //
+  // The set-wide UPDATE could not. It reported one number for the lot, and the
+  // notification loop below then fired for every row it had SELECTED — so an
+  // operator who accepted a request in the half second between the select and
+  // the update was told they had missed the job they had just taken, while the
+  // customer was already being messaged that it was accepted. Two people, two
+  // opposite stories, over the same booking.
+  const res = await env.DB.batch(rows.map((r) => env.DB.prepare(
     `UPDATE instant_requests SET status='expired', updated_at=?
-      WHERE status='pending' AND expires_at <= ?
-        AND id IN (${rows.map(() => '?').join(',')})`,
-  ).bind(t, t, ...rows.map((r) => r.id)).run();
+      WHERE id=? AND status='pending' AND expires_at <= ?`,
+  ).bind(t, r.id, t)));
 
-  // After the update, and one at a time. A request that somebody accepted in
-  // the half-second before this ran is not expired and its operator must not
-  // be told they missed it -- so only rows this statement actually moved are
-  // worth a notification, and the guard above is what decided that.
-  if ((res.meta.changes ?? 0) > 0) {
-    for (const r of rows) await notifyMissed(env, r);
+  // After the update, and only for the rows this run actually moved.
+  let expired = 0;
+  for (let i = 0; i < rows.length; i++) {
+    if ((res[i]?.meta.changes ?? 0) === 0) continue;
+    expired++;
+    await notifyMissed(env, rows[i]!);
   }
 
-  return res.meta.changes ?? 0;
+  return expired;
 }
 
 /**

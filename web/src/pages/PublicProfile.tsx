@@ -3,14 +3,18 @@ import { Link, useParams } from 'react-router-dom';
 import {
   api, durationLabel, sentence,
   type MapArea, type PublicProfileResponse, type PublicSlot, type Review,
+  type SimilarBusiness,
 } from '../api';
-import { ErrorNote, Icon, Spinner } from '../components/ui';
+import { ErrorNote, Icon, Spinner, Stars } from '../components/ui';
 import Crumbs from '../components/Crumbs';
+import { PAY_TODAY_SHORT } from '../components/PaymentState';
+import Enquiry, { type EnquiryKind } from '../components/Enquiry';
 import PublicPage from '../components/PublicPage';
 import SlotCard from '../components/SlotCard';
 import { DAY_NAMES } from '../components/WorkingHours';
 import '../styles-profile.css';
 import { useDocumentTitle } from '../lib/title';
+import { distinctGaps } from '../lib/slots';
 
 /**
  * A business profile, built from the reference marketplace listing.
@@ -62,6 +66,23 @@ const WORK_LOCATION: Record<string, string[]> = {
 const OPEN_PAGE = 6;
 
 /**
+ * How many weekdays the hours block prints before it asks to be opened.
+ *
+ * Two, because seven lines of times is the longest uninterrupted list on the
+ * page and almost nobody reads it: the question somebody actually arrives with
+ * is "can they come", which the openings block above answers outright. The week
+ * is still here in full for the reader who wants it, one button away.
+ */
+const HOURS_SHUT = 2;
+
+/**
+ * The size of the `similar` array the profile payload carries. A shorter array
+ * than this is the server saying it found no more, which is what lets the "see
+ * all" hide itself rather than fetching to discover it has nothing to add.
+ */
+const SIMILAR_IN_PAYLOAD = 3;
+
+/**
  * THE TWO BLOCKS THIS PAGE USED TO REFUSE TO DRAW, and what changed.
  *
  * It carried a note here saying business hours and the full service list could
@@ -100,27 +121,6 @@ const OPEN_PAGE = 6;
  * listed at, a service with no opening shows how long it takes, and the note
  * under the list says which is which.
  */
-
-/**
- * Five glyphs, two colours, one sentence.
- *
- * The `aria-label` was already here and was doing nothing. ARIA forbids naming
- * a plain <span> — it has no role that accepts a name — so the label was
- * dropped on the floor and what got read was the glyphs themselves: "black
- * star black star black star white star white star", or in some voices
- * nothing at all. `role="img"` is what makes the label legal, and it collapses
- * the run into one object with one name, which is what it already looks like
- * to everybody who can see it.
- */
-function Stars({ n }: { n: number }) {
-  return (
-    <span className="stars" role="img" aria-label={`${n} out of 5 stars`}>
-      <span aria-hidden="true">
-        {'★★★★★'.slice(0, n)}<span className="stars-off">{'★★★★★'.slice(0, 5 - n)}</span>
-      </span>
-    </span>
-  );
-}
 
 const monthYear = (s: number) =>
   new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -180,8 +180,107 @@ export default function PublicProfile() {
    */
   const [map, setMap] = useState<{ slots: PublicSlot[]; areas: MapArea[] } | null>(null);
   const [openLimit, setOpenLimit] = useState(OPEN_PAGE);
+  const [hoursOpen, setHoursOpen] = useState(false);
+  /** What the share control just did, in words, for the live region under it. */
+  const [shareMsg, setShareMsg] = useState<string | null>(null);
+  /** The rest of the alternatives, once somebody has asked to see them all. */
+  const [alts, setAlts] = useState<SimilarBusiness[] | null>(null);
+  const [altsOpen, setAltsOpen] = useState(false);
+  const [altsBusy, setAltsBusy] = useState(false);
+  const [altsErr, setAltsErr] = useState<string | null>(null);
+  /**
+   * The openings block, held as state rather than in a ref because it does not
+   * exist until the profile has loaded and an effect has to re-run when it
+   * appears. It is what the phone's bottom bar watches.
+   */
+  const [ctaEl, setCtaEl] = useState<HTMLElement | null>(null);
+  const [barOn, setBarOn] = useState(false);
+  /**
+   * Which enquiry dialog is up, if any.
+   *
+   * Held here rather than inside the component so that the three places that
+   * offer the action — the block in the flow, the rail and the phone bar — are
+   * three buttons onto one dialog rather than three dialogs.
+   */
+  const [enquiry, setEnquiry] = useState<EnquiryKind | null>(null);
 
   useDocumentTitle(data?.operator.business_name ?? null);
+
+  /**
+   * THE PHONE BAR APPEARS ONLY ONCE THE ACTION HAS SCROLLED AWAY.
+   *
+   * Pinning it from the top would put two copies of the same button on the
+   * first screen, one of them covering the page, which is worse than no bar at
+   * all. So it is tied to the openings block: while that block is on screen the
+   * action is already in front of the reader and the bar stays out of the DOM's
+   * way; once it leaves, the bar takes over. A browser with no
+   * IntersectionObserver gets the bar permanently, which is the safe failure —
+   * the action is reachable either way and the page reserves the height for it.
+   */
+  useEffect(() => {
+    if (!ctaEl) return;
+    if (typeof IntersectionObserver === 'undefined') { setBarOn(true); return; }
+    const io = new IntersectionObserver(
+      ([entry]) => setBarOn(!(entry?.isIntersecting ?? false)),
+      { rootMargin: '-72px 0px 0px 0px' },
+    );
+    io.observe(ctaEl);
+    return () => io.disconnect();
+  }, [ctaEl]);
+
+  /**
+   * Hand the address to the platform's own share sheet, and to the clipboard
+   * where there is not one.
+   *
+   * Both endings are said out loud, because they are not interchangeable: a
+   * share sheet is visible and needs no explanation, whereas a silent copy is
+   * indistinguishable from a button that did nothing. Dismissing the sheet is
+   * an AbortError and is not a failure — it clears the message rather than
+   * reporting one, and does not fall through to copying something the person
+   * has just decided not to share.
+   */
+  const share = useCallback(async () => {
+    const url = window.location.href;
+    const title = data?.operator.business_name ?? 'Slotfill';
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({ title, url });
+        setShareMsg('Shared with your device’s share options.');
+        return;
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') {
+          setShareMsg(null);
+          return;
+        }
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareMsg('Link copied. Paste it anywhere to share this page.');
+    } catch {
+      setShareMsg('This browser would not let the page copy for you — the '
+        + 'address of this page is in the address bar.');
+    }
+  }, [data]);
+
+  /**
+   * Everyone else the server has, rather than the three the profile arrived
+   * with. Fetched once and kept, so closing and reopening the list is free.
+   */
+  const seeAllAlts = useCallback(async () => {
+    if (!slug || altsBusy) return;
+    if (alts) { setAltsOpen((v) => !v); return; }
+    setAltsBusy(true); setAltsErr(null);
+    try {
+      const res = await api.similarBusinesses(slug, 24);
+      setAlts(res.businesses);
+      setAltsOpen(true);
+    } catch (e) {
+      setAltsErr(e instanceof Error ? e.message : 'Could not load the rest.');
+    } finally {
+      setAltsBusy(false);
+    }
+  }, [slug, alts, altsBusy]);
 
   const load = useCallback(async () => {
     if (!slug) return;
@@ -233,10 +332,7 @@ export default function PublicProfile() {
    */
   const mine = useMemo(() => {
     if (!map || !slug) return null;
-    const seen = new Set<string>();
-    return map.slots
-      .filter((s) => s.profile_slug === slug)
-      .filter((s) => (seen.has(s.gap_id) ? false : (seen.add(s.gap_id), true)))
+    return distinctGaps(map.slots.filter((s) => s.profile_slug === slug))
       .sort((a, b) => a.starts_at - b.starts_at);
   }, [map, slug]);
 
@@ -344,6 +440,46 @@ export default function PublicProfile() {
   const long = (o.bio ?? '').length > 420;
   const bio = long && !expanded ? `${o.bio!.slice(0, 420)}…` : o.bio;
 
+  /*
+   * THE JUMP LIST, BUILT FROM WHAT IS ACTUALLY BELOW IT.
+   *
+   * Every entry here repeats the condition the section itself is rendered
+   * under, rather than naming the five sections the page is known to have. A
+   * link to a Photos heading that a business with no photographs never drew
+   * scrolls nowhere, leaves focus where it was and looks like a broken page —
+   * and it is the businesses with the least on their profile, who can least
+   * afford to look broken, that would get it. About and Photos come and go;
+   * the other three are unconditional in the markup below and so are here.
+   */
+  const sections = [
+    ...(bio ? [{ id: 'pro-about', label: 'About' }] : []),
+    { id: 'pro-services', label: 'Services' },
+    ...(photos.length > 0 ? [{ id: 'pro-photos', label: 'Photos' }] : []),
+    { id: 'pro-reviews', label: 'Reviews' },
+    { id: 'pro-credentials', label: 'Credentials' },
+  ];
+
+  /*
+   * THE ONE ACTION, IN THE THREE PLACES IT NOW APPEARS.
+   *
+   * The block in the flow, the rail beside it and the bar across the bottom of
+   * a phone are one decision rendered three times, so the decision is made once
+   * here. `mine === null` is the map not having answered and is not the same as
+   * a business with nothing free: the first falls back to the trade, the second
+   * says so and then falls back to the trade.
+   */
+  const tradeTo = o.trade ? `/s/${encodeURIComponent(o.trade)}` : '/';
+  const tradeLabel = o.trade
+    ? `See what is open in ${o.trade}`
+    : 'See what is open near you';
+  const openCount = mine?.length ?? 0;
+  const openLabel = openCount === 1
+    ? 'One appointment open'
+    : `${openCount} appointments open`;
+
+  /** The alternatives to draw: the payload's three, or everyone once asked. */
+  const shownAlts = altsOpen && alts ? alts : data.similar;
+
   return (
     <PublicPage className="pro">
       {/* The trail is a real link out to the trade now, not a dead word.
@@ -357,6 +493,20 @@ export default function PublicProfile() {
           : []),
         { label: o.business_name },
       ]} />
+
+      {/*
+        THE PAGE IS STILL ONE COLUMN. IT IS A SECOND COLUMN ONLY WHERE THERE IS
+        ROOM FOR ONE BESIDE IT.
+
+        Below 1100px this wrapper is an ordinary block and the measure, the
+        order and the appearance of everything inside it are exactly what they
+        were. Above it the wrapper becomes a two-track grid and the rail comes
+        out of hiding. Nothing moves between the two: the rail is additional to
+        the openings block, never instead of it, so a narrow window is not a
+        window with the action removed from it.
+      */}
+      <div className="pro-shell">
+      <div className="pro-main">
 
       <header className="pro-head">
         {/* The face first. Somebody is deciding whether to open their door;
@@ -388,8 +538,44 @@ export default function PublicProfile() {
             <div className="pro-score"><span className="faint">New — no reviews yet</span></div>
           )}
           {o.tagline && <p className="pro-tagline">{o.tagline}</p>}
+
+          {/*
+            Sharing a business is how most of these pages are actually found:
+            somebody's neighbour asks who did the drive, and the answer is a
+            link. The control sits with the name because that is what is being
+            passed on, and the line under it is a live region so the reader who
+            cannot see a share sheet open still learns which of the two things
+            happened.
+          */}
+          <p className="pro-share">
+            <button type="button" className="btn quiet sm" onClick={() => void share()}>
+              Share this business
+            </button>
+          </p>
+          <p className="pro-share-said" role="status">{shareMsg}</p>
         </div>
       </header>
+
+      {/*
+        Five words under the head, and a way down to each of them. The page runs
+        long on a business with a full profile — a dozen reviews with photographs
+        is several screens — and until now the only way to the credentials at the
+        bottom was to scroll past all of it.
+
+        Ordinary fragment links, not scripted scrolling: the browser's own
+        handling moves focus to the target as well as the viewport, which is the
+        half that a hand-rolled `scrollIntoView` invariably drops, and it leaves
+        the address bar carrying a link straight to the section.
+      */}
+      {sections.length > 0 && (
+        <nav className="pro-nav" aria-label="On this page">
+          <ul>
+            {sections.map((s) => (
+              <li key={s.id}><a href={`#${s.id}`}>{s.label}</a></li>
+            ))}
+          </ul>
+        </nav>
+      )}
 
       {/*
         THEIR OWN OPEN APPOINTMENTS, ON THEIR OWN PAGE.
@@ -410,45 +596,38 @@ export default function PublicProfile() {
         business against the others rather than the answer to "when can they
         come".
       */}
-      <section className="pro-cta">
+      <section className="pro-cta" id="pro-openings" tabIndex={-1} ref={setCtaEl}>
         {mine === null ? (
           /* The map has not answered, or never will. Falling back to the link
              this page has always had, rather than to a spinner that might
              never resolve or an emptiness that would be a lie. */
-          o.trade ? (
-            <Link className="btn block" to={`/s/${encodeURIComponent(o.trade)}`}>
-              See what is open in {o.trade}
-            </Link>
-          ) : (
-            <Link className="btn block" to="/">See what is open near you</Link>
-          )
+          <Link className="btn block" to={tradeTo}>{tradeLabel}</Link>
         ) : mine.length === 0 ? (
           <>
             <h2 className="pro-cta-h">Nothing open right now</h2>
             <p className="pro-cta-p">
               {o.business_name} has no free hours listed at the moment. An
               opening appears when a job cancels or a day does not fill, so it
-              arrives without warning.
+              arrives without warning — so the way to reach them for a
+              particular day is to write to them, below.
             </p>
-            {o.trade ? (
-              <Link className="btn block" to={`/s/${encodeURIComponent(o.trade)}`}>
-                See what is open in {o.trade}
-              </Link>
-            ) : (
-              <Link className="btn block" to="/">See what is open near you</Link>
-            )}
+            {/* Demoted to a link here, where it used to be the only button in
+                the block. Somebody reading this business's page wants this
+                business; the rest of the trade is the second answer, and the
+                first one now exists. */}
+            <p className="pro-cta-else"><Link to={tradeTo}>{tradeLabel}</Link></p>
           </>
         ) : (
           <>
-            <h2 className="pro-cta-h">
-              {mine.length === 1
-                ? 'One appointment open'
-                : `${mine.length} appointments open`}
-            </h2>
+            <h2 className="pro-cta-h">{openLabel}</h2>
+            {/* The payment half of this comes from PaymentState.tsx rather
+                than being written again here. It had been written again here,
+                and in Trade.tsx, each in slightly different words — which is
+                the arrangement that put four contradictory claims about paying
+                on the site in the first place. */}
             <p className="pro-cta-p">
               Hours {o.business_name} has free, at the prices they listed.
-              Booking one holds it; nothing is paid on this site yet, so you
-              settle the price with them directly.
+              {' '}{PAY_TODAY_SHORT}
             </p>
             <div className="slot-grid">
               {mine.slice(0, openLimit).map((s) => (
@@ -473,13 +652,48 @@ export default function PublicProfile() {
             )}
           </>
         )}
+        {/*
+          THE TWO WAYS TO REACH A BUSINESS THAT HAS NOTHING LISTED.
+
+          Booking an existing opening used to be the only one, which meant a
+          customer who wanted something next Tuesday had no way to ask for it —
+          the page could show them a business, a score and a list of work, and
+          then had nothing for them to do about it. Both of these open the same
+          conversation a booking opens, at the same address, so what follows is
+          a page the rest of the site already knows how to render.
+
+          Two buttons rather than one because they are genuinely different
+          questions: one is "can you do this at all", the other is "what would
+          this cost", and the second is answered with a price and a time the
+          customer can accept. Neither holds a slot and both say so.
+        */}
+        <div className="pro-ask">
+          <p className="pro-ask-p">
+            {openCount > 0
+              ? `None of these suit? Write to ${o.business_name} about another `
+                + 'day, or describe the job and ask what it would cost.'
+              : `You can still write to ${o.business_name}. Ask about another `
+                + 'day, or describe the job and ask what it would cost.'}
+          </p>
+          <div className="pro-ask-row">
+            <button type="button" className="btn"
+              onClick={() => setEnquiry('message')}>
+              Message {o.business_name}
+            </button>
+            <button type="button" className="btn quiet"
+              onClick={() => setEnquiry('quote')}>
+              Ask for a quote
+            </button>
+          </div>
+        </div>
+
         <p className="faint" style={{ margin: '10px 0 0' }}>
           Messages go through the app. No phone numbers are exchanged.
         </p>
       </section>
 
       {bio && (
-        <section className="pro-block">
+        <section className="pro-block" id="pro-about" tabIndex={-1}>
           <h2>About</h2>
           <p className="pro-bio">{bio}</p>
           {long && (
@@ -558,7 +772,7 @@ export default function PublicProfile() {
         </div>
       </section>
 
-      <section className="pro-block">
+      <section className="pro-block" id="pro-services" tabIndex={-1}>
         <h2>Services offered</h2>
         {/*
           The named work, all of it. This heading carried nothing but the travel
@@ -622,8 +836,17 @@ export default function PublicProfile() {
       {data.working_hours.length > 0 && (
         <section className="pro-block">
           <h2>Business hours</h2>
+          {/*
+            Two days, then the rest on request. Printing the week in full made
+            this the tallest block on the page for the least-read fact on it,
+            and on a phone it pushed the photographs and the reviews — the two
+            things a reader is here for — a screen and a half further down. The
+            button stays in the document in both states rather than being
+            swapped for a "show less" elsewhere, so a keyboard is never left
+            standing on an element that has just been removed.
+          */}
           <dl className="pro-hours">
-            {week.map(({ weekday, bands }) => (
+            {(hoursOpen ? week : week.slice(0, HOURS_SHUT)).map(({ weekday, bands }) => (
               <div className={`pro-hour${bands.length === 0 ? ' shut' : ''}`}
                 key={weekday}>
                 <dt>{DAY_NAMES[weekday]}</dt>
@@ -637,6 +860,12 @@ export default function PublicProfile() {
               </div>
             ))}
           </dl>
+          <p className="pro-hours-more">
+            <button type="button" className="linkish" aria-expanded={hoursOpen}
+              onClick={() => setHoursOpen(!hoursOpen)}>
+              {hoursOpen ? 'Show fewer days' : 'Read more — the whole week'}
+            </button>
+          </p>
           <p className="pro-plain pro-svc-note">
             Shown in {o.business_name}'s own time ({zoneLabel(o.timezone)}), not
             yours. These are the hours they work; an opening only appears inside
@@ -646,7 +875,7 @@ export default function PublicProfile() {
       )}
 
       {photos.length > 0 && (
-        <section className="pro-block">
+        <section className="pro-block" id="pro-photos" tabIndex={-1}>
           <h2>Photos <span className="faint">({photos.length})</span></h2>
           <div className="pro-photos">
             {photos.map((p) => (
@@ -666,7 +895,7 @@ export default function PublicProfile() {
         </section>
       )}
 
-      <section className="pro-block">
+      <section className="pro-block" id="pro-reviews" tabIndex={-1}>
         <h2>Reviews</h2>
 
         {rating.count === 0 ? (
@@ -823,19 +1052,36 @@ export default function PublicProfile() {
         )}
       </section>
 
-      <section className="pro-block">
+      <section className="pro-block" id="pro-credentials" tabIndex={-1}>
         <h2>Credentials</h2>
         {o.background_checked_at ? (
-          <div className="pro-cred">
-            <strong>Background check</strong>
-            <span>{o.background_check_name}</span>
-            {o.background_check_provider && (
-              <span className="faint">Checked by {o.background_check_provider}</span>
-            )}
-          </div>
+          <>
+            <div className="pro-cred">
+              <strong>Background check</strong>
+              <span>{o.background_check_name}</span>
+              {o.background_check_provider && (
+                <span className="faint">Checked by {o.background_check_provider}</span>
+              )}
+            </div>
+            {/*
+              /covered and /safety both say in as many words that this site does
+              not verify licences, insurance or background checks. This block
+              printed the business's own record of one as a bare fact, which is
+              the page that reads as us vouching for it — and it is the page a
+              customer is on at the moment they decide. SlotCard says the same
+              thing about the chip it draws for this; it is said here too rather
+              than only in the small print two pages away.
+            */}
+            <p className="pro-plain pro-svc-note">
+              This is what {o.business_name} has recorded about themselves.
+              Slotfill does not run the check and does not verify it — see{' '}
+              <Link to="/covered">what is covered</Link>.
+            </p>
+          </>
         ) : (
           <p className="muted" style={{ margin: 0 }}>
-            This business has not been background checked yet.
+            This business has not recorded a background check. Slotfill does not
+            run one either way — see <Link to="/covered">what is covered</Link>.
           </p>
         )}
       </section>
@@ -853,6 +1099,166 @@ export default function PublicProfile() {
           </div>
         </section>
       )}
+
+      {/*
+        WHERE ELSE TO LOOK, AT THE POINT SOMEBODY HAS DECIDED IT IS NOT HERE.
+
+        Somebody who has read to the bottom of a profile has either made up
+        their mind or ruled the business out, and the second of those used to
+        end at the last FAQ with nothing to do. These are the rows the Worker
+        sends: real businesses in the same trade whose patch overlaps this one's,
+        with the business being read excluded server-side.
+
+        Nothing is drawn that is not in the row. A business nobody has reviewed
+        has `rating: null`, which is not a low score and is not five empty
+        stars, so the whole score line is left out for it — the same rule the
+        head of this page and the slot cards follow. An empty array is not "no
+        similar businesses found", it is nothing at all: this trade has one page
+        in it, and saying so tells the reader nothing they can use.
+      */}
+      {shownAlts.length > 0 && (
+        <section className="pro-block pro-alts-block">
+          <h2>{o.trade ? `Other businesses doing ${o.trade}` : 'Other businesses'}</h2>
+          <ul className="pro-alts">
+            {shownAlts.map((b) => (
+              <li key={b.profile_slug}>
+                <Link className="pro-alt" to={`/p/${encodeURIComponent(b.profile_slug)}`}>
+                  <span className="pro-alt-av" aria-hidden="true">
+                    {b.avatar_key
+                      ? <img src={`/api/public/photo/${b.avatar_key}`} alt="" loading="lazy" />
+                      : b.business_name.slice(0, 1)}
+                  </span>
+                  <span className="pro-alt-body">
+                    <span className="pro-alt-name">
+                      {b.business_name}
+                      {/* Same wording and the same two read-aloud words as the
+                          slot cards, because it is the same claim: a seeded
+                          business must not be passed off as a real one. */}
+                      {b.is_sample && (
+                        <span className="sample">
+                          <span className="sr-only"> </span>Sample
+                          <span className="sr-only"> listing</span>
+                        </span>
+                      )}
+                    </span>
+                    {b.rating != null && b.review_count > 0 && (
+                      <span className="pro-alt-score">
+                        <span className="pro-num">{b.rating.toFixed(1)}</span>
+                        <Stars n={Math.round(b.rating)} />
+                        <span className="faint">
+                          ({b.review_count}<span className="sr-only"> reviews</span>)
+                        </span>
+                      </span>
+                    )}
+                    {b.tagline && <span className="pro-alt-tag">{b.tagline}</span>}
+                    {(b.areas.length > 0 || b.years_in_business != null) && (
+                      <span className="pro-alt-facts">
+                        {[
+                          b.years_in_business != null
+                            ? `${b.years_in_business} years in business` : null,
+                          b.areas.length > 0 ? b.areas.join(', ') : null,
+                        ].filter(Boolean).join(' · ')}
+                      </span>
+                    )}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+
+          {/* Offered only when the payload came back full, because a shorter
+              array is the server saying it had no more to send — and a "see
+              all" that fetches, returns the same three and leaves the reader
+              looking for what changed is worse than no button. */}
+          {data.similar.length >= SIMILAR_IN_PAYLOAD && (
+            <p className="pro-alts-all">
+              {/* `aria-busy` while it fetches, not `disabled`. Disabling the
+                  button a person has just pressed blurs it, and the keyboard
+                  they were using is put back at the top of the document — so
+                  the one control on the page that takes a moment was also the
+                  one that lost their place. The handler ignores a second press
+                  instead. */}
+              <button type="button" className="btn quiet sm" aria-expanded={altsOpen}
+                aria-busy={altsBusy} onClick={() => void seeAllAlts()}>
+                {altsBusy ? 'Loading…' : altsOpen ? 'Show fewer' : 'See all'}
+              </button>
+            </p>
+          )}
+          {altsErr && <p className="muted" role="status">{altsErr}</p>}
+        </section>
+      )}
+
+      </div>{/* .pro-main */}
+
+      {/*
+        THE ACTION, KEPT ON SCREEN.
+
+        A complementary landmark rather than a second copy of the openings
+        block: it carries the count and one button that goes to the block, and
+        the appointments themselves stay where they are, in a column wide enough
+        to lay them out. It comes after the content in the document on purpose —
+        a reader going through the page in order has already been given this
+        action at the top of it, and the landmark and its name are how they get
+        back to it without hunting.
+      */}
+      <aside className="pro-rail" aria-label={`Contacting ${o.business_name}`}>
+        <div className="pro-rail-card">
+          {mine !== null && (
+            <p className="pro-rail-h">
+              {openCount === 0 ? 'Nothing open right now' : openLabel}
+            </p>
+          )}
+          {/* The strongest thing this business can offer, first: an hour they
+              have actually listed if there is one, and otherwise the message
+              that no longer depends on there being one. */}
+          {openCount > 0 ? (
+            <a className="btn block" href="#pro-openings">See the openings</a>
+          ) : (
+            <button type="button" className="btn block"
+              onClick={() => setEnquiry('message')}>
+              Message {o.business_name}
+            </button>
+          )}
+          <button type="button" className="btn quiet block"
+            onClick={() => setEnquiry('quote')}>
+            Ask for a quote
+          </button>
+        </div>
+      </aside>
+
+      </div>{/* .pro-shell */}
+
+      {/*
+        THE SAME ACTION ACROSS THE BOTTOM OF A PHONE.
+
+        One button and nothing else — a bar that carries a second choice is a
+        bar that has to be read, and this one is meant to be hit. It is an
+        ordinary element at the end of the document with no focus handling of
+        any kind on it, so it is reached by tabbing to the end and left by
+        tabbing on: there is nothing here to trap anybody. The height it covers
+        is given back as padding at the foot of the page, so the last of the
+        content and the footer under it can still be scrolled clear of the bar.
+      */}
+      <div className={`pro-dock${barOn ? ' on' : ''}`}>
+        {openCount > 0 ? (
+          <a className="btn block" href="#pro-openings">
+            {openCount === 1 ? 'See the open appointment' : `See the ${openCount} open appointments`}
+          </a>
+        ) : (
+          // Still one button. A business with nothing listed used to be a bar
+          // pointing at the rest of the trade, which is the one thing somebody
+          // on this particular page has already decided against.
+          <button type="button" className="btn block"
+            onClick={() => setEnquiry('message')}>
+            Message {o.business_name}
+          </button>
+        )}
+      </div>
+
+      {/* Rendered whether or not a dialog is up, so that what has been typed
+          into it survives the dialog being closed by accident. */}
+      <Enquiry slug={slug ?? ''} businessName={o.business_name}
+        kind={enquiry} onClose={() => setEnquiry(null)} />
     </PublicPage>
   );
 }

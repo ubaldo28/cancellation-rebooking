@@ -7,6 +7,7 @@ import {
 import { useOperator } from '../App';
 import { Empty, ErrorNote, Icon, Spinner } from '../components/ui';
 import { useDocumentTitle } from '../lib/title';
+import '../styles-openings.css';
 
 const key = (c: Candidate) => `${c.kind}:${c.client_id}:${c.lead_id ?? ''}`;
 
@@ -81,7 +82,9 @@ export default function FillSlot() {
   return (
     <>
       <header className="page-head">
-        <Link to="/app" className="row" style={{ gap: 8, color: 'var(--ink)', marginBottom: 8 }}>
+        {/* The same control as PostOpening's, wearing the same class rather
+            than the same four inline styles written out again. */}
+        <Link to="/app" className="row po-back">
           <Icon name="back" size={20} stroke={1.9} />
           <span style={{ fontWeight: 500 }}>Fill this slot</span>
         </Link>

@@ -3,6 +3,8 @@ import { api, type TrackView } from '../api';
 // Imported here as well as in Watch.tsx: this component is meant to sit inside
 // the guest thread page, which knows nothing about the alerts stylesheet.
 import '../styles-alerts.css';
+import { prefersReducedMotion } from '../lib/motion';
+import { MAP_STYLE, mapLib } from '../lib/map';
 
 
 /**
@@ -17,15 +19,6 @@ import '../styles-alerts.css';
 
 /** Frequent enough to feel live, cheap enough to leave open on a phone. */
 const POLL_MS = 30_000;
-
-declare global {
-  interface Window { maplibregl?: any }
-}
-
-const STYLE = 'https://tiles.openfreemap.org/styles/positron';
-
-const still = () => typeof window !== 'undefined'
-  && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
 
 /**
  * Why the van is not on screen, in words.
@@ -148,8 +141,8 @@ export default function VanTrack({ token }: VanTrackProps) {
       <VanMap lat={view.lat} lng={view.lng} />
 
       <p className="vt-quiet" aria-live="polite">
-        Moving, {agoLabel(view.recorded_at)}. The position is rounded to about a
-        hundred metres and only shows while they are on their way to you.
+        Moving, {agoLabel(view.recorded_at)}. The position is rounded to about
+        110 metres and only shows while they are on their way to you.
       </p>
     </section>
   );
@@ -164,8 +157,8 @@ export default function VanTrack({ token }: VanTrackProps) {
  * the report. The figures above the map carry the "how far" half instead.
  *
  * MapLibre is loaded from a CDN in index.html, exactly as the discover map is,
- * so this reads it off `window` and falls back to the sentence above if the
- * script never arrived.
+ * so this reaches it through `mapLib()` and falls back to the sentence above
+ * if the script never arrived.
  */
 function VanMap({ lat, lng }: { lat: number; lng: number }) {
   const host = useRef<HTMLDivElement | null>(null);
@@ -173,12 +166,12 @@ function VanMap({ lat, lng }: { lat: number; lng: number }) {
   const marker = useRef<any>(null);
 
   useEffect(() => {
-    const gl = window.maplibregl;
+    const gl = mapLib();
     if (!gl || !host.current || map.current) return;
 
     const m = new gl.Map({
       container: host.current,
-      style: STYLE,
+      style: MAP_STYLE,
       center: [lng, lat],
       zoom: 13.5,
       attributionControl: { compact: true },
@@ -203,7 +196,7 @@ function VanMap({ lat, lng }: { lat: number; lng: number }) {
   useEffect(() => {
     if (!marker.current || !map.current) return;
     marker.current.setLngLat([lng, lat]);
-    map.current.easeTo({ center: [lng, lat], duration: still() ? 0 : 700 });
+    map.current.easeTo({ center: [lng, lat], duration: prefersReducedMotion() ? 0 : 700 });
   }, [lat, lng]);
 
   // MapLibre measures its container once. Mounted inside a card that is itself
@@ -216,7 +209,7 @@ function VanMap({ lat, lng }: { lat: number; lng: number }) {
     return () => ro.disconnect();
   }, []);
 
-  if (!window.maplibregl) return null;
+  if (!mapLib()) return null;
   return (
     <div className="vt-map" ref={host}
       role="img" aria-label="Map showing where the van is now" />

@@ -87,8 +87,6 @@ export default function StartCode({ token }: { token: string }) {
           <span className="faint">Look for</span>
           <strong>{job.vehicle_label}</strong>
 
-          {!sent && !job.code && null}
-
           {!sent && (
             reporting ? (
               <div className="stack" style={{ marginTop: 10 }}>

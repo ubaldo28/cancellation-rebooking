@@ -76,7 +76,11 @@ export async function detectGaps(
     ...timeOff,
   ].sort((x, y) => x.start - y.start);
 
-  const found: Array<Interval & { locationId: string | null; wholeDay: boolean }> = [];
+  const found: Array<Interval & {
+    locationId: string | null; wholeDay: boolean;
+    /** The free window before the notice clamp below moved its start. */
+    windowStart: number;
+  }> = [];
 
   for (let d = 0; d < days; d++) {
     const dayStart = addLocalDays(rangeStart, tz, d);
@@ -93,7 +97,9 @@ export async function detectGaps(
       for (const f of free) {
         const start = Math.max(f.start, earliest);
         if (f.end - start >= op.min_gap_seconds) {
-          found.push({ start, end: f.end, locationId: h.location_id, wholeDay });
+          found.push({
+            start, end: f.end, locationId: h.location_id, wholeDay, windowStart: f.start,
+          });
         }
       }
     }
@@ -135,10 +141,77 @@ export async function detectGaps(
   const baselineByGap = new Map<number, number>();
   baselineIdx.forEach((gapIdx, n) => baselineByGap.set(gapIdx, baselines[n]!));
 
+  /**
+   * The rows this operator already has for these days, read before anything is
+   * written, so a free window that has only moved its start can be recognised
+   * as the SAME opening rather than replaced by a new one.
+   *
+   * WHY THIS EXISTS. A detected gap's start is clamped to `earliest` above,
+   * and `earliest` is now + the notice period -- it moves forward on every
+   * single run. So for any window whose natural start has already passed, the
+   * (starts_at, ends_at) key the INSERT conflicts on was different every time,
+   * and a quarter-hourly cron therefore minted a brand new gap row every
+   * quarter hour and expired the one before it. That is not a tidy-up cost:
+   *
+   *   - the gaps table grew by ~96 rows per operator per open window per day,
+   *     with nothing that ever deletes them;
+   *   - watch_hits de-duplicates alerts on (watch_id, gap_id), so the same
+   *     customer was told about the same opening again on the next tick, as
+   *     though it were a new one, until their daily cap ran out;
+   *   - and every link already sent -- /book/<gap_id> in an alert email, an
+   *     invited offer's page -- pointed at a row that was 'expired' fifteen
+   *     minutes later, so the opening read as gone while it was still free.
+   *
+   * A free window is identified by where it ENDS and which location it is at.
+   * Its end is a boundary of the calendar -- the next job's start, or the end
+   * of working hours -- so it does not drift the way the clamped start does,
+   * and two free windows inside one day cannot share one. Only 'open' rows are
+   * adopted: an 'offering' gap has live offers quoting its start time, and
+   * moving that under them would change what somebody was invited to.
+   */
+  const existing = await env.DB.prepare(
+    `SELECT id, starts_at, ends_at, location_id FROM gaps
+      WHERE operator_id = ? AND status = 'open' AND source = 'detected'
+        AND starts_at >= ? AND starts_at < ?`,
+  ).bind(op.id, rangeStart, rangeEnd)
+    .all<{ id: string; starts_at: number; ends_at: number; location_id: string | null }>();
+
+  /** Rows adopted by the loop below, which the expiry pass must therefore keep. */
+  const keptIds = new Set<string>();
+
+  const byWindow = new Map<string, { id: string; starts_at: number }>();
+  for (const r of existing.results ?? []) {
+    byWindow.set(`${r.ends_at}:${r.location_id ?? ''}`, { id: r.id, starts_at: r.starts_at });
+  }
+
   const writes: D1PreparedStatement[] = [];
   for (let i = 0; i < found.length; i++) {
     const g = found[i]!;
     const a = anchors[i]!;
+
+    // The same window, still open, whose start has only been walked forward by
+    // the notice clamp. Slide the row rather than replacing it, so its id --
+    // which is in links and in watch_hits -- survives.
+    const held = byWindow.get(`${g.end}:${g.locationId ?? ''}`);
+    if (held && held.starts_at >= g.windowStart && held.starts_at <= g.start) {
+      byWindow.delete(`${g.end}:${g.locationId ?? ''}`);
+      keptIds.add(held.id);
+      writes.push(env.DB.prepare(
+        `UPDATE gaps SET starts_at = ?,
+           prev_appointment_id = ?, next_appointment_id = ?,
+           prev_lat = ?, prev_lng = ?, next_lat = ?, next_lng = ?,
+           baseline_drive_seconds = ?, fills_whole_day = ?, updated_at = ?
+          WHERE id = ? AND status = 'open' AND source = 'detected'`,
+      ).bind(
+        g.start,
+        a.prev?.id ?? null, a.next?.id ?? null,
+        a.pPoint?.lat ?? null, a.pPoint?.lng ?? null,
+        a.nPoint?.lat ?? null, a.nPoint?.lng ?? null,
+        baselineByGap.get(i) ?? null, g.wholeDay ? 1 : 0, t, held.id,
+      ));
+      continue;
+    }
+
     writes.push(env.DB.prepare(
       `INSERT INTO gaps
          (id, operator_id, starts_at, ends_at, prev_appointment_id, next_appointment_id,
@@ -193,7 +266,12 @@ export async function detectGaps(
         AND starts_at >= ? AND starts_at < ?`,
   ).bind(op.id, rangeStart, rangeEnd).all<{ id: string; starts_at: number; ends_at: number }>();
 
-  const expiring = (stale.results ?? []).filter((r) => !keep.has(`${r.starts_at}:${r.ends_at}`));
+  // Matched by id as well as by window. A row that was slid forward above is
+  // still the window it always was, and reading it back by its new coordinates
+  // would work -- but only as long as the slide landed, and a row that is kept
+  // deliberately must not depend on a second query agreeing about it.
+  const expiring = (stale.results ?? []).filter(
+    (r) => !keptIds.has(r.id) && !keep.has(`${r.starts_at}:${r.ends_at}`));
   if (expiring.length) {
     await env.DB.batch(expiring.map((r) =>
       env.DB.prepare(
