@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ALL_MIGRATIONS, FakeD1 } from './d1';
 
@@ -22,8 +23,29 @@ import { ALL_MIGRATIONS, FakeD1 } from './d1';
  * it. So the rule is: read it, or say in the migration why not.
  */
 
-const SRC = execSync("find /root/rt/src -type f -name '*.ts'")
-  .toString().trim().split('\n')
+/**
+ * Every Worker source file, as one string to search.
+ *
+ * Walked from this file's own location rather than from a path typed into the
+ * test or from `process.cwd()`. The first spelling of this shelled out to
+ * `find` against an absolute path from the machine it was written on, so the
+ * suite passed there and failed on every other computer with "No such file or
+ * directory" — a test that depends on where it happens to be checked out is
+ * not a test. `import.meta.url` is the one thing that is true wherever the
+ * repository sits, and reading the directory directly is both faster than a
+ * subprocess and works the same on Windows.
+ */
+function tsFilesUnder(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return tsFilesUnder(path);
+    return entry.isFile() && path.endsWith('.ts') ? [path] : [];
+  });
+}
+
+const SRC_DIR = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'src');
+
+const SRC = tsFilesUnder(SRC_DIR)
   .map((p) => readFileSync(p, 'utf8'))
   .join('\n');
 
