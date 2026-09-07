@@ -1,59 +1,83 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { api, type MapArea, type PublicSlot, type TradeCategory } from '../api';
+import { Link, Navigate, useParams } from 'react-router-dom';
+import {
+  api, type MapArea, type Metro as MetroRecord, type PublicSlot, type TradeCategory,
+} from '../api';
 import Crumbs from '../components/Crumbs';
 import PublicPage from '../components/PublicPage';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-index.css';
 import { plural } from '../lib/format';
+import { loadMetros, metroBySlug } from '../lib/metros';
 import { distinctGaps } from '../lib/slots';
 import { useDocumentTitle } from '../lib/title';
 
 /**
- * The metro page. Route /los-angeles.
+ * A metro page. Routes /los-angeles, /santa-maria, and whatever opens next.
  *
- * The Worker server-renders this URL from `metroPage` in src/lib/seo.ts and
- * splices the markup into #root before React mounts over it. With no route
- * here the catch-all would send the visitor to the front page a moment after
- * that HTML appeared, taking the page with it — so this route exists, and it
- * says what the server-rendered page says.
+ * The Worker server-renders each of these URLs from `metroPage` in
+ * src/lib/seo.ts and splices the markup into #root before React mounts over
+ * it. With no route here the catch-all would send the visitor to the front
+ * page a moment after that HTML appeared, taking the page with it — so these
+ * routes exist, and this page says what the server-rendered one says.
+ *
+ * WHICH PLACE IT IS, IS DATA. This file named Los Angeles in nine places and
+ * had two paragraphs of Los Angeles weather written into it, which is why
+ * /santa-maria could not be served by it: the second metro would have been a
+ * second copy of the file with different nouns, and the third a third. The
+ * name, the state and the paragraphs now come from the metro's own record over
+ * /api/public/metros — the same records src/lib/metros.ts hands the
+ * server-rendered version — so a crawler reading the spliced HTML and a person
+ * watching React take over are shown one page rather than two.
  *
  * THE RULE FOR THE PROSE ON THIS PAGE, because a city page is where every
  * marketplace starts inventing: the only things it may say are general facts
- * about Los Angeles that would be true if this site did not exist, and true
+ * about the place that would be true if this site did not exist, and true
  * statements about how Slotfill works. There is nothing here about how many
  * customers we have, how quickly anybody replies, how much anybody saves, or
  * how well this site is doing. Every number on the page is counted from the
  * openings fetched in this render, and where the count is nothing the page
  * says nothing is open rather than filling the space.
+ *
+ * EVERY FIGURE IS SCOPED TO THIS METRO. The counts come from the openings in
+ * this metro's neighbourhoods and not from every opening on the site — a Santa
+ * Maria page reporting the Valley's total would be the most misleading number
+ * on the site — which is what `MapArea.metro` is for.
  */
-
-/** The metro this product launched in, and the state it is in. Facts, not counts. */
-const METRO = 'Los Angeles';
-const LAUNCH_STATE = 'California';
-
 
 /** How many trades the ranked list shows before it stops being a list. */
 const TOP = 12;
 
 export default function Metro() {
+  const { metro: slug } = useParams<{ metro: string }>();
+  const [metros, setMetros] = useState<MetroRecord[] | null>(null);
   const [areas, setAreas] = useState<MapArea[]>([]);
   const [slots, setSlots] = useState<PublicSlot[]>([]);
   const [cats, setCats] = useState<TradeCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useDocumentTitle(`Mobile services in ${METRO}, ${LAUNCH_STATE}`);
+  const metro = metros ? metroBySlug(metros, slug) : null;
+
+  // Null until the metro is known, so the tab keeps the title the
+  // server-rendered page already set rather than flickering through a
+  // placeholder on the way to the same words.
+  useDocumentTitle(metro ? `Mobile services in ${metro.name}, ${metro.state}` : null);
 
   /**
-   * The map and the whole catalogue. The catalogue is not a decoration here —
-   * the "every service" section below is the catalogue — so both are loaded
-   * together and the page fails as one thing rather than half rendering.
+   * The metro records, the map and the whole catalogue. The catalogue is not a
+   * decoration here — the "every service" section below is the catalogue — and
+   * without the records the page does not know which place it is, so all three
+   * are loaded together and the page fails as one thing rather than half
+   * rendering.
    */
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [map, catalog] = await Promise.all([api.publicMap(), api.tradeCatalog()]);
+      const [list, map, catalog] = await Promise.all([
+        loadMetros(), api.publicMap(), api.tradeCatalog(),
+      ]);
+      setMetros(list);
       setAreas(map.areas);
       setSlots(map.slots);
       setCats(catalog.categories);
@@ -66,13 +90,23 @@ export default function Metro() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const all = useMemo(() => distinctGaps(slots), [slots]);
+  /** This metro's neighbourhoods, and only the openings inside them. */
+  const here = useMemo(
+    () => (metro ? areas.filter((a) => a.metro === metro.slug) : []),
+    [areas, metro],
+  );
+  const mine = useMemo(() => {
+    const inMetro = new Set(here.map((a) => a.slug));
+    return slots.filter((s) => inMetro.has(s.area_slug));
+  }, [slots, here]);
+
+  const all = useMemo(() => distinctGaps(mine), [mine]);
   const samples = useMemo(() => all.filter((s) => s.is_sample).length, [all]);
   const businesses = useMemo(
     () => new Set(all.map((s) => s.operator_id)).size, [all],
   );
   const withOpenings = useMemo(
-    () => areas.filter((a) => a.slot_count > 0), [areas],
+    () => here.filter((a) => a.slot_count > 0), [here],
   );
 
   /**
@@ -88,9 +122,9 @@ export default function Metro() {
   [all]);
 
   /**
-   * Every trade with something open, ranked by how many openings it has and by
-   * nothing else. Trades are matched against the catalogue so a row can only
-   * ever link to a trade page that exists.
+   * Every trade with something open here, ranked by how many openings it has
+   * and by nothing else. Trades are matched against the catalogue so a row can
+   * only ever link to a trade page that exists.
    */
   const ranked = useMemo(() => {
     const bySlug = new Map(cats.flatMap((c) => c.trades.map((t) => [t.slug, t] as const)));
@@ -100,8 +134,8 @@ export default function Metro() {
       if (t) counts.set(t, (counts.get(t) ?? 0) + 1);
     }
     return [...counts.entries()]
-      .flatMap(([slug, n]) => {
-        const trade = bySlug.get(slug);
+      .flatMap(([tradeSlug, n]) => {
+        const trade = bySlug.get(tradeSlug);
         return trade ? [{ trade, n }] : [];
       })
       .sort((a, b) => b.n - a.n || a.trade.label.localeCompare(b.trade.label));
@@ -121,29 +155,37 @@ export default function Metro() {
       </PublicPage>
     );
   }
+  /**
+   * A URL of one segment that is not a metro. This route is the only one broad
+   * enough to catch a mistyped path, so it hands that path back to the same
+   * catch-all the rest of the app uses rather than rendering a page about a
+   * place that does not exist.
+   */
+  if (!metro) return <Navigate to="/" replace />;
 
   return (
     <PublicPage className="ix-page">
-      <Crumbs items={[{ label: METRO }]} />
+      <Crumbs items={[{ label: metro.name }]} />
 
       <header className="ix-head">
         <h1>
-          Mobile services in {METRO}, {LAUNCH_STATE}
+          Mobile services in {metro.name}, {metro.state}
           <span className="ix-count">
             {all.length} open {plural(all.length, 'appointment', 'appointments')} right now
           </span>
         </h1>
         <p className="ix-lede">
-          Every appointment listed here is an hour a {METRO} business has free
-          this week — a job that cancelled, or a day that has not filled. The
-          price is the one the business set. Booking one holds it; nothing is
-          paid on this site yet, so you settle that price with the business
+          Every appointment listed here is an hour a {metro.name} business has
+          free this week — a job that cancelled, or a day that has not filled.
+          The price is the one the business set. Booking one holds it; nothing
+          is paid on this site yet, so you settle that price with the business
           directly.
         </p>
 
         {/* Four counts, none of them written down: each is read off the rows
-            this page has just fetched, and the price tile is omitted rather
-            than zeroed when there is no genuine listing to quote. */}
+            this page has just fetched for this metro, and the price tile is
+            omitted rather than zeroed when there is no genuine listing to
+            quote. */}
         <ul className="ix-stats">
           <li className="ix-stat">
             <b>{all.length}</b>
@@ -187,7 +229,7 @@ export default function Metro() {
       </header>
 
       <section className="ix-sec" aria-labelledby="ix-top">
-        <h2 id="ix-top">Top services in {METRO} right now</h2>
+        <h2 id="ix-top">Top services in {metro.name} right now</h2>
         {ranked.length > 0 ? (
           <ul className="ix-list">
             {ranked.slice(0, TOP).map((r) => (
@@ -210,19 +252,21 @@ export default function Metro() {
         )}
         {/* Said under the list rather than above it, because it is a caveat on
             an ordering somebody has already read and not an instruction for
-            how to read one. */}
+            how to read one. The closing sentence is there because these rows
+            count one metro and the pages they lead to do not. */}
         <p className="ix-note">
-          Ranked by how many appointments each trade has open at this moment,
-          and by nothing else. It is not a popularity list and it moves through
-          the day.
+          Ranked by how many appointments each trade has open in {metro.name} at
+          this moment, and by nothing else. It is not a popularity list and it
+          moves through the day. Each link leads to that trade everywhere
+          Slotfill covers, which is more than this one place.
         </p>
       </section>
 
       <section className="ix-sec" aria-labelledby="ix-hoods">
         <h2 id="ix-hoods">Neighbourhoods</h2>
-        {areas.length > 0 ? (
+        {here.length > 0 ? (
           <ul className="ix-tiles">
-            {areas.map((a) => (
+            {here.map((a) => (
               <li key={a.slug}>
                 {/* Plain anchors: /near/<place> is server-rendered by the
                     Worker and is not a React route, so a client-side
@@ -266,29 +310,20 @@ export default function Metro() {
       </section>
 
       {/*
-        THE ONLY PROSE ON THE PAGE, and both paragraphs of it are general facts
-        about Los Angeles that would be true if this site did not exist. The
-        third says what this site does, which is checkable. Nothing here is a
-        claim about Slotfill's size, its popularity or its results, and nothing
-        may be added that is.
+        THE ONLY PROSE ON THE PAGE, and every paragraph of it but the last is a
+        general fact about this place that would be true if this site did not
+        exist. They come from the metro's own record rather than from a
+        template, which is the point of keeping them there: Los Angeles has a
+        long dry season and Santa Maria has a marine layer, and a page that
+        said the same thing about both would be inventing about one of them.
+        The closing paragraph is shared because it is about the product rather
+        than the place. Nothing here is a claim about Slotfill's size, its
+        popularity or its results, and nothing may be added that is.
       */}
       <section className="ix-sec" aria-labelledby="ix-why">
-        <h2 id="ix-why">Why mobile work suits {METRO}</h2>
+        <h2 id="ix-why">Why mobile work suits {metro.name}</h2>
         <div className="ix-prose">
-          <p>
-            Los Angeles has a Mediterranean climate: a long dry season from
-            roughly May to October and most of the year's rain in a handful of
-            winter months. Dust and pollen settle on cars, windows and solar
-            panels through the dry months, and the first rains wash them into
-            gutters and drains — which is why so much of the work listed here
-            is cleaning of one kind or another, and why it clusters seasonally.
-          </p>
-          <p>
-            Most of the housing in the city is low-rise, with driveways, yards
-            and street parking rather than loading bays. That is what makes a
-            van practical: the person doing the work can bring water, power and
-            tools to the address instead of the address coming to a shop.
-          </p>
+          {metro.geography.map((p) => <p key={p}>{p}</p>)}
           <p>
             None of that is a claim about Slotfill. What this site does is
             narrower and easier to check: a business posts the hours it has
@@ -302,8 +337,9 @@ export default function Metro() {
 
       <footer className="ix-foot">
         <p>
-          Every figure on this page was counted from the openings at the moment
-          the page loaded. Prices are set by the business doing the work.
+          Every figure on this page was counted from the openings in{' '}
+          {metro.name} at the moment the page loaded. Prices are set by the
+          business doing the work.
         </p>
         <p>
           <a href="/near">Every neighbourhood</a>

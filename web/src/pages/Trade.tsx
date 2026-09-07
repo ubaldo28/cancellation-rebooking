@@ -8,6 +8,7 @@ import Crumbs from '../components/Crumbs';
 import { PAY_TODAY_SHORT } from '../components/PaymentState';
 import PublicPage from '../components/PublicPage';
 import PostcodeFinder from '../components/PostcodeFinder';
+import MetroLinks from '../components/MetroLinks';
 import SlotCard from '../components/SlotCard';
 import SlotFilters, { useSlotFilters } from '../components/SlotFilters';
 import { ErrorNote, Spinner, Stars } from '../components/ui';
@@ -853,7 +854,7 @@ export default function Trade() {
             ))}
           </ul>
           <p className="tr-areas-foot">
-            <a href="/near">Every neighbourhood Slotfill covers</a>
+            <a href="/near">Every neighbourhood Slotfill covers</a><MetroLinks />
           </p>
         </section>
       )}
@@ -953,7 +954,7 @@ export default function Trade() {
           sub={`Nothing in ${lower} is open in these at the moment, but something `
             + `else is. Each one goes to everything open in that neighbourhood`
             + `${located ? `, and all of it can reach ${near}` : ''}.`}
-          foot={<a href="/near">Every neighbourhood Slotfill covers</a>} />
+          foot={<><a href="/near">Every neighbourhood Slotfill covers</a><MetroLinks /></>} />
       )}
 
       {/* --- what else is open across the site ---------------------------

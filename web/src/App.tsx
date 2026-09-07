@@ -220,7 +220,7 @@ export default function App() {
           <Route path="/cost" element={<CostIndex />} />
           <Route path="/cost/:trade" element={<CostGuide />} />
           {/*
-            /near and /los-angeles MUST EXIST HERE EVEN THOUGH THE WORKER
+            /near AND EVERY METRO PAGE MUST EXIST HERE EVEN THOUGH THE WORKER
             RENDERS THEM — and so must /p/:slug, /browse/:category, /s/:trade
             and /cost/:trade above, for the same reason. Every one of those is
             in WORKER_PATHS in src/index.ts and arrives as server-rendered
@@ -228,10 +228,11 @@ export default function App() {
             then mounts over it. Without a matching route the catch-all below
             would send the visitor to the front page a fraction of a second
             after the page they asked for had already been drawn — the
-            server-rendered page would appear and then vanish.
+            server-rendered page would appear and then vanish. That is exactly
+            what /santa-maria did while the only metro route here was a
+            literal '/los-angeles'.
           */}
           <Route path="/near" element={<Areas />} />
-          <Route path="/los-angeles" element={<Metro />} />
           {/* The pages the footer links to. Every one of these was an inert
               grey word until the page behind it existed. */}
           <Route path="/covered" element={<Covered />} />
@@ -265,6 +266,26 @@ export default function App() {
           <Route path="/app/messages" element={<Protected><Messages /></Protected>} />
           <Route path="/app/post" element={<Protected><PostOpening /></Protected>} />
           <Route path="/app/credentials" element={<Protected><Credentials /></Protected>} />
+          {/*
+            THE METRO PAGES, as one parameterised route rather than one line
+            per place.
+
+            A literal route per metro is what has to be remembered — and was
+            not — the next time the product opens somewhere: /santa-maria was
+            server-rendered, complete and correct, and this app threw it away a
+            fraction of a second later because the only metro listed here was
+            Los Angeles. Reading the slug instead means the Worker's list in
+            src/lib/metros.ts is the only place a new place is declared, and
+            Metro.tsx resolves the slug against that same list over
+            /api/public/metros.
+
+            It is last, and after every literal route above it, because it
+            matches any single segment. React Router ranks a static segment
+            above a dynamic one, so /about and /near still reach their own
+            pages; a segment that is no metro at all reaches Metro, which sends
+            it to the catch-all's destination itself.
+          */}
+          <Route path="/:metro" element={<Metro />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </SessionProvider>

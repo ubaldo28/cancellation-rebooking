@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import Crumbs from '../components/Crumbs';
 import PublicPage from '../components/PublicPage';
+import { useMetros } from '../lib/metros';
 import { useDocumentTitle } from '../lib/title';
 import '../styles-info.css';
 
@@ -20,13 +21,16 @@ import '../styles-info.css';
  * either unknown here or unverifiable, and an About page is the last place a
  * marketplace can afford to be caught making something up.
  *
- * The geography is read from the code rather than assumed: COUNTRIES in
- * src/lib/countries.ts holds the United States and nothing else, LAUNCH_STATE
- * is California and the metro in src/lib/seo.ts is Los Angeles.
+ * The geography is read rather than assumed. COUNTRIES in
+ * src/lib/countries.ts holds the United States and nothing else; the places
+ * are the metro records, fetched here rather than written down, because this
+ * page said "Los Angeles, California. That is the only metro" on the day a
+ * second one opened and nothing about the sentence looked wrong.
  */
 
 export default function About() {
   useDocumentTitle('About Slotfill');
+  const metros = useMetros();
 
   return (
     <PublicPage className="info-page">
@@ -80,12 +84,25 @@ export default function About() {
 
       <section className="info-sec" aria-labelledby="a-where">
         <h2 id="a-where">Where it operates</h2>
+        {/* Listed from the metro records rather than written into the
+            sentence. Each one names its own state, so a place opened outside
+            California would read correctly here without this page being
+            edited — which is the mistake the previous version of it made. */}
+        {metros.length > 0 && (
+          <ul className="info-list">
+            {metros.map((m) => (
+              <li key={m.slug}>
+                <a href={m.path}>{m.name}, {m.state}</a>
+              </li>
+            ))}
+          </ul>
+        )}
         <p>
-          Los Angeles, California. That is the only metro with neighbourhood
-          pages, and the United States is the only country the sign-up accepts.
-          Other countries were deliberately taken out rather than left in:
-          each one carries its own licensing, consumer-protection and data
-          rules, and being properly usable in one city is worth more than being
+          Those are the places with neighbourhood pages, and the United States
+          is the only country the sign-up accepts. Other countries were
+          deliberately taken out rather than left in: each one carries its own
+          licensing, consumer-protection and data rules, and being properly
+          usable where the vans actually are is worth more than being
           nominally available in six countries nobody has checked.
         </p>
       </section>

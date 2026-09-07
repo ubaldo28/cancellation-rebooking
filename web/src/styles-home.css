@@ -536,6 +536,29 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The metro a run of those names belongs to. Small and set above its own
+   list, because its job is to divide the names rather than to compete with
+   the band's own heading. */
+.places-h {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.places-h a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.places-h a:hover { color: var(--accent-ink); }
+
 /* --- the other side of the market ---------------------------------------- */
 
 /* The one dark band on the page that is not the hero. Flat --night-1 rather

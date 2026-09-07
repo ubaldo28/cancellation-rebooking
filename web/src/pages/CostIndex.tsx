@@ -6,6 +6,7 @@ import PublicPage from '../components/PublicPage';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-index.css';
 import { ENOUGH, formatMoney as money, median, plural } from '../lib/format';
+import { useMetros } from '../lib/metros';
 import { useDocumentTitle } from '../lib/title';
 
 /**
@@ -44,6 +45,7 @@ interface Priced {
 }
 
 export default function CostIndex() {
+  const metros = useMetros();
   const [slots, setSlots] = useState<PublicSlot[]>([]);
   const [cats, setCats] = useState<TradeCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -381,8 +383,14 @@ export default function CostIndex() {
           {/* Plain anchors: the Worker renders these two, they are not React
               routes. */}
           <a href="/near">Every neighbourhood</a>
-          {' · '}
-          <a href="/los-angeles">Mobile services in Los Angeles</a>
+          {/* One link per place, built from the metro records: this line named
+              Los Angeles alone on the day a second place opened. */}
+          {metros.map((m) => (
+            <span key={m.slug}>
+              {' · '}
+              <a href={m.path}>Mobile services in {m.name}</a>
+            </span>
+          ))}
         </p>
       </footer>
     </PublicPage>

@@ -6,6 +6,7 @@ import PublicPage from '../components/PublicPage';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-index.css';
 import { plural } from '../lib/format';
+import { useMetros } from '../lib/metros';
 import { useDocumentTitle } from '../lib/title';
 
 /**
@@ -29,6 +30,7 @@ import { useDocumentTitle } from '../lib/title';
 
 
 export default function BrowseIndex() {
+  const metros = useMetros();
   const [cats, setCats] = useState<TradeCategory[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -220,7 +222,14 @@ export default function BrowseIndex() {
               than being React routes, so a client-side navigation to them
               would land on the catch-all. */}
           <li><a href="/near">Browse by neighbourhood</a></li>
-          <li><a href="/los-angeles">Mobile services in Los Angeles</a></li>
+          {/* One row per place Slotfill serves, from the metro records. A
+              literal Los Angeles row here is what silently left Santa Maria
+              off every catalogue page the day it opened. */}
+          {metros.map((m) => (
+            <li key={m.slug}>
+              <a href={m.path}>Mobile services in {m.name}</a>
+            </li>
+          ))}
           <li><Link to="/cost">What things cost</Link></li>
         </ul>
       </section>

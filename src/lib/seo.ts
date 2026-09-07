@@ -28,6 +28,7 @@ import type { Env } from '../types';
 import { LAUNCH_STATE, ZERO_DECIMAL, formatMoney, localeFor } from './countries';
 import { CONTRACTOR_THRESHOLD_LABEL, TRADE_RULES, rulesFor } from './credentials';
 import { isDemoOperator } from './demo';
+import { METROS, metroForPlace, metroPath, type Metro } from './metros';
 import { getPublicProfile, type SimilarBusiness } from './profile';
 import { mapData, type MapArea, type PublicSlot } from './public';
 import { reviewsForTrade, type TradeReview } from './reviews';
@@ -43,18 +44,71 @@ import { escapeHtml, haversineMeters, now } from './util';
 const SITE_NAME = 'Slotfill';
 
 /**
- * The metro the product launched in, alongside LAUNCH_STATE.
+ * The metros live in lib/metros.ts, and every page below reads that list.
  *
- * Named here rather than derived from the rows because it is a fact about
- * where Slotfill operates, not a count of anything. Every page that prints it
- * prints it as the name of the launch area and never as a claim about how much
- * of the city is covered — that number is always counted from the rows in
- * hand, and it is usually small.
+ * There used to be one name and one path here — `METRO = 'Los Angeles'` and
+ * `METRO_PATH = '/los-angeles'` — read by about twenty call sites. That was
+ * honest while the product was one city and wrong the instant it was two: a
+ * Santa Maria neighbourhood page led up to a Los Angeles breadcrumb, and every
+ * "the whole city" link pointed at the wrong city.
+ *
+ * So the rule now is: a page that describes ONE place takes its metro as an
+ * argument, or resolves it from the neighbourhood it is about. A page that
+ * describes the SITE enumerates METROS. Nothing in this file names a city.
  */
-const METRO = 'Los Angeles';
 
-/** The metro page's own URL, linked from the geographic pages below. */
-const METRO_PATH = '/los-angeles';
+/** The metro links a site-wide "other ways in" list carries, in launch order. */
+const metroLinks = (): Array<{ href: string; text: string }> =>
+  METROS.map((m) => ({ href: metroPath(m), text: `Mobile services in ${m.name}` }));
+
+/**
+ * "Los Angeles and Santa Maria" — the site's footprint in a phrase.
+ *
+ * Only for pages describing Slotfill as a whole. A page about one place uses
+ * that place's name and never this.
+ */
+function metroNames(): string {
+  const names = METROS.map((m) => m.name);
+  if (names.length < 2) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/**
+ * The metro a neighbourhood belongs to, given what the map already knows.
+ *
+ * The area carries coordinates, so a place lib/metros.ts has never heard of —
+ * a real operator's own service area — still resolves to the nearest metro
+ * rather than falling back to the launch one.
+ */
+const metroOf = (area: { slug: string; lat: number; lng: number }): Metro =>
+  metroForPlace(area.slug, { lat: area.lat, lng: area.lng });
+
+/**
+ * The metro one business works in, decided by where most of its round is.
+ *
+ * A round that straddles two metros has to resolve to one of them for the
+ * breadcrumb and the description, and the majority of its own service areas is
+ * the only answer that is not a guess. An operator with no areas at all — or
+ * none this file can place — falls back to whatever metroForPlace does, which
+ * is the launch metro.
+ */
+async function metroForOperator(env: Env, operatorId: string | null): Promise<Metro> {
+  if (!operatorId) return metroForPlace('');
+  const rows = await env.DB.prepare(
+    `SELECT place_slug, lat, lng FROM service_areas
+      WHERE operator_id = ? AND is_active = 1`,
+  ).bind(operatorId).all<{ place_slug: string | null; lat: number; lng: number }>();
+
+  const tally = new Map<string, { metro: Metro; n: number }>();
+  for (const r of rows.results ?? []) {
+    const m = metroForPlace(r.place_slug ?? '', { lat: r.lat, lng: r.lng });
+    const seen = tally.get(m.slug);
+    if (seen) seen.n += 1;
+    else tally.set(m.slug, { metro: m, n: 1 });
+  }
+  const winner = [...tally.values()].sort((a, b) => b.n - a.n)[0];
+  return winner?.metro ?? metroForPlace('');
+}
 
 /** A slot as mapData hands it back: placed in the neighbourhood it belongs to. */
 type PlacedSlot = PublicSlot & { area_slug: string };
@@ -345,8 +399,10 @@ function siteFooter(areas?: MapArea[]): string {
       areas.map((a) => `<li><a href="/near/${escapeHtml(a.slug)}">${escapeHtml(a.name)}${
         a.slot_count > 0 ? `<span class="foot-n">${a.slot_count}</span>` : ''
       }</a></li>`).join('')
-    }<li><a href="/near">Every neighbourhood</a></li>
-<li><a href="${escapeHtml(METRO_PATH)}">${escapeHtml(METRO)}</a></li></ul></nav>`
+    }<li><a href="/near">Every neighbourhood</a></li>${
+      METROS.map((m) => `<li><a href="${escapeHtml(metroPath(m))}">${
+        escapeHtml(m.name)}</a></li>`).join('')
+    }</ul></nav>`
     : '';
 
   return `<footer class="site-foot"><div class="foot-in">
@@ -688,11 +744,19 @@ function priceAmount(cents: number, currency: string): string {
 
 const isoAt = (epochSeconds: number) => new Date(epochSeconds * 1000).toISOString();
 
-function offerLd(s: PlacedSlot, placeName: string, pageUrl: string, base: string): unknown {
+/**
+ * `where` arrives already spelled "Sherman Oaks, California".
+ *
+ * The state used to be appended here out of LAUNCH_STATE, which is the launch
+ * gate and not a fact about this neighbourhood. It comes off the place's own
+ * metro record now, and it is joined once by the caller so the markup and the
+ * heading above it can never disagree about where the reader is.
+ */
+function offerLd(s: PlacedSlot, where: string, pageUrl: string, base: string): unknown {
   const provider: Record<string, unknown> = {
     '@type': 'LocalBusiness',
     name: s.business_name,
-    areaServed: { '@type': 'Place', name: `${placeName}, ${LAUNCH_STATE}` },
+    areaServed: { '@type': 'Place', name: where },
   };
   // Only when they have actually published a profile page to point at.
   if (s.profile_slug) provider.url = `${base}/p/${s.profile_slug}`;
@@ -701,7 +765,7 @@ function offerLd(s: PlacedSlot, placeName: string, pageUrl: string, base: string
     '@type': 'Service',
     name: s.service_name,
     provider,
-    areaServed: { '@type': 'Place', name: `${placeName}, ${LAUNCH_STATE}` },
+    areaServed: { '@type': 'Place', name: where },
   };
   if (s.trade) service.serviceType = tradeLabel(s.trade);
 
@@ -738,7 +802,7 @@ function pageLd(
   base: string,
   trail: Array<{ name: string; url: string }>,
   slots: PlacedSlot[],
-  placeName: string,
+  where: string,
   pageUrl: string,
 ): unknown {
   const real = slots.filter((s) => !s.is_sample);
@@ -750,7 +814,7 @@ function pageLd(
       itemListElement: real.map((s, i) => ({
         '@type': 'ListItem',
         position: i + 1,
-        item: offerLd(s, placeName, pageUrl, base),
+        item: offerLd(s, where, pageUrl, base),
       })),
     });
   }
@@ -925,7 +989,10 @@ export async function neighbourhoodPage(env: Env, placeSlug: string): Promise<st
   const url = `${base}/near/${place.slug}`;
   const mine = idx.slots.filter((s) => s.area_slug === place.slug);
   const groups = byTrade(mine);
-  const where = `${place.name}, ${LAUNCH_STATE}`;
+  // The state comes off the neighbourhood's own metro rather than off
+  // LAUNCH_STATE, which is a launch gate and not a fact about this place.
+  const metro = metroOf(place);
+  const where = `${place.name}, ${metro.state}`;
   const whereSafe = escapeHtml(where);
 
   const jump = linkableTrades(mine);
@@ -992,20 +1059,25 @@ not a waiting list and there is nothing to sign up for here.</p>
 
   // The other half of the cross-link the brief asks for: a place page names
   // the trades open in it, and each of those names goes to that trade's own
-  // city-wide page as well as to the trade-in-this-place one above. Only
-  // trades in the catalogue, because only those have a /s/ page to reach.
-  const cityWide = linkList(jump
+  // page as well as to the trade-in-this-place one above. Only trades in the
+  // catalogue, because only those have a /s/ page to reach.
+  //
+  // The anchor says "everywhere Slotfill covers" rather than naming this
+  // metro, because that is what a /s/ page is: it counts every opening on the
+  // site, in both metros. Naming one of them here would have been the same
+  // untruth the METRO constant used to tell.
+  const siteWide = linkList(jump
     .map((t) => ({ t, cat: tradeBySlug(t.trade) }))
     .filter((x): x is { t: { trade: string; n: number }; cat: Trade } => x.cat !== null)
     .map((x) => ({
       href: tradePath(x.cat.slug),
-      text: `${x.cat.label} across ${METRO}`,
+      text: `${x.cat.label} everywhere ${SITE_NAME} covers`,
       sub: `${x.t.n} of them here`,
     })));
 
   const body = `
 <p class="crumb"><a href="/">${escapeHtml(SITE_NAME)}</a> › <a href="${
-    escapeHtml(METRO_PATH)}">${escapeHtml(METRO)}</a> › ${escapeHtml(place.name)}</p>
+    escapeHtml(metroPath(metro))}">${escapeHtml(metro.name)}</a> › ${escapeHtml(place.name)}</p>
 <h1>Open appointments in ${escapeHtml(where)}</h1>
 <p class="lede">${lede}</p>
 ${jumpNav}
@@ -1015,11 +1087,11 @@ ${sections}
 <h2>Nearby</h2>
 ${nearbyLinks || '<p class="note">No other neighbourhoods are covered yet.</p>'}
 <p class="note"><a href="/near">Every neighbourhood Slotfill covers</a> ·
-<a href="${escapeHtml(METRO_PATH)}">${escapeHtml(METRO)}</a></p>
+<a href="${escapeHtml(metroPath(metro))}">${escapeHtml(metro.name)}</a></p>
 </section>
-${cityWide ? `<section>
-<h2>The same work elsewhere in ${escapeHtml(METRO)}</h2>
-${cityWide}
+${siteWide ? `<section>
+<h2>The same work elsewhere</h2>
+${siteWide}
 </section>` : ''}`;
 
   return seoPage({
@@ -1032,8 +1104,9 @@ ${cityWide}
     noindex: false,
     jsonLd: pageLd(base, [
       { name: SITE_NAME, url: '/' },
+      { name: metro.name, url: metroPath(metro) },
       { name: place.name, url: `/near/${place.slug}` },
-    ], mine, place.name, url),
+    ], mine, where, url),
     body,
     areas: idx.areas,
   });
@@ -1078,6 +1151,8 @@ export async function tradeInPlacePage(
   const slug = tradeSlug(trade);
   const url = `${base}/near/${place.slug}/${slug}`;
   const label = tradeLabel(trade);
+  const metro = metroOf(place);
+  const where = `${place.name}, ${metro.state}`;
   const here = idx.slots.filter((s) => s.area_slug === place.slug);
   const mine = here.filter((s) => (s.trade ?? '').trim().toLowerCase() === trade);
   const real = mine.filter((s) => !s.is_sample);
@@ -1128,7 +1203,8 @@ in a real calendar.</p>
 </section>`;
 
   const body = `
-<p class="crumb"><a href="/">${escapeHtml(SITE_NAME)}</a> › <a href="/near/${
+<p class="crumb"><a href="/">${escapeHtml(SITE_NAME)}</a> › <a href="${
+    escapeHtml(metroPath(metro))}">${escapeHtml(metro.name)}</a> › <a href="/near/${
     escapeHtml(place.slug)}">${escapeHtml(place.name)}</a> › ${escapeHtml(label)}</p>
 <h1>${escapeHtml(label)} in ${escapeHtml(place.name)}<span class="count">${
     empty ? 'Nothing open right now'
@@ -1164,7 +1240,9 @@ ${tradeBySlug(trade) ? `<section>
 ${linkList([
     {
       href: tradePath(tradeBySlug(trade)!.slug),
-      text: `${label} across ${METRO}`,
+      // The trade page counts every opening on the site, in both metros, so it
+      // is not "across Los Angeles" and never was once there were two.
+      text: `${label} everywhere ${SITE_NAME} covers`,
     },
     {
       href: costPath(tradeBySlug(trade)!.slug),
@@ -1174,15 +1252,15 @@ ${linkList([
 </section>` : ''}`;
 
   const description = empty
-    ? `${label} in ${place.name}, ${LAUNCH_STATE}. Nothing is open right now — `
+    ? `${label} in ${where}. Nothing is open right now — `
       + `openings appear when a job is cancelled or a gap opens in the day.`
     : `${mine.length} ${label.toLowerCase()} appointment${mine.length === 1 ? '' : 's'} `
-      + `open in ${place.name}, ${LAUNCH_STATE}`
+      + `open in ${where}`
       + `${cheapest ? `, from ${cheapest.price}` : ''}`
       + `${soonest ? `, next ${soonest.when}` : ''}. Real times, real prices.`;
 
   return seoPage({
-    title: `${label} in ${place.name}, ${LAUNCH_STATE}`,
+    title: `${label} in ${where}`,
     description,
     canonical: url,
     // Index only when there is something real to rank. An empty square of the
@@ -1191,9 +1269,10 @@ ${linkList([
     noindex: real.length === 0,
     jsonLd: pageLd(base, [
       { name: SITE_NAME, url: '/' },
+      { name: metro.name, url: metroPath(metro) },
       { name: place.name, url: `/near/${place.slug}` },
       { name: label, url: `/near/${place.slug}/${slug}` },
-    ], mine, place.name, url),
+    ], mine, where, url),
     body,
     areas: idx.areas,
   });
@@ -1615,8 +1694,9 @@ ${linkList(here.map((x) => ({
     sub: `${x.n} open`,
   }))) || `<p class="note">Nothing in this trade is open in any neighbourhood
 right now, so there is nowhere to send you that would have something on it.</p>`}
-<p class="note"><a href="/near">Every neighbourhood ${escapeHtml(SITE_NAME)} covers</a> ·
-<a href="${escapeHtml(METRO_PATH)}">${escapeHtml(METRO)}</a></p>
+<p class="note"><a href="/near">Every neighbourhood ${escapeHtml(SITE_NAME)} covers</a>${
+    METROS.map((m) => ` · <a href="${escapeHtml(metroPath(m))}">${escapeHtml(m.name)}</a>`).join('')
+}</p>
 </section>
 ${guides.length ? `<section>
 <h2>Related cost information</h2>
@@ -2081,8 +2161,9 @@ ${linkList(here.map((x) => ({
         text: `${label} in ${x.area.name}`,
         sub: `${x.n} open`,
       })))}
-<p class="note"><a href="/near">Every neighbourhood ${escapeHtml(SITE_NAME)} covers</a> ·
-<a href="${escapeHtml(METRO_PATH)}">${escapeHtml(METRO)}</a></p>` : ''}
+<p class="note"><a href="/near">Every neighbourhood ${escapeHtml(SITE_NAME)} covers</a>${
+    METROS.map((m) => ` · <a href="${escapeHtml(metroPath(m))}">${escapeHtml(m.name)}</a>`).join('')
+}</p>` : ''}
 </section>
 <section>
 ${/*
@@ -2360,7 +2441,7 @@ ${linkList(bare.map((r) => ({
 ${linkList([
     { href: '/browse', text: `Every service ${SITE_NAME} covers` },
     { href: '/near', text: 'Every neighbourhood' },
-    { href: METRO_PATH, text: `Mobile services in ${METRO}` },
+    ...metroLinks(),
   ])}
 <p class="note">Every price on this page was listed by the business that would
 do the work, and counted at the moment the page was built. It is what they are
@@ -2451,7 +2532,7 @@ ${sections}
 page, or by where the van is.</p>
 ${linkList([
     { href: '/near', text: 'Browse by neighbourhood' },
-    { href: METRO_PATH, text: `Mobile services in ${METRO}` },
+    ...metroLinks(),
     { href: '/cost', text: 'What things cost' },
   ])}
 <p class="note">A service is listed here because ${escapeHtml(SITE_NAME)} covers
@@ -2537,8 +2618,9 @@ ${linkList(idx.areas.slice(0, 12).map((a) => ({
     text: `Open appointments in ${a.name}`,
     sub: a.slot_count ? `${a.slot_count} open` : undefined,
   })))}
-<p class="note"><a href="/near">Every neighbourhood</a> ·
-<a href="${escapeHtml(METRO_PATH)}">${escapeHtml(METRO)}</a></p>
+<p class="note"><a href="/near">Every neighbourhood</a>${
+    METROS.map((m) => ` · <a href="${escapeHtml(metroPath(m))}">${escapeHtml(m.name)}</a>`).join('')
+}</p>
 </section>`;
 
   return seoPage({
@@ -2666,6 +2748,16 @@ export async function profilePage(
   // here counts from. Matched on profile_slug rather than on the business
   // name, which is neither unique nor stable.
   const theirs = distinctGaps(idx.slots.filter((s) => s.profile_slug === slug));
+
+  /**
+   * Which metro this business works in, read off its own service areas.
+   *
+   * A profile is one business on one patch, so the description names that
+   * patch. It used to name the launch metro, which was the same sentence for
+   * everybody and became wrong the moment a business outside Los Angeles
+   * published a page. The areas themselves are listed in full on the page.
+   */
+  const metro = await metroForOperator(env, idRow?.id ?? null);
 
   const overview = [
     ...(o.hired_count > 0 ? [`Hired ${o.hired_count} times`] : []),
@@ -2806,7 +2898,7 @@ ${linkList([
     '@type': ['Product', 'LocalBusiness'],
     name: o.business_name,
     url,
-    areaServed: areas.map((a) => ({ '@type': 'Place', name: `${a}, ${LAUNCH_STATE}` })),
+    areaServed: areas.map((a) => ({ '@type': 'Place', name: `${a}, ${metro.state}` })),
   };
   if (o.tagline) businessLd.description = o.tagline;
   if (entry) businessLd.category = entry.label;
@@ -2826,7 +2918,7 @@ ${linkList([
       + `example data, not a real business.`
     : [
       o.tagline?.trim() ? sentence(o.tagline.trim()) : null,
-      entry ? `${entry.label} in ${METRO}, ${LAUNCH_STATE}.` : null,
+      entry ? `${entry.label} in ${metro.name}, ${metro.state}.` : null,
       rating.count > 0
         ? `${rating.average} from ${rating.count} ${plural(rating.count, 'review', 'reviews')}.`
         : 'No reviews yet.',
@@ -2878,20 +2970,26 @@ export async function areaIndexPage(env: Env): Promise<string> {
 
   const rows = idx.areas.map((a) => {
     const mine = distinctGaps(idx.slots.filter((s) => s.area_slug === a.slug));
-    return { area: a, n: mine.length, trades: linkableTrades(mine) };
+    return { area: a, metro: metroOf(a), n: mine.length, trades: linkableTrades(mine) };
   }).sort((x, y) => y.n - x.n || x.area.name.localeCompare(y.area.name));
 
-  const live = rows.filter((r) => r.n > 0);
-  const quiet = rows.filter((r) => r.n === 0);
   // Counted over the whole index rather than by adding the per-area figures
   // up: a whole free day is genuinely offered in every neighbourhood its owner
   // covers, so it is right on each of those pages and would be counted several
   // times over in a total.
   const openings = distinctGaps(idx.slots).length;
 
-  const section = (list: typeof rows) => list.map((r) => `<section>
-<h2><a href="/near/${escapeHtml(r.area.slug)}">${escapeHtml(r.area.name)}</a>${r.n
-    ? ` <span class="note">${r.n} open</span>` : ''}</h2>
+  // Grouped by metro, because this page is now a list of neighbourhoods in two
+  // different places and an undifferentiated run of them says Orcutt and
+  // Northridge are down the road from each other. Metros with nothing listed
+  // are dropped rather than printed as an empty heading.
+  const grouped = METROS
+    .map((m) => ({ metro: m, rows: rows.filter((r) => r.metro.slug === m.slug) }))
+    .filter((g) => g.rows.length > 0);
+
+  const areaBlock = (list: typeof rows) => list.map((r) => `<section>
+<h3><a href="/near/${escapeHtml(r.area.slug)}">${escapeHtml(r.area.name)}</a>${r.n
+    ? ` <span class="note">${r.n} open</span>` : ''}</h3>
 ${r.trades.length
     ? `<ul class="jump">${r.trades.map((t) => `<li><a href="/near/${
       escapeHtml(r.area.slug)}/${escapeHtml(tradeSlug(t.trade))}">${
@@ -2899,9 +2997,26 @@ ${r.trades.length
     : '<p class="note">Nothing open here at the moment.</p>'}
 </section>`).join('');
 
+  const metroBlock = grouped.map((g) => {
+    const live = g.rows.filter((r) => r.n > 0);
+    const quiet = g.rows.filter((r) => r.n === 0);
+    const open = distinctGaps(idx.slots.filter(
+      (s) => g.rows.some((r) => r.area.slug === s.area_slug))).length;
+    return `<section>
+<h2><a href="${escapeHtml(metroPath(g.metro))}">${escapeHtml(g.metro.name)}</a><span class="count">${
+      g.rows.length} ${plural(g.rows.length, 'neighbourhood', 'neighbourhoods')}, ${
+      open} open ${plural(open, 'appointment', 'appointments')}</span></h2>
+${live.length ? areaBlock(live) : '<p class="note">Nothing is open here at the moment.</p>'}
+${quiet.length ? `<h3>Quiet right now</h3>
+${linkList(quiet.map((r) => ({
+    href: `/near/${r.area.slug}`,
+    text: `Open appointments in ${r.area.name}`,
+  })))}` : ''}
+</section>`;
+  }).join('');
+
   const body = `
-<p class="crumb"><a href="/">${escapeHtml(SITE_NAME)}</a> › <a href="${
-    escapeHtml(METRO_PATH)}">${escapeHtml(METRO)}</a> › Neighbourhoods</p>
+<p class="crumb"><a href="/">${escapeHtml(SITE_NAME)}</a> › Neighbourhoods</p>
 <h1>Every neighbourhood ${escapeHtml(SITE_NAME)} covers<span class="count">${
     idx.areas.length} ${plural(idx.areas.length, 'neighbourhood', 'neighbourhoods')}, ${
     openings} open ${plural(openings, 'appointment', 'appointments')}</span></h1>
@@ -2909,24 +3024,18 @@ ${r.trades.length
 works there. What is open in each one is counted from the openings live, and it
 changes through the day — an opening appears when a job is cancelled or a gap
 opens between two booked jobs.</p>
-${live.length
-    ? `<h2>Open now</h2>${section(live)}`
-    : '<div class="box"><p>Nothing is open in any neighbourhood at the moment.</p></div>'}
-${quiet.length ? `<section><h2>Quiet right now</h2>
-${linkList(quiet.map((r) => ({
-    href: `/near/${r.area.slug}`,
-    text: `Open appointments in ${r.area.name}`,
-  })))}
-</section>` : ''}
+${metroBlock
+    || '<div class="box"><p>No neighbourhoods are covered yet.</p></div>'}
 <section>
-<h2>The whole city</h2>
-${linkList([{ href: METRO_PATH, text: `Mobile services in ${METRO}` }])}
+<h2>The places ${escapeHtml(SITE_NAME)} serves</h2>
+${linkList(metroLinks())}
 </section>`;
 
   return seoPage({
-    title: `Every neighbourhood — ${METRO}, ${LAUNCH_STATE}`,
-    description: `${idx.areas.length} ${METRO} ${plural(idx.areas.length,
-      'neighbourhood', 'neighbourhoods')} with mobile businesses listed, and ${openings} `
+    title: `Every neighbourhood — ${metroNames()}`,
+    description: `${idx.areas.length} ${plural(idx.areas.length,
+      'neighbourhood', 'neighbourhoods')} across ${metroNames()} with mobile businesses `
+      + `listed, and ${openings} `
       + `${plural(openings, 'appointment', 'appointments')} open across them right now.`,
     canonical: url,
     noindex: false,
@@ -2934,7 +3043,6 @@ ${linkList([{ href: METRO_PATH, text: `Mobile services in ${METRO}` }])}
       '@context': 'https://schema.org',
       '@graph': [breadcrumbLd(base, [
         { name: SITE_NAME, url: '/' },
-        { name: METRO, url: METRO_PATH },
         { name: 'Neighbourhoods', url: '/near' },
       ])],
     },
@@ -2944,32 +3052,48 @@ ${linkList([{ href: METRO_PATH, text: `Mobile services in ${METRO}` }])}
 }
 
 /**
- * /los-angeles — the metro page.
+ * /los-angeles, /santa-maria — one page per metro, from the same code.
  *
  * THE RULE FOR THE PROSE ON THIS PAGE, because a city page is where every
  * marketplace starts inventing: the only things it may say are general facts
- * about Los Angeles that would be true if this site did not exist, and true
+ * about the place that would be true if this site did not exist, and true
  * statements about how Slotfill works. There is nothing here about how many
  * customers we have, how quickly anybody replies, how much anybody saves, or
  * how well this site is doing. Every number is counted from the openings.
+ *
+ * The facts about the place come from the metro's own record and NOT from a
+ * template, which is the point of keeping them there: Los Angeles has a long
+ * dry season and Santa Maria has a marine layer, and a page that said the same
+ * thing about both would be inventing about one of them. The closing paragraph
+ * is shared because it is about the product rather than the place.
+ *
+ * EVERY FIGURE IS SCOPED TO THIS METRO. The counts come from the openings in
+ * this metro's neighbourhoods, not from every opening on the site — a Santa
+ * Maria page reporting the Valley's total would be the most misleading number
+ * on the site.
  */
-export async function metroPage(env: Env): Promise<string> {
+export async function metroPage(env: Env, metro: Metro): Promise<string> {
   const base = baseUrlOf(env);
   const idx = await liveIndex(env);
-  const url = `${base}${METRO_PATH}`;
+  const url = `${base}${metroPath(metro)}`;
 
-  const all = distinctGaps(idx.slots);
+  const areas = idx.areas.filter((a) => metroOf(a).slug === metro.slug);
+  const here = new Set(areas.map((a) => a.slug));
+  const slots = idx.slots.filter((s) => here.has(s.area_slug));
+
+  const all = distinctGaps(slots);
   const real = all.filter((s) => !s.is_sample);
   const businesses = new Set(all.map((s) => s.operator_id)).size;
-  const ranked = tradesByOpenings(idx.slots);
+  const ranked = tradesByOpenings(slots);
   const cheapest = cheapestReal(all);
-  const withOpenings = idx.areas.filter((a) => a.slot_count > 0);
+  const withOpenings = areas.filter((a) => a.slot_count > 0);
+  const name = escapeHtml(metro.name);
 
   const body = `
-<p class="crumb"><a href="/">${escapeHtml(SITE_NAME)}</a> › ${escapeHtml(METRO)}</p>
-<h1>Mobile services in ${escapeHtml(METRO)}, ${escapeHtml(LAUNCH_STATE)}<span class="count">${
+<p class="crumb"><a href="/">${escapeHtml(SITE_NAME)}</a> › ${name}</p>
+<h1>Mobile services in ${name}, ${escapeHtml(metro.state)}<span class="count">${
     all.length} open ${plural(all.length, 'appointment', 'appointments')} right now</span></h1>
-<p class="lede">Every appointment listed here is an hour a ${escapeHtml(METRO)}
+<p class="lede">Every appointment listed here is an hour a ${name}
 business has free this week — a job that cancelled, or a day that has not
 filled. The price is the one the business set. Booking one holds it; nothing is
 paid on this site yet, so you settle that price with the business directly.</p>
@@ -2982,7 +3106,7 @@ ${statList([
   ])}
 ${sampleNote(all.length - real.length, all.length)}
 <section>
-<h2>Top services in ${escapeHtml(METRO)} right now</h2>
+<h2>Top services in ${name} right now</h2>
 ${linkList(ranked.slice(0, 12).map((r) => ({
     href: tradePath(r.trade.slug),
     text: r.trade.label,
@@ -2990,13 +3114,14 @@ ${linkList(ranked.slice(0, 12).map((r) => ({
   }))) || `<p class="note">Nothing is open in any trade at the moment. This page
 counts what is listed and does not estimate, so on a quiet hour it is a short
 page.</p>`}
-<p class="note">Ranked by how many appointments each trade has open at this
-moment, and by nothing else. It is not a popularity list and it moves through
-the day.</p>
+<p class="note">Ranked by how many appointments each trade has open in ${name} at
+this moment, and by nothing else. It is not a popularity list and it moves
+through the day. Each link leads to that trade everywhere ${escapeHtml(SITE_NAME)}
+covers, which is more than this one place.</p>
 </section>
 <section>
 <h2>Neighbourhoods</h2>
-${linkList(idx.areas.map((a) => ({
+${linkList(areas.map((a) => ({
     href: `/near/${a.slug}`,
     text: a.name,
     sub: a.slot_count ? `${a.slot_count} open` : undefined,
@@ -3012,16 +3137,8 @@ ${TRADE_CATEGORIES.map((c) => `<h3><a href="/browse/${escapeHtml(c.key)}">${
   })))}`).join('')}
 </section>
 <section>
-<h2>Why mobile work suits ${escapeHtml(METRO)}</h2>
-<p>Los Angeles has a Mediterranean climate: a long dry season from roughly May
-to October and most of the year's rain in a handful of winter months. Dust and
-pollen settle on cars, windows and solar panels through the dry months, and the
-first rains wash them into gutters and drains — which is why so much of the work
-listed here is cleaning of one kind or another, and why it clusters seasonally.</p>
-<p>Most of the housing in the city is low-rise, with driveways, yards and street
-parking rather than loading bays. That is what makes a van practical: the person
-doing the work can bring water, power and tools to the address instead of the
-address coming to a shop.</p>
+<h2>Why mobile work suits ${name}</h2>
+${metro.geography.map((p) => `<p>${escapeHtml(p)}</p>`).join('\n')}
 <p>None of that is a claim about ${escapeHtml(SITE_NAME)}. What this site does is
 narrower and easier to check: a business posts the hours it has free, at the
 price it sets, and you book one of them. Openings appear when a job is cancelled
@@ -3029,13 +3146,19 @@ or a gap opens between two booked jobs, so the list on this page is different in
 the afternoon from what it was in the morning.</p>
 </section>`;
 
+  // There is deliberately no "our other cities" block in the body. This page
+  // is about one place, and a reader on it is looking for work near them
+  // rather than for a directory of everywhere else; the footer carries every
+  // metro on every page, so the other one is one link away without this page
+  // having to talk about somewhere two hundred miles up the coast.
+
   return seoPage({
-    title: `Mobile services in ${METRO}, ${LAUNCH_STATE}`,
+    title: `Mobile services in ${metro.name}, ${metro.state}`,
     description: all.length
-      ? `${all.length} mobile appointments open across ${withOpenings.length} ${METRO} `
+      ? `${all.length} mobile appointments open across ${withOpenings.length} ${metro.name} `
         + `${plural(withOpenings.length, 'neighbourhood', 'neighbourhoods')} right now`
         + `${cheapest ? `, from ${cheapest.price}` : ''}. Real times and real prices.`
-      : `Mobile trades across ${METRO}, ${LAUNCH_STATE}. Nothing is open at this moment — `
+      : `Mobile trades across ${metro.name}, ${metro.state}. Nothing is open at this moment — `
         + `openings appear when a job is cancelled or a gap opens in the day.`,
     canonical: url,
     noindex: false,
@@ -3043,10 +3166,12 @@ the afternoon from what it was in the morning.</p>
       '@context': 'https://schema.org',
       '@graph': [breadcrumbLd(base, [
         { name: SITE_NAME, url: '/' },
-        { name: METRO, url: METRO_PATH },
+        { name: metro.name, url: metroPath(metro) },
       ])],
     },
     body,
+    // The footer directory stays site-wide: it is chrome, and cutting it to
+    // this metro would leave a visitor no way out of a quiet one.
     areas: idx.areas,
   });
 }
@@ -3141,9 +3266,9 @@ async function profileLastmod(env: Env): Promise<Array<{ slug: string; lastmod: 
  *
  * WHAT GOES IN, AND ON WHAT TEST:
  *   /                      always
- *   /los-angeles, /near    always: both are true and useful on the quietest
- *                          hour, and they are what makes everything else
- *                          reachable in two hops
+ *   /<metro>, /near        always, one entry per metro in lib/metros.ts: both
+ *                          are true and useful on the quietest hour, and they
+ *                          are what makes everything else reachable in two hops
  *   /browse, /cost         always, and for the same reason: both are built
  *                          from the catalogue rather than from today's
  *                          openings, so both say something true on an empty
@@ -3151,7 +3276,7 @@ async function profileLastmod(env: Env): Promise<Array<{ slug: string; lastmod: 
  *                          page and cost guide links up to
  *   /near/<place>          every covered neighbourhood, quiet or not
  *   /near/<place>/<trade>  only with a genuine opening in that square
- *   /s/<trade>             only with a genuine opening somewhere in the city
+ *   /s/<trade>             only with a genuine opening somewhere on the site
  *   /cost/<trade>          the same test: no listings, no prices, no page
  *                          worth crawling
  *   /browse/<category>     only where one of its trades passed that test, so a
@@ -3178,7 +3303,11 @@ export async function sitemapXml(env: Env, baseUrl: string): Promise<string> {
   // of everything. Falls back to now only when there is no row at all.
   const newest = Math.max(0, ...stamps.values(), ...tradeStamps.values()) || t;
 
-  urls.push({ loc: `${base}${METRO_PATH}`, lastmod: newest, priority: '0.9', changefreq: 'hourly' });
+  for (const m of METROS) {
+    urls.push({
+      loc: `${base}${metroPath(m)}`, lastmod: newest, priority: '0.9', changefreq: 'hourly',
+    });
+  }
   urls.push({ loc: `${base}/near`, lastmod: newest, priority: '0.7', changefreq: 'hourly' });
 
   // The two catalogue hubs. They enumerate every trade page and every cost
@@ -3288,7 +3417,7 @@ export function robotsTxt(baseUrl: string): string {
   return `User-agent: *
 Allow: /
 Allow: /near/
-Allow: /los-angeles
+${METROS.map((m) => `Allow: ${metroPath(m)}`).join('\n')}
 Allow: /s/
 Allow: /cost/
 Allow: /browse/

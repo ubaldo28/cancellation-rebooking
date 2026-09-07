@@ -541,6 +541,30 @@ main:focus { outline: none; }
   font-variant-numeric: tabular-nums;
 }
 
+/* One metro's neighbourhoods inside the areas column. The heading is smaller
+   and quieter than the column's own, so it reads as a division of that list
+   rather than as a second column; the link inside it drops the 44px target
+   the neighbourhood rows carry because it is a label first and would
+   otherwise be as prominent as the names under it. */
+.site-foot .foot-group + .foot-group { margin-top: 12px; }
+
+.site-foot .foot-group > h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.site-foot .foot-group > h3 a {
+  display: inline-block;
+  width: auto;
+  min-height: 0;
+  padding: 9px 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--muted);
+}
+
 /* --- the directory ------------------------------------------------------ */
 
 /* Wider columns than the four above, because these hold place names and

@@ -16,14 +16,32 @@ import { MAP_STYLE, mapLib } from '../lib/map';
  * script has not arrived.
  */
 
-/** Framing the corridor leaves room on the right, where the labels hang. */
+/** Framing a corridor leaves room on the right, where the labels hang. */
 const FIT = { padding: { top: 60, bottom: 60, left: 50, right: 150 }, maxZoom: 12.4 };
+
+/** How many pins in a metro carry a name and a price before labels collide. */
+const LABELS = 5;
 
 export interface CityMapProps {
   areas: MapArea[];
   selected: string | null;
   onSelect: (slug: string) => void;
 }
+
+/**
+ * THE MAP FRAMES ONE METRO AT A TIME, and this is the part of the component
+ * the second place broke.
+ *
+ * Fitting the bounds of every pin was right while every pin was in one valley.
+ * Slotfill now covers two places a hundred and fifty miles apart, and a shot
+ * wide enough to hold both is a shot of the Central Coast with two specks on
+ * it: no street, no neighbourhood, nothing a visitor can act on. So the camera
+ * frames the metro the chosen neighbourhood is in, and choosing one in the
+ * other metro re-frames onto that one. The pins for the rest are still on the
+ * map for anybody who pans there; they are simply not what the shot is of.
+ */
+const metroOf = (areas: MapArea[], slug: string | null): string | null =>
+  (areas.find((a) => a.slug === slug) ?? areas[0])?.metro ?? null;
 
 export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
   const host = useRef<HTMLDivElement | null>(null);
@@ -37,19 +55,44 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
   // and shown again without losing the shot.
   const shot = useRef<any>(null);
   const sized = useRef(false);
+  /**
+   * The metro the current shot is of, so a selection inside it can be an
+   * ease across a few miles while one in another metro is a re-frame. Null
+   * until something has been framed, which is what makes the first pass a
+   * frame rather than an ease.
+   */
+  const framed = useRef<string | null>(null);
+
+  const focus = metroOf(areas, selected);
+
+  /**
+   * The areas as of this render, for the one effect that runs before any
+   * dependency of it can have changed. MapLibre wants a centre at
+   * construction and the honest one is wherever the first shot is going to
+   * be; a hardcoded pair of coordinates here is a second place that has to be
+   * edited when the product opens somewhere new.
+   */
+  const latest = useRef(areas);
+  latest.current = areas;
 
   // --- create once ---------------------------------------------------------
   useEffect(() => {
     const gl = mapLib();
     if (!gl || !host.current || map.current) return;
 
+    // The nearest neighbourhood the page has, which is the first row the map
+    // request returns and is in the metro that is about to be framed.
+    // fitBounds takes over in the same commit, so this is only what shows
+    // during the first paint — but it is a point in the right place rather
+    // than a pair of coordinates that would have to be edited the next time
+    // the product opens somewhere new.
+    const first = latest.current[0];
+
     const m = new gl.Map({
       container: host.current,
       style: MAP_STYLE,
-      // The Valley corridor, Calabasas to Burbank. fitBounds takes over once
-      // the areas arrive; this is only what shows during the first paint.
-      center: [-118.47, 34.18],
-      zoom: 10.2,
+      center: first ? [first.lng, first.lat] : [0, 0],
+      zoom: first ? 10.2 : 1,
       attributionControl: { compact: true },
     });
     m.addControl(new gl.NavigationControl({ showCompass: false }), 'top-right');
@@ -97,14 +140,20 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
     for (const marker of markers.current.values()) marker.remove();
     markers.current.clear();
 
-    // Labels collide once the corridor is this long. Only the busiest few
-    // carry a name and a price; the rest are dots until they are chosen or
-    // hovered, which is what a map does when it runs out of room.
+    // Labels collide once a corridor is this long. Only the busiest few carry
+    // a name and a price; the rest are dots until they are chosen or hovered,
+    // which is what a map does when it runs out of room.
+    //
+    // Counted per metro rather than across the whole map. The busiest five
+    // anywhere can all be in one place, and the shot is of one metro at a
+    // time, so a site-wide top five would leave the other metro's pins
+    // unlabelled on the one screen where they are the only thing visible.
     const labelled = new Set(
-      [...areas].filter((a) => a.slot_count > 0)
-        .sort((a, b) => b.slot_count - a.slot_count)
-        .slice(0, 5)
-        .map((a) => a.slug),
+      [...new Set(areas.map((a) => a.metro))].flatMap((metro) =>
+        areas.filter((a) => a.metro === metro && a.slot_count > 0)
+          .sort((a, b) => b.slot_count - a.slot_count)
+          .slice(0, LABELS)
+          .map((a) => a.slug)),
     );
 
     for (const area of areas) {
@@ -133,16 +182,8 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
       markers.current.set(area.slug, marker);
     }
 
-    const b = new gl.LngLatBounds();
-    for (const a of areas) b.extend([a.lng, a.lat]);
-    shot.current = b;
-
-    // A hidden pane has no width, and fitting to a zero-width canvas produces
-    // a zoom nobody asked for. The observer above re-frames it on the way in.
-    const el = host.current;
-    if (el && el.clientWidth > 0 && el.clientHeight > 0) {
-      m.fitBounds(b, { ...FIT, duration: prefersReducedMotion() ? 0 : 400 });
-    }
+    // A new set of pins is a new shot, whichever metro it turns out to be of.
+    framed.current = null;
   }, [areas]);
 
   // --- selection is a class, not a rebuild --------------------------------
@@ -157,16 +198,39 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
       el.querySelector('.mk-text')?.classList.toggle('mk-hide', keepHidden);
       el.style.zIndex = on ? '5' : '';
     }
-    const area = areas.find((a) => a.slug === selected);
+    const gl = mapLib();
+    const m = map.current;
     const el = host.current;
-    if (area && map.current && el && el.clientWidth > 0) {
-      map.current.easeTo({
+    if (!gl || !m) return;
+    // A hidden pane has no width, and fitting or easing on a zero-width canvas
+    // produces a zoom nobody asked for. The shot is still worked out and
+    // remembered; the observer above applies it on the way back in.
+    const visible = !!el && el.clientWidth > 0 && el.clientHeight > 0;
+
+    if (focus !== framed.current) {
+      // A different metro, so what changes is the shot and not the centre:
+      // easing to a pin a hundred and fifty miles away at neighbourhood zoom
+      // is a long slide over farmland ending on a map of the wrong scale.
+      framed.current = focus;
+      const here = areas.filter((a) => a.metro === focus);
+      if (here.length > 0) {
+        const b = new gl.LngLatBounds();
+        for (const a of here) b.extend([a.lng, a.lat]);
+        shot.current = b;
+        if (visible) m.fitBounds(b, { ...FIT, duration: prefersReducedMotion() ? 0 : 400 });
+      }
+      return;
+    }
+
+    const area = areas.find((a) => a.slug === selected);
+    if (area && visible) {
+      m.easeTo({
         center: [area.lng, area.lat],
         duration: prefersReducedMotion() ? 0 : 550,
         padding: { right: 120 },
       });
     }
-  }, [selected, areas]);
+  }, [selected, areas, focus]);
 
   if (!mapLib()) {
     return (

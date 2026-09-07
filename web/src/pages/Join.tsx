@@ -885,11 +885,15 @@ function AddArea({ onAdded }: { onAdded: (a: ServiceArea) => void }) {
     }}>
       <span className="eyebrow">Add an area you cover</span>
       {error && <div className="error">{error}</div>}
+      {/* The placeholders describe the shape of the answer and name no
+          particular place. A worked example out of one metro — "Santa Monica"
+          and a 902xx code — reads to a business signing up two hundred miles
+          up the coast as a form built for somebody else's city. */}
       <div className="field-row">
         <label>Area name<input required value={name}
-          onChange={(e) => setName(e.target.value)} placeholder="Santa Monica" /></label>
+          onChange={(e) => setName(e.target.value)} placeholder="Neighbourhood or town" /></label>
         <label>Postcode<input required value={postcode}
-          onChange={(e) => setPostcode(e.target.value)} placeholder="90401" /></label>
+          onChange={(e) => setPostcode(e.target.value)} placeholder="Postcode or ZIP" /></label>
       </div>
       <button className="btn ghost block" type="submit"
         disabled={busy || !name.trim() || !postcode.trim()}>
@@ -1050,7 +1054,8 @@ function AddBooking({ services, tz, onAdded }: {
       </div>
 
       <label>Postcode
-        <input value={postcode} onChange={(e) => setPostcode(e.target.value)} placeholder="90401" />
+        <input value={postcode} onChange={(e) => setPostcode(e.target.value)}
+          placeholder="Postcode or ZIP" />
         <span className="faint">Used to work out the drive between jobs.</span>
       </label>
 

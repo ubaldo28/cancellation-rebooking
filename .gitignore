@@ -19,9 +19,3 @@ web/dist/
 # hundreds of megabytes of SQL.
 web/tsconfig.tsbuildinfo
 seed/
-
-# A holding pen, not a directory anyone should read. The sandbox that does the
-# editing here cannot delete files, so anything retired gets moved in here
-# instead of removed, and build scratch lands here too. None of it belongs in
-# the history.
-_to_delete/

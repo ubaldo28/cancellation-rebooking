@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, sentence, type MapArea, type Trade, type TradeCategory } from '../api';
+import { groupByMetro, useMetros } from '../lib/metros';
 import '../styles-shell.css';
 
 /**
@@ -95,8 +96,12 @@ export interface SiteFooterProps {
    * the map and knows which neighbourhoods are near this particular visitor,
    * so it hands them over and this component does not fetch them a second
    * time. Every other page omits the prop and gets the fetch below.
+   *
+   * `metro` is on the row because the column is grouped by it: a flat run of
+   * names puts Orcutt under Encino and says nothing about the hundred and
+   * fifty miles between them.
    */
-  areas?: Array<{ slug: string; name: string; slot_count: number }>;
+  areas?: Array<{ slug: string; name: string; slot_count: number; metro: string }>;
 }
 
 /**
@@ -182,6 +187,21 @@ export default function SiteFooter({ trades, areas }: SiteFooterProps) {
   }, [givenAreas]);
 
   const shownAreas = areas ?? ownAreas;
+
+  /**
+   * The neighbourhoods, split into the places they are in.
+   *
+   * The metro records come from the hook rather than from this component's
+   * own fetch, so several footers on one visit share one request. A visit
+   * where that request failed falls back to one ungrouped run of names, which
+   * is what this column was before there were two places to tell apart — a
+   * worse footer, not a broken one.
+   */
+  const metros = useMetros();
+  const areaGroups = useMemo(
+    () => groupByMetro(metros, shownAreas, (a) => a.metro, 'nearest'),
+    [metros, shownAreas],
+  );
 
   /**
    * The services column for every page that did not count any: names out of
@@ -288,29 +308,48 @@ export default function SiteFooter({ trades, areas }: SiteFooterProps) {
           {shownAreas.length > 0 && (
             <nav className="foot-col" aria-label="Areas">
               <h2>Open near you</h2>
+              {/*
+                A SUB-HEADING PER METRO, not one run of names.
+
+                This column is ordered by distance from wherever the visitor
+                said they were, so with two places open it can put Orcutt three
+                rows above Encino — two names a hundred and fifty miles apart,
+                in a list whose only claim is that these are near you. The
+                metro heading is what makes the ordering readable, and it is a
+                link to that metro's own page, which is where somebody who
+                scrolled this far and found nothing of theirs should go next.
+              */}
+              {areaGroups.map((g) => (
+                <div className="foot-group" key={g.metro?.slug ?? 'unfiled'}>
+                  {g.metro && (
+                    <h3><a href={g.metro.path}>{g.metro.name}</a></h3>
+                  )}
+                  <ul>
+                    {g.rows.map((a) => (
+                      <li key={a.slug}>
+                        <a href={`/near/${a.slug}`}>
+                          {a.name}
+                          {a.slot_count > 0 && <span className="foot-n">{a.slot_count}</span>}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              {/*
+                The page above the individual neighbourhoods, at the foot of
+                the list rather than the head of it: somebody scanning this
+                column is looking for their own area first. Plain <a> like the
+                rest of the column, so the visitor gets the Worker's
+                server-rendered /near. It is a React route too — App.tsx has to
+                match it so React can mount over that HTML rather than replace
+                it — but a client-side <Link> would skip the render and rebuild
+                the page from the API for no gain. The metro pages are the
+                headings above rather than a line here, so opening a third
+                place adds a heading and nothing has to be edited.
+              */}
               <ul>
-                {shownAreas.map((a) => (
-                  <li key={a.slug}>
-                    <a href={`/near/${a.slug}`}>
-                      {a.name}
-                      {a.slot_count > 0 && <span className="foot-n">{a.slot_count}</span>}
-                    </a>
-                  </li>
-                ))}
-                {/*
-                  The two pages above the individual neighbourhoods, at the
-                  foot of the list rather than the head of it: somebody
-                  scanning this column is looking for their own area first,
-                  and the city-wide pages are where they go when it is not
-                  here. Plain <a> like the rest of the column, so the visitor
-                  gets the Worker's server-rendered /near and /los-angeles.
-                  Both are React routes too — App.tsx has to match them so
-                  React can mount over that HTML rather than replace it — but
-                  a client-side <Link> would skip the render and rebuild the
-                  page from the API for no gain.
-                */}
                 <li><a href="/near">Every neighbourhood</a></li>
-                <li><a href="/los-angeles">Slotfill in Los Angeles</a></li>
               </ul>
             </nav>
           )}

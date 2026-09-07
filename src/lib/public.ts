@@ -3,6 +3,7 @@ import { discounted, formatMoney, getCountry, localeFor, normalisePostcode } fro
 import { driveSeconds, geocode } from './geo';
 import { notify } from './feed';
 import { isDemoOperator } from './demo';
+import { metroForPlace } from './metros';
 import { attachBooking, startThread, threadByToken } from './chat';
 import { displayName } from './reviews';
 import { customerStanding } from './standing';
@@ -514,6 +515,15 @@ export { discounted };
 
 export interface MapArea {
   name: string; slug: string; lat: number; lng: number;
+  /**
+   * The slug of the metro this neighbourhood sits in, so a browser can group
+   * pins by place without holding its own copy of which areas are where.
+   *
+   * Resolved by lib/metros.ts: by name for a listed neighbourhood, and by
+   * nearest metro centre for a real operator's own service area that no metro
+   * record has ever heard of. Never null — a pin has to belong somewhere.
+   */
+  metro: string;
   /** Which trades actually have something open here, for the map label. */
   trades: string[];
   slot_count: number;
@@ -602,6 +612,7 @@ export async function mapData(
     const first = rows[0]!;
     return {
       name: first.name, slug: place, lat: first.lat, lng: first.lng,
+      metro: metroForPlace(place, { lat: first.lat, lng: first.lng }).slug,
       trades: [...new Set(mine.map((s) => s.trade).filter(Boolean))] as string[],
       slot_count: mine.length,
       from_price: cheapest?.price ?? null,

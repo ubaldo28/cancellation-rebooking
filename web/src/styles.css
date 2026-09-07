@@ -1011,6 +1011,32 @@ textarea { min-height: 90px; resize: vertical; }
   .rail { flex-wrap: wrap; overflow: visible; margin: 0; padding: 10px 0 8px; }
 }
 
+/* One metro's chips, kept together and named.
+
+   On a phone the rail scrolls sideways and a group is a run along it: the
+   label, then that place's neighbourhoods, then the next label. On a wider
+   screen each group takes a full row of its own and wraps inside it, so the
+   two places are two blocks rather than one paragraph of names that happens
+   to change city halfway along. */
+.rail-group { display: flex; align-items: center; gap: 8px; }
+
+@media (min-width: 760px) {
+  .rail-group { flex: 1 1 100%; flex-wrap: wrap; }
+}
+
+/* A label, not a control: it names the chips after it and cannot be pressed.
+   Set in the muted register the section subheadings use so it is not mistaken
+   for a chip with the colour turned down. */
+.rail-label {
+  padding-right: 2px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 /* Neighbourhoods are a second-order filter, so they read quieter than the
    trade tiles even though they behave the same way. */
 .area-chip {

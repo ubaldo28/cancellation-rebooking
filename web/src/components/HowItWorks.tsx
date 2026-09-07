@@ -74,9 +74,14 @@ export function HowItWorks() {
       <div className="hiw-wrap">
         <h2 className="hiw-title" id="hiw-title">How it works</h2>
 
+        {/* No place is named here. This band said "solo trades in Los
+            Angeles" while that was the whole product, and it is now one of
+            two; naming the places would mean fetching them, and the note at
+            the top of this file is the reason not to. The bands above and
+            below this one name them from the data they already hold. */}
         <p className="hiw-lede">
-          Slotfill lists the appointments solo trades in Los Angeles have not
-          filled yet. You book one the way you would book a table.
+          Slotfill lists the appointments solo trades have not filled yet. You
+          book one the way you would book a table.
         </p>
 
         {/*

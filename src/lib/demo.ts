@@ -1,6 +1,7 @@
 import type { Env, Operator } from '../types';
 import { createSession } from './auth';
 import { detectGaps } from './gaps';
+import { ALL_METRO_AREAS, metroAreaBySlug } from './metros';
 import { addLocalDays, fromLocal, localDayStart, toLocal } from './tz';
 import { newId, now } from './util';
 
@@ -12,18 +13,26 @@ import { newId, now } from './util';
  * in at all — including the person who built it. It is also how the project
  * gets shown to someone who will not sign up to look at it.
  *
- * There are fifteen businesses rather than one because the public map is a
- * map of a neighbourhood, not of a business. Seeded with a single detailer,
- * someone searching their ZIP for junk removal was shown car detailing and
- * left. Thirteen trades over the eighteen neighbourhoods of the San Fernando
- * Valley corridor — Calabasas and Hidden Hills in the west through to Burbank
- * in the east — is the smallest seed where the map answers the question a
- * visitor actually arrived with anywhere along it.
+ * There are many businesses rather than one because the public map is a map of
+ * a neighbourhood, not of a business. Seeded with a single detailer, someone
+ * searching their ZIP for junk removal was shown car detailing and left.
+ * Thirteen trades over the eighteen neighbourhoods of the San Fernando Valley
+ * corridor — Calabasas and Hidden Hills in the west through to Burbank in the
+ * east — is the smallest seed where the map answers the question a visitor
+ * actually arrived with anywhere along it.
  *
- * Every neighbourhood is worked by at least three of the fifteen and most by
+ * Every Valley neighbourhood is worked by at least three of them and most by
  * four, and no single business claims more than five: a one-van operation
  * does not cover the whole Valley, and a seed that says it does makes the map
  * read as invented.
+ *
+ * SANTA MARIA is seeded to the same rules and at a size that matches the place
+ * rather than the Valley's: six businesses over the six neighbourhoods with
+ * enough people in them to support one, in trades a farming valley on the
+ * Central Coast actually calls out. The outlying communities in the metro
+ * record — Sisquoc, Garey, Los Alamos, Casmalia — have no sample business at
+ * all, because a few hundred residents each is not a round anybody drives, and
+ * inventing one there would be the first dishonest thing in this file.
  *
  * The demo is wiped and rebuilt on every sign-in, so whatever the last visitor
  * did is gone and the accounts always open on the same believable week.
@@ -37,70 +46,72 @@ const TZ = 'America/Los_Angeles';
 const DEMO_SESSION_TTL = 60 * 60 * 12;
 
 /**
- * The San Fernando Valley corridor, west to east: Calabasas and Hidden Hills
- * out at the Ventura County end, through the mid-Valley, to Burbank.
+ * One neighbourhood, looked up in the metro records rather than restated here.
  *
- * These are approximate neighbourhood centroids, not surveyed points. They are
- * accurate enough to drop a pin on the right neighbourhood and to make a drive
- * time believable to within a few minutes, which is the resolution the ranking
- * works at. Nothing here should be read as a street-level coordinate.
+ * The name, the centroid and the postcodes are facts about the place, and they
+ * live in lib/metros.ts because the metro pages, the neighbourhood index and
+ * the sitemap all enumerate the same list. A second copy in this file is how
+ * the map and those pages would eventually disagree about where Reseda is.
  *
- * Calabasas and Hidden Hills share ZIP 91302. That is a fact about the ZIP,
- * not a mistake here: see the postal_codes insert in seedDemo for what it
- * means for a visitor who searches by ZIP.
+ * A slug no metro record knows is a typo in the table below, and it throws at
+ * module load: seeding a business into a neighbourhood that has no page and no
+ * postcode is a failure worth seeing immediately rather than on the map.
+ */
+function place(slug: string): { lat: number; lng: number; zip: string; area: string; slug: string } {
+  const a = metroAreaBySlug(slug);
+  if (!a) throw new Error(`demo: '${slug}' is not an area of any metro in lib/metros.ts`);
+  // The first postcode is the one the neighbourhood's clients and appointments
+  // are stamped with. Where an area has several, metros.ts lists the most
+  // central first for exactly this.
+  return { lat: a.lat, lng: a.lng, zip: a.zips[0]!, area: a.name, slug: a.slug };
+}
+
+/**
+ * The neighbourhoods the sample businesses work, keyed as the entries below
+ * spell them.
+ *
+ * The San Fernando Valley corridor west to east — Calabasas and Hidden Hills
+ * out at the Ventura County end, through the mid-Valley, to Burbank — and then
+ * the Santa Maria Valley from Nipomo in the north down through the city and
+ * Orcutt.
+ *
+ * The `slug` on each is the neighbourhood key shared by every operator who
+ * covers it. service_areas.slug has to be unique across the whole table, so
+ * the three operators covering Sherman Oaks cannot all write 'sherman-oaks'
+ * there; the map groups its pins on place_slug instead, and that value must be
+ * identical for all of them — suffix it and Sherman Oaks splits into three
+ * pins showing one trade each, which is the failure this whole seed exists to
+ * prevent.
  */
 const PLACES = {
-  calabasas:      { lat: 34.1367, lng: -118.6612, zip: '91302', area: 'Calabasas' },
-  hiddenHills:    { lat: 34.1678, lng: -118.6520, zip: '91302', area: 'Hidden Hills' },
-  woodlandHills:  { lat: 34.1683, lng: -118.6059, zip: '91367', area: 'Woodland Hills' },
-  canogaPark:     { lat: 34.2011, lng: -118.5981, zip: '91303', area: 'Canoga Park' },
-  winnetka:       { lat: 34.2133, lng: -118.5711, zip: '91306', area: 'Winnetka' },
-  northridge:     { lat: 34.2283, lng: -118.5370, zip: '91325', area: 'Northridge' },
-  reseda:         { lat: 34.2011, lng: -118.5364, zip: '91335', area: 'Reseda' },
-  tarzana:        { lat: 34.1725, lng: -118.5531, zip: '91356', area: 'Tarzana' },
-  encino:         { lat: 34.1590, lng: -118.5010, zip: '91316', area: 'Encino' },
-  shermanOaks:    { lat: 34.1512, lng: -118.4492, zip: '91403', area: 'Sherman Oaks' },
-  vanNuys:        { lat: 34.1866, lng: -118.4487, zip: '91405', area: 'Van Nuys' },
-  panoramaCity:   { lat: 34.2261, lng: -118.4409, zip: '91402', area: 'Panorama City' },
-  valleyVillage:  { lat: 34.1670, lng: -118.3960, zip: '91607', area: 'Valley Village' },
-  studioCity:     { lat: 34.1395, lng: -118.3870, zip: '91604', area: 'Studio City' },
-  northHollywood: { lat: 34.1720, lng: -118.3790, zip: '91601', area: 'North Hollywood' },
-  sunValley:      { lat: 34.2183, lng: -118.3700, zip: '91352', area: 'Sun Valley' },
-  tolucaLake:     { lat: 34.1500, lng: -118.3600, zip: '91602', area: 'Toluca Lake' },
-  burbank:        { lat: 34.1808, lng: -118.3090, zip: '91505', area: 'Burbank' },
+  calabasas:      place('calabasas'),
+  hiddenHills:    place('hidden-hills'),
+  woodlandHills:  place('woodland-hills'),
+  canogaPark:     place('canoga-park'),
+  winnetka:       place('winnetka'),
+  northridge:     place('northridge'),
+  reseda:         place('reseda'),
+  tarzana:        place('tarzana'),
+  encino:         place('encino'),
+  shermanOaks:    place('sherman-oaks'),
+  vanNuys:        place('van-nuys'),
+  panoramaCity:   place('panorama-city'),
+  valleyVillage:  place('valley-village'),
+  studioCity:     place('studio-city'),
+  northHollywood: place('north-hollywood'),
+  sunValley:      place('sun-valley'),
+  tolucaLake:     place('toluca-lake'),
+  burbank:        place('burbank'),
+
+  santaMaria:     place('downtown-santa-maria'),
+  tanglewood:     place('tanglewood'),
+  orcutt:         place('orcutt'),
+  riceRanch:      place('rice-ranch'),
+  guadalupe:      place('guadalupe'),
+  nipomo:         place('nipomo'),
 };
 
 type PlaceKey = keyof typeof PLACES;
-
-/**
- * The neighbourhood key, shared by every operator who covers it.
- *
- * service_areas.slug has to be unique across the whole table, so the three
- * operators covering Sherman Oaks cannot all write 'sherman-oaks' there. The
- * map groups its pins on place_slug instead, and that value must be identical
- * for all of them — suffix it and Sherman Oaks splits into three pins showing
- * one trade each, which is the failure this whole seed exists to prevent.
- */
-const PLACE_SLUGS: Record<PlaceKey, string> = {
-  calabasas: 'calabasas',
-  hiddenHills: 'hidden-hills',
-  woodlandHills: 'woodland-hills',
-  canogaPark: 'canoga-park',
-  winnetka: 'winnetka',
-  northridge: 'northridge',
-  reseda: 'reseda',
-  tarzana: 'tarzana',
-  encino: 'encino',
-  shermanOaks: 'sherman-oaks',
-  vanNuys: 'van-nuys',
-  panoramaCity: 'panorama-city',
-  valleyVillage: 'valley-village',
-  studioCity: 'studio-city',
-  northHollywood: 'north-hollywood',
-  sunValley: 'sun-valley',
-  tolucaLake: 'toluca-lake',
-  burbank: 'burbank',
-};
 
 interface DemoService {
   /** Referenced by clients and bookings below; also builds the row id. */
@@ -1618,6 +1629,504 @@ const BUSINESSES: DemoBusiness[] = [
     hired: 0,
     reviews: [],
   },
+
+  // -------------------------------------------------------------------------
+  // Santa Maria.
+  //
+  // Six businesses over the six neighbourhoods of the Santa Maria Valley with
+  // enough people in them to keep a van busy, in trades the place actually
+  // calls out: work trucks and farm dust for the detailer and the mechanic,
+  // winter rain for the window cleaner and the pressure washer, big lots and
+  // irrigation for the gardener.
+  //
+  // Same rules as the Valley set above and they are not relaxed for being a
+  // smaller market: no business claims more than five neighbourhoods, the
+  // ratings disagree with each other, two of the six have never been checked,
+  // one has no reviews at all, and nothing here asserts a licence, a
+  // certification or an insurance policy on anybody's behalf.
+  // -------------------------------------------------------------------------
+
+  {
+    id: 'demo-operator-sm-detail',
+    email: 'demo-sm-detail@slotfill.app',
+    name: 'Clark Avenue Mobile Detailing',
+    trade: 'mobile car wash and detailing',
+    phone: '+18055550100',
+    slug: 'clark-avenue-mobile-detailing',
+    tagline: 'Cars and work trucks washed at the kerb, water on board',
+    bio: 'One van working Orcutt, Rice Ranch, Santa Maria and Tanglewood. '
+      + 'Everything is done where the vehicle is parked: the water, the power '
+      + 'and the lighting all come on the van, so nothing is needed from the '
+      + 'house. A car takes about two hours. Work trucks are a separate, '
+      + 'shorter job — most of what comes off them out here is field dust.',
+    years: 5,
+    base: 'orcutt',
+    areas: ['orcutt', 'riceRanch', 'santaMaria', 'tanglewood'],
+    services: [
+      { key: 'detail', name: 'Full detail',           secs: 7200, cents: 17900, cadence: 28 },
+      { key: 'wax',    name: 'Wash and wax',          secs: 3600, cents:  7900, cadence: 21 },
+      { key: 'truck',  name: 'Work truck wash',       secs: 2700, cents:  6500, cadence: 14 },
+      { key: 'inside', name: 'Interior deep clean',   secs: 5400, cents: 12900, cadence: null },
+    ],
+    clients: [
+      { first: 'Ruben',   last: 'Mendoza',   phone: '+18055550112', place: 'orcutt',     address: '215 E Clark Ave',     lastVisitDays: 29,   service: 'detail' },
+      { first: 'Kelsey',  last: 'Norquist',  phone: '+18055550124', place: 'riceRanch',  address: '840 Rice Ranch Rd',   lastVisitDays: 44,   service: 'detail' },
+      { first: 'Arturo',  last: 'Barrera',   phone: '+18055550136', place: 'santaMaria', address: '1120 S Broadway',     lastVisitDays: 13,   service: 'truck' },
+      { first: 'Dianne',  last: 'Whitcomb',  phone: '+18055550147', place: 'tanglewood', address: '620 W Boone St',      lastVisitDays: 51,   service: 'wax' },
+      { first: 'Ignacio', last: 'Padilla',   phone: '+18055550158', place: 'orcutt',     address: '3405 Bradley Rd',     lastVisitDays: null, service: 'truck' },
+      { first: 'Marla',   last: 'Sepulveda', phone: '+18055550169', place: 'santaMaria', address: '505 E Stowell Rd',    lastVisitDays: 36,   service: 'inside' },
+    ],
+    bookings: [
+      { day: 0, hour:  8, minute: 30, client: 0, service: 'detail' },
+      { day: 0, hour: 11, minute: 30, client: 2, service: 'truck' },
+      { day: 0, hour: 14, minute:  0, client: 3, service: 'wax' },
+      { day: 1, hour:  8, minute: 30, client: 1, service: 'detail' },
+      // The cancelled job, and the hole it leaves in an otherwise full
+      // Tuesday. Same shape as the Valley detailer's, because it is the same
+      // story the product exists to tell.
+      { day: 1, hour: 11, minute: 30, client: 5, service: 'inside', cancelled: true },
+      { day: 1, hour: 15, minute:  0, client: 4, service: 'truck' },
+      { day: 2, hour:  9, minute:  0, client: 3, service: 'wax' },
+      { day: 2, hour: 11, minute:  0, client: 0, service: 'inside' },
+      { day: 2, hour: 15, minute:  0, client: 2, service: 'truck' },
+      { day: 3, hour:  8, minute: 30, client: 5, service: 'detail' },
+      { day: 3, hour: 12, minute:  0, client: 4, service: 'truck' },
+      { day: 3, hour: 14, minute: 30, client: 1, service: 'wax' },
+      { day: 4, hour:  9, minute:  0, client: 2, service: 'detail' },
+      { day: 4, hour: 12, minute: 30, client: 3, service: 'truck' },
+      { day: 4, hour: 15, minute:  0, client: 0, service: 'wax' },
+      { day: 5, hour:  8, minute: 30, client: 4, service: 'detail' },
+      { day: 5, hour: 11, minute: 30, client: 5, service: 'wax' },
+      { day: 5, hour: 14, minute:  0, client: 1, service: 'inside' },
+      { day: 6, hour:  9, minute:  0, client: 2, service: 'truck' },
+      { day: 6, hour: 11, minute:  0, client: 3, service: 'detail' },
+      { day: 6, hour: 14, minute: 30, client: 0, service: 'wax' },
+    ],
+    leads: [
+      { client: 4, title: 'Two-truck fleet wash, monthly', cents: 13000, hours: 1.5, urgency: 3 },
+    ],
+    hired: 96,
+    inBusiness: 5,
+    check: { name: 'Ruben Delgado', daysAgo: 190 },
+    onlineHours: 4,
+    reviews: [
+      { name: 'Corina Villalobos', rating: 5, daysAgo: 8, service: 'detail',
+        body: 'Car had a summer of field dust on it and came back looking like the '
+          + 'day I bought it. He brought his own water, which matters here.' },
+      { name: 'Wendell Craddock', rating: 5, daysAgo: 19, service: 'truck',
+        body: 'Does both of my work trucks in the yard on a Friday morning. Quick, '
+          + 'and the price has not moved in two years.' },
+      { name: 'Josefina Aguilar', rating: 4, daysAgo: 30, service: 'inside',
+        body: 'Inside of the truck was a state after harvest and it is clean again. '
+          + 'Took longer than he said it would.' },
+      { name: 'Trevor Nakamura',  rating: 5, daysAgo: 41, service: 'wax',   body: null },
+      { name: 'Alma Cifuentes', rating: 3, daysAgo: 55, service: 'wax',
+        body: 'The wash was fine. He was over an hour late and I had to call to '
+          + 'find out he was still in Orcutt.' },
+      { name: 'Hector Barajas',   rating: 5, daysAgo: 68, service: 'detail', body: null },
+      { name: 'Sylvia Renteria', rating: 5, daysAgo: 82, service: 'detail',
+        body: 'Second full detail. He parks on the street and works off the van, so '
+          + 'the driveway stays free.' },
+    ],
+  },
+
+  {
+    id: 'demo-operator-sm-power',
+    email: 'demo-sm-power@slotfill.app',
+    name: 'Betteravia Pressure Washing',
+    trade: 'mobile pressure washing',
+    phone: '+18055550200',
+    slug: 'betteravia-pressure-washing',
+    tagline: 'Houses, drives and yard equipment, water and tank on the trailer',
+    bio: 'Pressure washing across Santa Maria, Tanglewood, Orcutt and '
+      + 'Guadalupe. The trailer carries its own tank and pump, so a wash does '
+      + 'not run off your meter. A single-storey house is most of a morning '
+      + 'and a driveway is about two hours. Most of the work is booked either '
+      + 'side of the winter rain, which is when the paths get slippery here.',
+    years: 8,
+    base: 'santaMaria',
+    areas: ['santaMaria', 'tanglewood', 'orcutt', 'guadalupe'],
+    services: [
+      { key: 'house', name: 'House wash, single storey', secs: 10800, cents: 39000, cadence: null },
+      { key: 'drive', name: 'Driveway and paths',        secs:  7200, cents: 18500, cadence: 365 },
+      { key: 'patio', name: 'Patio and fence',           secs:  5400, cents: 15500, cadence: 180 },
+      { key: 'fleet', name: 'Trailer and equipment wash', secs: 3600, cents: 11500, cadence: 60 },
+    ],
+    clients: [
+      { first: 'Beatriz', last: 'Solorio',  phone: '+18055550214', place: 'santaMaria', address: '1425 N Blosser Rd',  lastVisitDays: 210,  service: 'house' },
+      { first: 'Lyle',    last: 'Fenwick',  phone: '+18055550226', place: 'tanglewood', address: '318 Tanglewood Dr',  lastVisitDays: 95,   service: 'drive' },
+      { first: 'Rosa',    last: 'Quintero', phone: '+18055550238', place: 'guadalupe',  address: '742 Guadalupe St',   lastVisitDays: null, service: 'fleet' },
+      { first: 'Damon',   last: 'Kirkland', phone: '+18055550249', place: 'orcutt',     address: '1180 Foster Rd',     lastVisitDays: 140,  service: 'patio' },
+      { first: 'Nereida', last: 'Ocampo',   phone: '+18055550251', place: 'santaMaria', address: '930 E Donovan Rd',   lastVisitDays: 62,   service: 'drive' },
+    ],
+    bookings: [
+      { day: 0, hour:  8, minute:  0, client: 0, service: 'house' },
+      { day: 0, hour: 13, minute:  0, client: 1, service: 'drive' },
+      { day: 1, hour:  8, minute: 30, client: 3, service: 'patio' },
+      { day: 1, hour: 13, minute:  0, client: 2, service: 'fleet' },
+      { day: 1, hour: 15, minute:  0, client: 4, service: 'drive' },
+      { day: 2, hour:  8, minute:  0, client: 4, service: 'house' },
+      { day: 2, hour: 13, minute: 30, client: 0, service: 'patio' },
+      { day: 3, hour:  8, minute: 30, client: 1, service: 'house' },
+      { day: 3, hour: 14, minute:  0, client: 3, service: 'drive' },
+      { day: 4, hour:  8, minute:  0, client: 2, service: 'fleet' },
+      { day: 4, hour: 10, minute:  0, client: 0, service: 'drive' },
+      { day: 4, hour: 14, minute:  0, client: 4, service: 'patio' },
+      { day: 5, hour:  8, minute: 30, client: 3, service: 'house' },
+      { day: 5, hour: 13, minute: 30, client: 1, service: 'fleet' },
+      { day: 6, hour:  9, minute:  0, client: 0, service: 'drive' },
+      { day: 6, hour: 12, minute:  0, client: 2, service: 'patio' },
+    ],
+    leads: [
+      { client: 0, title: 'Second-storey soffits, needs the long lance', cents: 21000, hours: 2, urgency: 2 },
+      { client: 3, title: 'Barn slab before the rain',                   cents: 26000, hours: 3, urgency: 4 },
+    ],
+    hired: 174,
+    employees: 2,
+    inBusiness: 8,
+    check: { name: 'Angela Prieto', daysAgo: 95 },
+    reviews: [
+      { name: 'Marisela Ontiveros', rating: 5, daysAgo: 12, service: 'house',
+        body: 'Whole front of the house done in a morning. The trailer carries its '
+          + 'own water so nothing came off my tap.' },
+      { name: 'Grady Pemberton', rating: 5, daysAgo: 23, service: 'drive',
+        body: 'The drive goes green every winter and it is back to concrete. He put '
+          + 'boards down so the runoff went to the gutter and not the flowerbed.' },
+      { name: 'Ofelia Zaragoza',  rating: 4, daysAgo: 34, service: 'patio', body: null },
+      { name: 'Bill Hartsook', rating: 5, daysAgo: 49, service: 'fleet',
+        body: 'Washes down the trailers at the yard in Guadalupe. Turns up when he '
+          + 'says and gets out of the way of the crews.' },
+      { name: 'Lorena Escamilla', rating: 4, daysAgo: 63, service: 'drive',
+        body: 'Good job on the paths. The fence he did at the same time came up '
+          + 'patchy in one corner and he came back for it.' },
+      { name: 'Ward Fitzhugh',    rating: 5, daysAgo: 77, service: 'house', body: null },
+      { name: 'Tessa Mowbray', rating: 5, daysAgo: 101, service: 'house',
+        body: 'Booked in October before the rain started, which was his suggestion '
+          + 'and the right one.' },
+      { name: 'Ramiro Cazares',   rating: 4, daysAgo: 120, service: 'patio', body: null },
+    ],
+  },
+
+  {
+    id: 'demo-operator-sm-mech',
+    email: 'demo-sm-mech@slotfill.app',
+    name: 'Blosser Road Mobile Mechanic',
+    trade: 'mobile oil change and mechanics',
+    phone: '+18055550300',
+    slug: 'blosser-road-mobile-mechanic',
+    tagline: 'Service and brakes done on your drive, common parts on board',
+    bio: 'Servicing and brake work at the address, across Tanglewood, Santa '
+      + 'Maria, Orcutt, Guadalupe and Nipomo. Oil, filters, pads and batteries '
+      + 'for the common trucks and saloons are carried, so those finish in one '
+      + 'visit and the part is already in the price. Anything that needs '
+      + 'diagnosis is quoted after I have looked at it, and never before.',
+    years: 14,
+    base: 'tanglewood',
+    areas: ['tanglewood', 'santaMaria', 'guadalupe', 'orcutt', 'nipomo'],
+    services: [
+      { key: 'oil',   name: 'Oil and filter change',    secs: 2700, cents: 11500, cadence: 180,
+        parts: 'included', parts_note: 'Oil and filter are both in the price.' },
+      { key: 'brake', name: 'Brake pads, front or rear', secs: 7200, cents: 24500, cadence: null,
+        parts: 'included', parts_note: 'Pads included. Discs are extra and quoted first.' },
+      { key: 'batt',  name: 'Battery test and replace',  secs: 3600, cents: 19500, cadence: null,
+        parts: 'included', parts_note: 'Battery included; the old one goes with me.' },
+      // The one job that cannot be priced from the driveway, which is why the
+      // quote flow exists at all.
+      { key: 'diag',  name: 'Fault diagnosis',           secs: 3600, cents:  8900, cadence: null,
+        parts: 'quoted',
+        parts_note: 'This covers finding the fault and telling you what it needs. '
+          + 'Any part is priced to you for approval before it is fitted.',
+        parts_low: 4000, parts_high: 42000 },
+    ],
+    clients: [
+      { first: 'Esteban', last: 'Carrillo', phone: '+18055550312', place: 'tanglewood', address: '455 N Western Ave',  lastVisitDays: 160,  service: 'oil' },
+      { first: 'Paulette', last: 'Rankin',  phone: '+18055550324', place: 'santaMaria', address: '2210 S College Dr',  lastVisitDays: 210,  service: 'brake' },
+      { first: 'Filiberto', last: 'Nunez',  phone: '+18055550335', place: 'guadalupe',  address: '128 Obispo St',      lastVisitDays: 90,   service: 'oil' },
+      { first: 'Sharon',  last: 'Deveraux', phone: '+18055550346', place: 'nipomo',     address: '640 W Tefft St',     lastVisitDays: null, service: 'batt' },
+      { first: 'Ismael',  last: 'Tapia',    phone: '+18055550357', place: 'orcutt',     address: '905 Union Ave',      lastVisitDays: 45,   service: 'diag' },
+      { first: 'Georgia', last: 'Lindenau', phone: '+18055550368', place: 'santaMaria', address: '1712 N Suey Rd',     lastVisitDays: 200,  service: 'oil' },
+    ],
+    bookings: [
+      { day: 0, hour:  8, minute:  0, client: 0, service: 'oil' },
+      { day: 0, hour: 10, minute:  0, client: 1, service: 'brake' },
+      { day: 0, hour: 14, minute:  0, client: 4, service: 'diag' },
+      { day: 1, hour:  8, minute: 30, client: 2, service: 'oil' },
+      { day: 1, hour: 10, minute: 30, client: 3, service: 'batt' },
+      { day: 1, hour: 14, minute:  0, client: 5, service: 'oil' },
+      { day: 2, hour:  8, minute:  0, client: 1, service: 'oil' },
+      { day: 2, hour: 10, minute:  0, client: 4, service: 'brake' },
+      { day: 2, hour: 14, minute: 30, client: 0, service: 'batt' },
+      { day: 3, hour:  8, minute: 30, client: 5, service: 'brake' },
+      { day: 3, hour: 12, minute:  0, client: 2, service: 'diag' },
+      { day: 3, hour: 15, minute:  0, client: 3, service: 'oil' },
+      { day: 4, hour:  8, minute:  0, client: 4, service: 'oil' },
+      { day: 4, hour: 10, minute:  0, client: 0, service: 'brake' },
+      { day: 4, hour: 14, minute:  0, client: 1, service: 'batt' },
+      { day: 5, hour:  8, minute: 30, client: 3, service: 'brake' },
+      { day: 5, hour: 12, minute:  0, client: 5, service: 'diag' },
+      { day: 5, hour: 15, minute:  0, client: 2, service: 'batt' },
+      { day: 6, hour:  9, minute:  0, client: 0, service: 'oil' },
+      { day: 6, hour: 11, minute:  0, client: 4, service: 'oil' },
+      { day: 6, hour: 14, minute:  0, client: 1, service: 'diag' },
+    ],
+    leads: [
+      { client: 1, title: 'Front discs as well as pads, priced after the strip', cents: 41000, hours: 2.5, urgency: 3 },
+    ],
+    hired: 320,
+    inBusiness: 11,
+    check: { name: 'Marco Villaseñor', daysAgo: 520 },
+    onlineHours: 2,
+    reviews: [
+      { name: 'Duane Kolstad', rating: 5, daysAgo: 5, service: 'brake',
+        body: 'Front pads done on my drive while I worked. He showed me the old ones '
+          + 'and took them away with him.' },
+      { name: 'Yolanda Bermudez', rating: 5, daysAgo: 15, service: 'oil',
+        body: 'Comes out to Guadalupe, which most of them will not do for one oil '
+          + 'change. Price is the price he says on the phone.' },
+      { name: 'Neil Ashworth',   rating: 4, daysAgo: 25, service: 'batt',  body: null },
+      { name: 'Consuelo Arreola', rating: 5, daysAgo: 36, service: 'diag',
+        body: 'Found the fault in half an hour and sent me the part price before '
+          + 'ordering anything. I have never had that from a garage.' },
+      { name: 'Brett Sandoval',  rating: 5, daysAgo: 47, service: 'oil',   body: null },
+      { name: 'Imelda Fajardo', rating: 3, daysAgo: 58, service: 'brake',
+        body: 'The brakes are right and have been since. He had to come back a '
+          + 'second day because he did not have the discs with him.' },
+      { name: 'Roland Tisdale', rating: 5, daysAgo: 74, service: 'oil',
+        body: 'Third year he has serviced the truck. Turns up with everything he '
+          + 'needs and is gone in under an hour.' },
+      { name: 'Estela Pinedo',   rating: 5, daysAgo: 90, service: 'batt',  body: null },
+      { name: 'Harvey Lundquist', rating: 4, daysAgo: 112, service: 'diag',
+        body: 'Diagnosis was honest — told me it was not worth fixing on a truck '
+          + 'that age and did not try to sell me the repair.' },
+    ],
+  },
+
+  {
+    id: 'demo-operator-sm-groom',
+    email: 'demo-sm-groom@slotfill.app',
+    name: 'Foxen Canyon Mobile Pet Grooming',
+    trade: 'mobile pet grooming',
+    phone: '+18055550400',
+    slug: 'foxen-canyon-mobile-pet-grooming',
+    tagline: 'Grooming van at your door, one dog at a time',
+    bio: 'A fitted grooming van working Orcutt, Rice Ranch, Santa Maria and '
+      + 'Nipomo. Warm water, a bath and a table are all on board, so the dog '
+      + 'never goes into a kennel and never waits with other dogs. One '
+      + 'appointment at a time. A small dog is about an hour and a half and a '
+      + 'big coat is closer to two.',
+    years: 6,
+    base: 'orcutt',
+    areas: ['orcutt', 'riceRanch', 'santaMaria', 'nipomo'],
+    services: [
+      { key: 'small', name: 'Full groom, small dog', secs: 5400, cents:  8500, cadence: 42 },
+      { key: 'large', name: 'Full groom, large dog', secs: 7200, cents: 11500, cadence: 42 },
+      { key: 'bath',  name: 'Bath and tidy',         secs: 3600, cents:  5500, cadence: 28 },
+      { key: 'nails', name: 'Nails and ears only',   secs: 1800, cents:  2500, cadence: 56 },
+    ],
+    clients: [
+      { first: 'Adelina', last: 'Rosales',  phone: '+18055550412', place: 'orcutt',     address: '1650 Dyer St',        lastVisitDays: 38,   service: 'small' },
+      { first: 'Craig',   last: 'Holloway', phone: '+18055550423', place: 'riceRanch',  address: '215 Hidden Pines Way', lastVisitDays: 47,  service: 'large' },
+      { first: 'Xiomara', last: 'Peralta',  phone: '+18055550434', place: 'santaMaria', address: '808 S Thornburg St',  lastVisitDays: 25,   service: 'bath' },
+      { first: 'Denise',  last: 'Kolar',    phone: '+18055550445', place: 'nipomo',     address: '1290 Thompson Ave',   lastVisitDays: 61,   service: 'large' },
+      { first: 'Fabian',  last: 'Uriarte',  phone: '+18055550456', place: 'orcutt',     address: '3120 Bradley Rd',     lastVisitDays: null, service: 'nails' },
+    ],
+    bookings: [
+      { day: 0, hour:  8, minute: 30, client: 0, service: 'small' },
+      { day: 0, hour: 10, minute: 30, client: 1, service: 'large' },
+      { day: 0, hour: 14, minute:  0, client: 2, service: 'bath' },
+      { day: 1, hour:  8, minute: 30, client: 3, service: 'large' },
+      { day: 1, hour: 11, minute:  0, client: 4, service: 'nails' },
+      { day: 1, hour: 13, minute:  0, client: 0, service: 'bath' },
+      { day: 2, hour:  9, minute:  0, client: 2, service: 'small' },
+      { day: 2, hour: 11, minute:  0, client: 1, service: 'bath' },
+      { day: 2, hour: 14, minute:  0, client: 3, service: 'small' },
+      { day: 3, hour:  8, minute: 30, client: 4, service: 'large' },
+      { day: 3, hour: 11, minute: 30, client: 0, service: 'nails' },
+      { day: 3, hour: 14, minute:  0, client: 2, service: 'large' },
+      { day: 4, hour:  9, minute:  0, client: 1, service: 'small' },
+      { day: 4, hour: 11, minute:  0, client: 3, service: 'bath' },
+      { day: 4, hour: 14, minute: 30, client: 4, service: 'small' },
+      { day: 5, hour:  8, minute: 30, client: 2, service: 'large' },
+      { day: 5, hour: 11, minute: 30, client: 0, service: 'small' },
+      { day: 5, hour: 14, minute:  0, client: 1, service: 'nails' },
+      { day: 6, hour:  9, minute:  0, client: 3, service: 'bath' },
+      { day: 6, hour: 11, minute:  0, client: 4, service: 'small' },
+    ],
+    leads: [],
+    // No check has been run on this one and there is no years-in-business
+    // figure, so the card has to render with two of its four markers missing.
+    hired: 61,
+    reviews: [
+      { name: 'Rochelle Vandiver', rating: 5, daysAgo: 7, service: 'large',
+        body: 'The van comes to the house and my collie never has to go in a crate. '
+          + 'She used to shake all the way to the groomer.' },
+      { name: 'Ernesto Salgado', rating: 5, daysAgo: 18, service: 'small',
+        body: 'One dog at a time, so ours is not sitting around waiting. Out in '
+          + 'ninety minutes and the cut is exactly what we asked for.' },
+      { name: 'Bridget Cawley',   rating: 4, daysAgo: 29, service: 'bath',  body: null },
+      { name: 'Lourdes Mancilla', rating: 5, daysAgo: 44, service: 'small', body: null },
+      { name: 'Stanley Okonkwo', rating: 4, daysAgo: 59, service: 'large',
+        body: 'Good with an anxious dog and took her slowly. Running late by about '
+          + 'forty minutes, though she did text.' },
+      { name: 'Perla Villanueva', rating: 5, daysAgo: 78, service: 'nails',
+        body: 'Comes out to Nipomo just for nails and ears, which nobody else would '
+          + 'do for the price.' },
+    ],
+  },
+
+  {
+    id: 'demo-operator-sm-garden',
+    email: 'demo-sm-garden@slotfill.app',
+    name: 'Nipomo Mesa Landscaping',
+    trade: 'landscaping and gardening',
+    phone: '+18055550500',
+    slug: 'nipomo-mesa-landscaping',
+    tagline: 'Garden rounds and irrigation across the valley',
+    bio: 'Two of us on a truck, working Nipomo, Orcutt, Rice Ranch, Santa '
+      + 'Maria and Tanglewood. Regular garden tidies on a fortnightly round, '
+      + 'plus hedge and shrub work and irrigation repairs. Green waste leaves '
+      + 'with us. Most of the irrigation calls out here are drip lines that '
+      + 'have gone brittle in the sun, and those are half a day at most.',
+    years: 12,
+    base: 'nipomo',
+    areas: ['nipomo', 'orcutt', 'riceRanch', 'santaMaria', 'tanglewood'],
+    services: [
+      { key: 'tidy',  name: 'Garden tidy',                secs:  7200, cents:  9500, cadence: 14 },
+      { key: 'hedge', name: 'Hedge and shrub trim',       secs: 10800, cents: 16500, cadence: 120 },
+      { key: 'drip',  name: 'Irrigation check and repair', secs: 5400, cents: 12500, cadence: 180,
+        parts: 'included', parts_note: 'Emitters, fittings and line are in the price.' },
+      { key: 'clear', name: 'Overgrown lot clearance',    secs: 14400, cents: 42000, cadence: null },
+    ],
+    clients: [
+      { first: 'Guillermo', last: 'Rojas',   phone: '+18055550512', place: 'nipomo',     address: '415 Orchard Rd',     lastVisitDays: 12,   service: 'tidy' },
+      { first: 'Nancy',    last: 'Bergstrom', phone: '+18055550523', place: 'orcutt',    address: '2455 Foster Rd',     lastVisitDays: 15,   service: 'tidy' },
+      { first: 'Teresa',   last: 'Madrigal', phone: '+18055550534', place: 'santaMaria', address: '1004 W Cook St',     lastVisitDays: 130,  service: 'hedge' },
+      { first: 'Bruce',    last: 'Tallmadge', phone: '+18055550545', place: 'riceRanch', address: '560 Rice Ranch Rd',  lastVisitDays: 190,  service: 'drip' },
+      { first: 'Ivette',   last: 'Cardoza',  phone: '+18055550556', place: 'tanglewood', address: '227 W Boone St',     lastVisitDays: 13,   service: 'tidy' },
+      { first: 'Marty',    last: 'Ruvalcaba', phone: '+18055550567', place: 'nipomo',    address: '870 Camino Caballo', lastVisitDays: null, service: 'clear' },
+    ],
+    bookings: [
+      { day: 0, hour:  8, minute:  0, client: 0, service: 'tidy' },
+      { day: 0, hour: 10, minute: 30, client: 1, service: 'tidy' },
+      { day: 0, hour: 14, minute:  0, client: 4, service: 'tidy' },
+      { day: 1, hour:  8, minute:  0, client: 2, service: 'hedge' },
+      { day: 1, hour: 13, minute:  0, client: 3, service: 'drip' },
+      { day: 2, hour:  8, minute:  0, client: 5, service: 'clear' },
+      { day: 2, hour: 13, minute:  0, client: 0, service: 'tidy' },
+      { day: 2, hour: 15, minute: 30, client: 1, service: 'drip' },
+      { day: 3, hour:  8, minute:  0, client: 4, service: 'hedge' },
+      { day: 3, hour: 12, minute:  0, client: 2, service: 'tidy' },
+      { day: 3, hour: 14, minute: 30, client: 3, service: 'tidy' },
+      { day: 4, hour:  8, minute:  0, client: 1, service: 'hedge' },
+      { day: 4, hour: 12, minute:  0, client: 5, service: 'tidy' },
+      { day: 4, hour: 14, minute: 30, client: 0, service: 'drip' },
+      { day: 5, hour:  8, minute:  0, client: 3, service: 'clear' },
+      { day: 5, hour: 13, minute:  0, client: 4, service: 'drip' },
+      { day: 6, hour:  8, minute: 30, client: 2, service: 'tidy' },
+      { day: 6, hour: 11, minute:  0, client: 0, service: 'hedge' },
+      { day: 6, hour: 15, minute:  0, client: 1, service: 'tidy' },
+    ],
+    leads: [
+      { client: 5, title: 'Drip line for the new beds, front and side', cents: 38000, hours: 4, urgency: 2 },
+      { client: 2, title: 'Two olive trees lifted and reshaped',        cents: 29000, hours: 3, urgency: 1 },
+    ],
+    hired: 402,
+    employees: 2,
+    inBusiness: 12,
+    check: { name: 'Salvador Ibarra', daysAgo: 260 },
+    reviews: [
+      { name: 'Cheryl Bonneau', rating: 5, daysAgo: 10, service: 'tidy',
+        body: 'Every other Tuesday for three years. The garden has never once been '
+          + 'left with the clippings still on it.' },
+      { name: 'Alonso Ferrer', rating: 5, daysAgo: 21, service: 'drip',
+        body: 'Whole drip system had gone brittle. He replaced the emitters and the '
+          + 'line the same afternoon and the price included the parts.' },
+      { name: 'Bernadette Ojeda', rating: 4, daysAgo: 33, service: 'hedge', body: null },
+      { name: 'Frank Osterman', rating: 5, daysAgo: 46, service: 'clear',
+        body: 'Side lot had not been touched in five years. Two of them and a truck, '
+          + 'and it was gone in a day.' },
+      { name: 'Rosalba Quintanilla', rating: 5, daysAgo: 60, service: 'tidy', body: null },
+      { name: 'Warren Tibbetts', rating: 4, daysAgo: 79, service: 'hedge',
+        body: 'Hedges are square again. They cut the pittosporum harder than I would '
+          + 'have, though it has come back fine.' },
+      { name: 'Maricela Estrada', rating: 5, daysAgo: 95, service: 'tidy',
+        body: 'They text the night before so I can leave the side gate open. Small '
+          + 'thing, and nobody else does it.' },
+      { name: 'Dell Kirkpatrick', rating: 5, daysAgo: 130, service: 'drip', body: null },
+    ],
+  },
+
+  {
+    id: 'demo-operator-sm-window',
+    email: 'demo-sm-window@slotfill.app',
+    name: 'Stowell Road Window Cleaning',
+    trade: 'window cleaning',
+    phone: '+18055550600',
+    slug: 'stowell-road-window-cleaning',
+    tagline: 'Pure water pole, single and two storey, no ladders on the lawn',
+    bio: 'Windows across Santa Maria, Tanglewood, Orcutt, Rice Ranch and '
+      + 'Guadalupe. A pure-water pole reaches a second storey from the ground, '
+      + 'so there is no ladder in the flowerbed and nobody needs to be home '
+      + 'for an outside-only clean. Screens and tracks are a separate job '
+      + 'because they take as long again as the glass does.',
+    years: 3,
+    base: 'santaMaria',
+    areas: ['santaMaria', 'tanglewood', 'orcutt', 'riceRanch', 'guadalupe'],
+    services: [
+      { key: 'ext',    name: 'Exterior only, single storey', secs: 5400, cents: 13500, cadence: 120 },
+      { key: 'both',   name: 'Inside and out',               secs: 10800, cents: 21500, cadence: 180 },
+      { key: 'screen', name: 'Screens and tracks',           secs: 3600, cents:  7500, cadence: null },
+    ],
+    clients: [
+      { first: 'Anabel',  last: 'Ferreira', phone: '+18055550612', place: 'santaMaria', address: '1345 E Main St',   lastVisitDays: 100,  service: 'both' },
+      { first: 'Duncan',  last: 'McReedy',  phone: '+18055550623', place: 'tanglewood', address: '540 N Western Ave', lastVisitDays: 118, service: 'ext' },
+      { first: 'Rocio',   last: 'Palomino', phone: '+18055550634', place: 'orcutt',     address: '425 E Clark Ave',  lastVisitDays: null, service: 'screen' },
+      { first: 'Harriet', last: 'Blunden',  phone: '+18055550645', place: 'riceRanch',  address: '1105 Rice Ranch Rd', lastVisitDays: 132, service: 'ext' },
+      { first: 'Cristian', last: 'Herrera', phone: '+18055550656', place: 'guadalupe',  address: '316 Peralta St',   lastVisitDays: 75,   service: 'ext' },
+    ],
+    bookings: [
+      { day: 0, hour:  8, minute: 30, client: 0, service: 'both' },
+      { day: 0, hour: 13, minute:  0, client: 1, service: 'ext' },
+      { day: 0, hour: 15, minute:  0, client: 2, service: 'screen' },
+      { day: 1, hour:  9, minute:  0, client: 3, service: 'ext' },
+      { day: 1, hour: 11, minute:  0, client: 4, service: 'ext' },
+      { day: 1, hour: 14, minute:  0, client: 0, service: 'screen' },
+      { day: 2, hour:  8, minute: 30, client: 2, service: 'both' },
+      { day: 2, hour: 13, minute: 30, client: 1, service: 'screen' },
+      { day: 3, hour:  9, minute:  0, client: 4, service: 'ext' },
+      { day: 3, hour: 11, minute:  0, client: 3, service: 'screen' },
+      { day: 3, hour: 14, minute:  0, client: 0, service: 'ext' },
+      { day: 4, hour:  8, minute: 30, client: 1, service: 'both' },
+      { day: 4, hour: 13, minute:  0, client: 2, service: 'ext' },
+      { day: 5, hour:  9, minute:  0, client: 3, service: 'both' },
+      { day: 5, hour: 14, minute:  0, client: 4, service: 'screen' },
+      { day: 6, hour:  9, minute:  0, client: 0, service: 'ext' },
+      { day: 6, hour: 11, minute:  0, client: 1, service: 'ext' },
+    ],
+    leads: [
+      { client: 3, title: 'Conservatory roof as well as the windows', cents: 16000, hours: 1.5, urgency: 2 },
+    ],
+    // Three years in, a short list of reviews, no check run and nobody has
+    // filled in a years-in-business figure. The small end of the Santa Maria
+    // seed, the way FreshBin is of the Valley one.
+    hired: 38,
+    onlineHours: 5,
+    reviews: [
+      { name: 'Priscilla Kaufmann', rating: 5, daysAgo: 9, service: 'ext',
+        body: 'Did the whole outside from the ground with the pole. No ladders in '
+          + 'the beds, which is why I called him.' },
+      { name: 'Gerardo Munguia', rating: 5, daysAgo: 22, service: 'both',
+        body: 'Inside and out in an afternoon and he took his shoes off without '
+          + 'being asked.' },
+      { name: 'Lorna Beckwith',   rating: 4, daysAgo: 37, service: 'ext',    body: null },
+      { name: 'Ivan Solis', rating: 4, daysAgo: 54, service: 'screen',
+        body: 'Screens and tracks came up well. The tracks took longer than the '
+          + 'hour he quoted and he charged the quoted price anyway.' },
+      { name: 'Maureen Halstead', rating: 5, daysAgo: 71, service: 'ext',
+        body: 'Comes out to Guadalupe on the same round, so I get the Santa Maria '
+          + 'price rather than a call-out on top.' },
+    ],
+  },
 ];
 
 
@@ -1691,12 +2200,18 @@ function at(dayStart: number, hour: number, minute = 0): number {
  * the database and rebuilds when they differ, and it is the only thing that
  * carries a change in this file to a database that has already been seeded.
  *
+ * Version 3 opened Santa Maria: six sample businesses in the Santa Maria
+ * Valley, and a postcode row for every area of every metro rather than only
+ * the ones a sample business covers. The business count changed, so the row
+ * count alone would have caught this one — the postcode change on its own
+ * would not have, which is exactly why the version exists.
+ *
  * Version 2 is the release that gave the sample businesses reviews, star
  * ratings, hired counts, background checks, years in business and the
  * open-for-work switch. Version 1 is everything before it, which is what a
  * database seeded before the `demo_seed` table existed is assumed to hold.
  */
-export const DEMO_SEED_VERSION = 2;
+export const DEMO_SEED_VERSION = 3;
 
 export async function seedDemo(env: Env): Promise<void> {
   const t = now();
@@ -1718,6 +2233,33 @@ export async function seedDemo(env: Env): Promise<void> {
   // first takes the bare slug and the rest are suffixed, which keeps
   // service_areas.slug unique without touching place_slug.
   const areaSeq = new Map<string, number>();
+
+  // A postcode centroid for every area of every metro, not only the ones a
+  // sample business happens to cover.
+  //
+  // This is the table the front page's postcode box geocodes against, and in a
+  // database that has never loaded the GeoNames extract — which is every local
+  // one, and any deployment where seed/postal_codes.sql was never run — it is
+  // the ONLY thing in it. Seeding only the covered areas is what made a
+  // visitor typing a Santa Maria ZIP be told we could not place them, on a
+  // site whose Santa Maria page was working perfectly.
+  //
+  // OR IGNORE is doing real work here. The primary key is (country_code,
+  // postal_code) and one code can cover several neighbourhoods — 91302 is
+  // Calabasas AND Hidden Hills, 93454 is downtown Santa Maria as well as
+  // Sisquoc and Garey — so one code can only hold one point, and the area
+  // listing it first in metros.ts wins. No coordinate is corrupted; the
+  // offline geocoder simply cannot tell those neighbourhoods apart. Clients
+  // and service areas never go through it, carrying their own coordinates, so
+  // only postcode search is affected.
+  for (const a of ALL_METRO_AREAS) {
+    for (const zip of a.zips) {
+      rows.push(env.DB.prepare(
+        `INSERT OR IGNORE INTO postal_codes (country_code,postal_code,place_name,lat,lng,accuracy)
+         VALUES ('US',?,?,?,?,6)`,
+      ).bind(zip, a.name, a.lat, a.lng));
+    }
+  }
 
   for (const b of BUSINESSES) {
     const home = PLACES[b.base];
@@ -1784,31 +2326,14 @@ export async function seedDemo(env: Env): Promise<void> {
 
     for (const placeKey of b.areas) {
       const p = PLACES[placeKey];
-      const placeSlug = PLACE_SLUGS[placeKey];
-      const n = (areaSeq.get(placeSlug) ?? 0) + 1;
-      areaSeq.set(placeSlug, n);
-      const rowSlug = n === 1 ? placeSlug : `${placeSlug}-${n}`;
+      const n = (areaSeq.get(p.slug) ?? 0) + 1;
+      areaSeq.set(p.slug, n);
+      const rowSlug = n === 1 ? p.slug : `${p.slug}-${n}`;
       rows.push(env.DB.prepare(
         `INSERT INTO service_areas (id,operator_id,name,slug,place_slug,lat,lng,
            radius_meters,is_active,created_at,updated_at)
          VALUES (?,?,?,?,?,?,?,6000,1,?,?)`,
-      ).bind(newId(), b.id, p.area, rowSlug, placeSlug, p.lat, p.lng, t, t));
-      // The public page geocodes a visitor's ZIP against this table. Shared
-      // across businesses, so it is written once per ZIP and ignored after.
-      //
-      // OR IGNORE is doing real work for 91302, which is Calabasas AND Hidden
-      // Hills. The table's primary key is (country_code, postal_code), so one
-      // ZIP can only hold one point: whichever of the two is written first
-      // wins and the second is dropped. Someone who types 91302 is therefore
-      // placed at a single centroid — no coordinate is corrupted, but the
-      // offline geocoder genuinely cannot tell the two neighbourhoods apart.
-      // Clients and service areas do not go through it (they carry the PLACES
-      // coordinates directly), so only ZIP search is affected, and the two
-      // centroids are about a mile and a half apart.
-      rows.push(env.DB.prepare(
-        `INSERT OR IGNORE INTO postal_codes (country_code,postal_code,place_name,lat,lng,accuracy)
-         VALUES ('US',?,?,?,?,6)`,
-      ).bind(p.zip, p.area, p.lat, p.lng));
+      ).bind(newId(), b.id, p.area, rowSlug, p.slug, p.lat, p.lng, t, t));
     }
 
     const svcByKey = new Map(b.services.map((sv) => [sv.key, sv]));

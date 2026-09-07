@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, sentence, type MapArea, type PublicSlot, type TradeCategory } from '../api';
+import {
+  api, sentence,
+  type MapArea, type Metro, type PublicSlot, type TradeCategory,
+} from '../api';
 import Crumbs from '../components/Crumbs';
 import PublicPage from '../components/PublicPage';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-index.css';
 import { plural } from '../lib/format';
+import { groupByMetro, loadMetros, metroNames } from '../lib/metros';
 import { distinctGaps } from '../lib/slots';
 import { nearTradeHref } from '../lib/seo';
 import { useDocumentTitle } from '../lib/title';
@@ -30,28 +34,42 @@ import { useDocumentTitle } from '../lib/title';
  *
  * Every number here is counted from the rows fetched in this render. There is
  * nothing on this page about how many neighbourhoods we wish we covered.
+ *
+ * IT IS GROUPED BY METRO, and that is not decoration. This was one run of
+ * neighbourhoods while the product was one city; now that it is two, an
+ * undifferentiated list puts Orcutt next to Northridge and tells the reader
+ * they are down the road from each other when they are a hundred and fifty
+ * miles apart. `MapArea.metro` says which place each one is in, and the metro
+ * records name it.
  */
 
 
 export default function Areas() {
+  const [metros, setMetros] = useState<Metro[]>([]);
   const [areas, setAreas] = useState<MapArea[]>([]);
   const [slots, setSlots] = useState<PublicSlot[]>([]);
   const [cats, setCats] = useState<TradeCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useDocumentTitle('Every neighbourhood — Los Angeles, California');
+  // Named from the list rather than written out, so the tab says what the
+  // server-rendered page's <title> says at two places and at three.
+  useDocumentTitle(metros.length ? `Every neighbourhood — ${metroNames(metros)}` : null);
 
   /**
-   * The map and the catalogue together, because this page needs both to be
-   * right and neither is worth showing without the other: the map is what is
-   * open, and the catalogue is the only way to know which of the trades in it
+   * The metro records, the map and the catalogue together, because this page
+   * needs all three to be right and none is worth showing without the others:
+   * the map is what is open, the metro records are what each neighbourhood is
+   * filed under, and the catalogue is the only way to know which of the trades
    * has a page of its own to link to. One failure, one message, one retry.
    */
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [map, catalog] = await Promise.all([api.publicMap(), api.tradeCatalog()]);
+      const [list, map, catalog] = await Promise.all([
+        loadMetros(), api.publicMap(), api.tradeCatalog(),
+      ]);
+      setMetros(list);
       setAreas(map.areas);
       setSlots(map.slots);
       setCats(catalog.categories);
@@ -95,8 +113,26 @@ export default function Areas() {
   }).sort((x, y) => y.n - x.n || x.area.name.localeCompare(y.area.name)),
   [areas, slots, known]);
 
-  const live = rows.filter((r) => r.n > 0);
-  const quiet = rows.filter((r) => r.n === 0);
+  /**
+   * The same rows, in metro order, with each metro's own totals beside it.
+   *
+   * The per-metro count of openings is counted over that metro's slots for the
+   * reason the site-wide one below is counted over all of them: adding the
+   * per-area figures up would count a whole free day once for every
+   * neighbourhood its owner covers.
+   */
+  const grouped = useMemo(() => groupByMetro(metros, rows, (r) => r.area.metro)
+    .map((g) => {
+      const here = new Set(g.rows.map((r) => r.area.slug));
+      return {
+        ...g,
+        open: distinctGaps(slots.filter((s) => here.has(s.area_slug))).length,
+        live: g.rows.filter((r) => r.n > 0),
+        quiet: g.rows.filter((r) => r.n === 0),
+      };
+    }), [metros, rows, slots]);
+
+  const anyLive = rows.some((r) => r.n > 0);
 
   /**
    * Counted over the whole map rather than by adding the per-area figures up.
@@ -125,11 +161,9 @@ export default function Areas() {
     <PublicPage className="ix-page">
       {/* The same trail the server-rendered page prints, and Crumbs emits the
           BreadcrumbList that markup carries in its JSON-LD. Crumbs prepends
-          Slotfill itself. */}
-      <Crumbs items={[
-        { label: 'Los Angeles', to: '/los-angeles' },
-        { label: 'Neighbourhoods' },
-      ]} />
+          Slotfill itself. This page is under no one metro — it lists them
+          all — so there is no metro step in it. */}
+      <Crumbs items={[{ label: 'Neighbourhoods' }]} />
 
       <header className="ix-head">
         <h1>
@@ -148,20 +182,20 @@ export default function Areas() {
       </header>
 
       {/*
-        A city with nothing open in it is ordinary traffic rather than a
+        Everywhere being quiet at once is ordinary traffic rather than a
         failure, and it is a sentence rather than an empty page. The
-        neighbourhoods are still listed underneath, because a place being quiet
-        this hour is not a reason to hide that it is covered.
+        neighbourhoods are still listed underneath, metro by metro, because a
+        place being quiet this hour is not a reason to hide that it is covered.
       */}
-      {live.length === 0 ? (
+      {!anyLive && (
         <section className="ix-sec">
           <div className="ix-empty">
             <h2>Nothing is open in any neighbourhood at the moment</h2>
             <p>
-              An opening is an hour a business has free, so the whole city can
-              be quiet for an hour and full by the afternoon. Rather than show
-              you a listing that is not there, we will tell you when one
-              appears.
+              An opening is an hour a business has free, so everywhere Slotfill
+              covers can be quiet for an hour and full by the afternoon. Rather
+              than show you a listing that is not there, we will tell you when
+              one appears.
             </p>
             <div className="ix-empty-do">
               <Link className="btn" to="/a">Tell me when one appears</Link>
@@ -169,17 +203,32 @@ export default function Areas() {
             </div>
           </div>
         </section>
-      ) : (
-        <section className="ix-sec" aria-labelledby="ix-live">
-          <h2 id="ix-live">Open now</h2>
-          {live.map((r) => (
-            /*
-              The place name is a heading and a link at once, the way the
-              server-rendered page has it, so the index can be walked by
-              heading as well as read. It is an h3 rather than the h2 that
-              markup uses: these neighbourhoods sit under "Open now", and
-              making them siblings of it would say they were not.
-            */
+      )}
+
+      {/*
+        ONE BLOCK PER METRO, which is the shape the server-rendered page has
+        and the only shape that answers the question a reader of this page is
+        actually asking. The metro is the h2 and each neighbourhood in it is an
+        h3 underneath, so the index can be walked by heading and the nesting
+        says which place each name belongs to without anybody having to know
+        the geography. A metro with nothing listed in it is not printed as an
+        empty heading; it is simply not here.
+      */}
+      {grouped.map((g) => (
+        <section className="ix-sec" key={g.metro?.slug ?? 'unfiled'}
+          aria-labelledby={`ix-m-${g.metro?.slug ?? 'unfiled'}`}>
+          <h2 id={`ix-m-${g.metro?.slug ?? 'unfiled'}`}>
+            {/* A plain anchor: the metro page is server-rendered by the
+                Worker. It is a React route too, so React can mount over that
+                HTML, but a client-side navigation would skip the render. */}
+            {g.metro ? <a href={g.metro.path}>{g.metro.name}</a> : 'Elsewhere'}
+            <span className="ix-count">
+              {g.rows.length} {plural(g.rows.length, 'neighbourhood', 'neighbourhoods')},{' '}
+              {g.open} open {plural(g.open, 'appointment', 'appointments')}
+            </span>
+          </h2>
+
+          {g.live.length > 0 ? g.live.map((r) => (
             <div className="ix-area" key={r.area.slug}>
               <h3>
                 {/* A plain anchor, not a Link: /near/<place> is rendered by
@@ -205,34 +254,42 @@ export default function Areas() {
                 <p className="ix-note">Nothing open here at the moment.</p>
               )}
             </div>
-          ))}
-        </section>
-      )}
+          )) : (
+            <p className="ix-note">Nothing is open here at the moment.</p>
+          )}
 
-      {quiet.length > 0 && (
-        <section className="ix-sec" aria-labelledby="ix-quiet">
-          <h2 id="ix-quiet">Quiet right now</h2>
-          <p className="ix-sec-sub">
-            Businesses cover these neighbourhoods and none of them has an hour
-            free in one at this moment. Each page says so itself, and takes an
-            alert for when that changes.
-          </p>
-          <ul className="ix-tiles">
-            {quiet.map((r) => (
-              <li key={r.area.slug}>
-                <a className="ix-tile" href={`/near/${encodeURIComponent(r.area.slug)}`}>
-                  <span className="ix-tile-name">Open appointments in {r.area.name}</span>
-                </a>
-              </li>
-            ))}
-          </ul>
+          {g.quiet.length > 0 && (
+            <>
+              <h3 className="ix-sub-h">Quiet right now</h3>
+              <p className="ix-sec-sub">
+                Businesses cover these neighbourhoods and none of them has an
+                hour free in one at this moment. Each page says so itself, and
+                takes an alert for when that changes.
+              </p>
+              <ul className="ix-tiles">
+                {g.quiet.map((r) => (
+                  <li key={r.area.slug}>
+                    <a className="ix-tile" href={`/near/${encodeURIComponent(r.area.slug)}`}>
+                      <span className="ix-tile-name">
+                        Open appointments in {r.area.name}
+                      </span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </section>
-      )}
+      ))}
 
-      <section className="ix-sec" aria-labelledby="ix-city">
-        <h2 id="ix-city">The whole city</h2>
+      <section className="ix-sec" aria-labelledby="ix-places">
+        <h2 id="ix-places">The places Slotfill serves</h2>
         <ul className="ix-else">
-          <li><a href="/los-angeles">Mobile services in Los Angeles</a></li>
+          {metros.map((m) => (
+            <li key={m.slug}>
+              <a href={m.path}>Mobile services in {m.name}</a>
+            </li>
+          ))}
           <li><Link to="/browse">Every service, by category</Link></li>
         </ul>
       </section>

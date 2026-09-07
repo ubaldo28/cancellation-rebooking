@@ -8,6 +8,7 @@ import {
 } from '../src/lib/seo';
 import { ALL_TRADES, TRADE_CATEGORIES } from '../src/lib/trades';
 import { DEMO_OPERATOR_ID } from '../src/lib/demo';
+import { METROS, metroBySlug } from '../src/lib/metros';
 import { newId, now } from '../src/lib/util';
 
 /**
@@ -21,6 +22,9 @@ import { newId, now } from '../src/lib/util';
  */
 
 const MIGRATIONS = ALL_MIGRATIONS;
+
+const LOS_ANGELES = metroBySlug('los-angeles')!;
+const SANTA_MARIA = metroBySlug('santa-maria')!;
 
 let env: Env;
 const t = () => now();
@@ -321,7 +325,7 @@ describe('the business profile', () => {
 describe('the /near index', () => {
   it('enumerates every covered neighbourhood with what is open in it', async () => {
     const page = await areaIndexPage(env);
-    expect(page).toContain('<title>Every neighbourhood — Los Angeles, California | Slotfill</title>');
+    expect(page).toContain('<title>Every neighbourhood — Los Angeles and Santa Maria | Slotfill</title>');
     expect(page).toContain('href="/near/sherman-oaks"');
     expect(page).toContain('href="/near/encino"');
     expect(page).toContain('href="/near/sherman-oaks/mobile-car-wash-and-detailing"');
@@ -425,7 +429,7 @@ describe('the /browse index', () => {
 
 describe('the metro page', () => {
   it('counts the city from the rows and ranks the trades by what is open', async () => {
-    const page = await metroPage(env);
+    const page = await metroPage(env, LOS_ANGELES);
     expect(page).toContain('<title>Mobile services in Los Angeles, California | Slotfill</title>');
     expect(page).toContain('<h1>Mobile services in Los Angeles, California');
     expect(page).toContain('<b>2</b><span>appointments open</span>');
@@ -436,7 +440,7 @@ describe('the metro page', () => {
   });
 
   it('makes no claim about Slotfill beyond how it works', async () => {
-    const page = await metroPage(env);
+    const page = await metroPage(env, LOS_ANGELES);
     for (const boast of [
       'most popular', 'trusted by', 'thousands', 'best in', 'top rated',
       'happy customers', 'save up to', 'fastest',
@@ -446,7 +450,7 @@ describe('the metro page', () => {
   });
 
   it('links to every trade in the catalogue, so nothing is orphaned', async () => {
-    const page = await metroPage(env);
+    const page = await metroPage(env, LOS_ANGELES);
     expect(page).toContain(`href="/s/${encodeURIComponent('mobile notary')}"`);
     expect(page).toContain(`href="/s/${encodeURIComponent('tutoring')}"`);
   });
@@ -464,7 +468,7 @@ describe('site chrome', () => {
         await areaIndexPage(env),
         await costIndexPage(env),
         await browseIndexPage(env),
-        await metroPage(env),
+        await metroPage(env, LOS_ANGELES),
       ]) {
         expect(page).toContain('class="wordmark" href="/"');
         expect(page).toContain('method="get" action="/search"');

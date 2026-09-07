@@ -170,7 +170,7 @@ describe('the trade-in-place page', () => {
    */
   it('names the trade the same way everywhere on the page', async () => {
     const page = await tradeInPlacePage(env, 'sherman-oaks', 'mobile-car-wash-and-detailing');
-    expect(page!).toContain('Car wash and detailing across Los Angeles');
+    expect(page!).toContain('Car wash and detailing everywhere Slotfill covers');
     expect(page!).toContain('What car wash and detailing costs');
     // Only ever as a URL segment, never as words a reader sees.
     expect(page!.replace(/href="[^"]*"/g, '')).not.toMatch(/mobile car wash and detailing/i);

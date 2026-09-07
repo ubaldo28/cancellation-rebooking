@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, type MapArea, type PublicSlot, type TradeCategory } from '../api';
+import { api, type MapArea, type Metro, type PublicSlot, type TradeCategory } from '../api';
 import CityMap from '../components/CityMap';
 import CategoryArt from '../components/CategoryArt';
 import { PAY_TODAY_SHORT } from '../components/PaymentState';
@@ -10,6 +10,7 @@ import SlotCard from '../components/SlotCard';
 import SlotFilters, { useSlotFilters } from '../components/SlotFilters';
 import { HowItWorks, WhyBook } from '../components/HowItWorks';
 import { Icon, Spinner } from '../components/ui';
+import { groupByMetro, metroNames, useMetros } from '../lib/metros';
 import '../styles-parts.css';
 import '../styles-home.css';
 
@@ -60,6 +61,18 @@ export default function Discover() {
   const [areas, setAreas] = useState<MapArea[]>([]);
   const [slots, setSlots] = useState<PublicSlot[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  /**
+   * The places Slotfill serves, for the two parts of this page that have to
+   * name them: the neighbourhood rail, which groups its chips by metro, and
+   * the geography band underneath.
+   *
+   * Not part of `load` below, and not a reason for this page to fail. If the
+   * list does not arrive the rail is one ungrouped run of chips and the band
+   * lists the neighbourhoods without naming the metros — which is what they
+   * both were before there was a second place, and better than a front page
+   * that will not render.
+   */
+  const metros = useMetros();
   /**
    * Seeded from ?trade= so a category page can link straight into a filtered
    * list. Read once at mount rather than kept in sync with the URL: this is a
@@ -264,8 +277,8 @@ export default function Discover() {
   }, [inTrade, counted]);
 
   /**
-   * The whole city, counted across every trade rather than the one somebody
-   * has filtered to.
+   * Everywhere Slotfill covers, counted across every trade rather than the one
+   * somebody has filtered to.
    *
    * `counted` above is recounted against the chosen trade, which is right for
    * the rail and the map — those answer "what is open over there in the thing
@@ -274,11 +287,26 @@ export default function Discover() {
    * visitor who tapped "locksmiths" that Slotfill covers four neighbourhoods.
    * Counted from `slots`, like everything else here; nothing is written down.
    */
-  const cityAreas = useMemo(() => {
+  const placeAreas = useMemo(() => {
     const n = new Map<string, number>();
     for (const s of slots) n.set(s.area_slug, (n.get(s.area_slug) ?? 0) + 1);
-    return areas.map((a) => ({ slug: a.slug, name: a.name, n: n.get(a.slug) ?? 0 }));
+    return areas.map((a) => ({
+      slug: a.slug, name: a.name, metro: a.metro, n: n.get(a.slug) ?? 0,
+    }));
   }, [areas, slots]);
+
+  /**
+   * The rail's chips, split into the places they are in.
+   *
+   * The rail is ordered by distance from wherever the visitor said they were,
+   * so with two metros open it can put Orcutt beside Encino: a row of names
+   * that reads as one neighbourhood after another down the same road. The
+   * metro label is what stops it saying that.
+   */
+  const railGroups = useMemo(
+    () => groupByMetro(metros, shownAreas, (a) => a.metro, 'nearest'),
+    [metros, shownAreas],
+  );
 
   const near = located?.place ?? located?.postcode ?? null;
   const visible = shown.slice(0, limit);
@@ -518,15 +546,34 @@ export default function Discover() {
 
               <section className="browse">
                 {shownAreas.length > 1 && (
+                  /*
+                    THE RAIL IS LABELLED BY METRO, and each metro is its own
+                    group rather than a caption floating over a flat row. A
+                    visitor reading "Orcutt" three chips along from "Encino"
+                    has no way of knowing they are a hundred and fifty miles
+                    apart, and this rail is ordered by distance from them, so
+                    that is exactly the order it produces once two places are
+                    open. Each group carries its own name for a screen reader
+                    as well, which is the same fact said the other way.
+                  */
                   <div className="rail" role="group" aria-label="Filter by neighbourhood">
-                    {shownAreas.map((a) => (
-                      <button key={a.slug} type="button" aria-pressed={a.slug === selected}
-                        className={`area-chip${a.slug === selected ? ' on' : ''}`
-                          + (a.slot_count === 0 ? ' none' : '')}
-                        onClick={() => setSelected(a.slug)}>
-                        {a.name}
-                        {a.slot_count > 0 && <span className="area-n">{a.slot_count}</span>}
-                      </button>
+                    {railGroups.map((g) => (
+                      <div className="rail-group" key={g.metro?.slug ?? 'unfiled'}
+                        role="group"
+                        aria-label={g.metro
+                          ? `Neighbourhoods in ${g.metro.name}`
+                          : 'Neighbourhoods'}>
+                        {g.metro && <span className="rail-label">{g.metro.name}</span>}
+                        {g.rows.map((a) => (
+                          <button key={a.slug} type="button" aria-pressed={a.slug === selected}
+                            className={`area-chip${a.slug === selected ? ' on' : ''}`
+                              + (a.slot_count === 0 ? ' none' : '')}
+                            onClick={() => setSelected(a.slug)}>
+                            {a.name}
+                            {a.slot_count > 0 && <span className="area-n">{a.slot_count}</span>}
+                          </button>
+                        ))}
+                      </div>
                     ))}
                   </div>
                 )}
@@ -703,7 +750,7 @@ export default function Discover() {
       */}
       <WhoBand />
       <CoveredBand />
-      <PlacesBand areas={cityAreas} />
+      <PlacesBand areas={placeAreas} metros={metros} />
       <ProsBand />
 
       {/*
@@ -895,17 +942,28 @@ function CoveredBand() {
  * WHERE THIS WORKS.
  *
  * The reference marketplace's band in this position is "All 50 states", and
- * the honest version of it for a product that covers one city is one city.
- * The neighbourhoods are the rows this page already fetched and the count is
- * taken from them, so the band shrinks on a quiet day and says so rather than
- * printing a figure somebody typed in last year.
+ * the honest version of it for a product that covers two places is those two
+ * places, named. The neighbourhoods are the rows this page already fetched and
+ * the count is taken from them, so the band shrinks on a quiet day and says so
+ * rather than printing a figure somebody typed in last year.
  *
- * The links are plain <a> and not <Link>: /near, /near/:slug and
- * /los-angeles are rendered by the Worker and are not React routes, so
- * routing to them client-side would land on the SPA's catch-all.
+ * IT IS GROUPED, and the grouping is the content. A single list of open
+ * neighbourhoods now runs from Encino to Guadalupe, and a reader who does not
+ * know the geography would take that for one city with a lot of districts. The
+ * metro headings say which of the two places each name is in, and the metros
+ * come from the API rather than from a constant here, so the day a third opens
+ * this band grows a heading on its own.
+ *
+ * The links are plain <a> and not <Link>: /near, /near/:slug and the metro
+ * pages are rendered by the Worker and are not React routes for the visitor's
+ * purposes, so routing to them client-side would throw the rendered page away.
  */
-function PlacesBand({ areas }: { areas: Array<{ slug: string; name: string; n: number }> }) {
+function PlacesBand({ areas, metros }: {
+  areas: Array<{ slug: string; name: string; metro: string; n: number }>;
+  metros: Metro[];
+}) {
   const open = areas.filter((a) => a.n > 0);
+  const groups = groupByMetro(metros, open, (a) => a.metro, 'nearest');
   // Nothing fetched yet, or nothing to say. A band about coverage with no
   // places under it is worse than no band.
   if (areas.length === 0) return null;
@@ -916,9 +974,12 @@ function PlacesBand({ areas }: { areas: Array<{ slug: string; name: string; n: n
         <h2 className="band-h" id="places-title">Where this works</h2>
         {/* Three sentences for three states, because "18 of the 18" is not
             how anybody says "all of them" and "0 of the 18" is a way of
-            burying the fact that the answer today is none. */}
+            burying the fact that the answer today is none. The places are
+            named from the metro list, and where that has not arrived the
+            sentence starts at the count rather than at a name this page would
+            have to make up. */}
         <p className="band-lede">
-          Los Angeles, a neighbourhood at a time.{' '}
+          {metros.length > 0 && `${metroNames(metros)}, a neighbourhood at a time. `}
           {open.length === 0
             ? `Slotfill covers ${areas.length}, and none of them has anything `
               + `open this minute — an opening appears the moment a job cancels.`
@@ -930,22 +991,29 @@ function PlacesBand({ areas }: { areas: Array<{ slug: string; name: string; n: n
                 + `right now.`}
         </p>
 
-        {open.length > 0 && (
-          <ul className="places-list">
-            {open.map((a) => (
-              <li key={a.slug}>
-                <a href={`/near/${a.slug}`}>
-                  {a.name}
-                  <span className="places-n">{a.n}</span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
+        {groups.map((g) => (
+          <div className="places-group" key={g.metro?.slug ?? 'unfiled'}>
+            {g.metro && (
+              <h3 className="places-h"><a href={g.metro.path}>{g.metro.name}</a></h3>
+            )}
+            <ul className="places-list">
+              {g.rows.map((a) => (
+                <li key={a.slug}>
+                  <a href={`/near/${a.slug}`}>
+                    {a.name}
+                    <span className="places-n">{a.n}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
 
         <p className="band-more">
           <a href="/near">Every neighbourhood</a>
-          <a href="/los-angeles">Slotfill in Los Angeles</a>
+          {metros.map((m) => (
+            <a key={m.slug} href={m.path}>Slotfill in {m.name}</a>
+          ))}
         </p>
       </div>
     </section>

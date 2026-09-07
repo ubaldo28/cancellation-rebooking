@@ -8,7 +8,10 @@ import { getPublicProfile } from '../src/lib/profile';
 import {
   PAY_TODAY_SHORT, browseIndexPage, costGuidePage, costIndexPage, metroPage, tradePage,
 } from '../src/lib/seo';
+import { metroBySlug } from '../src/lib/metros';
 import { newId, now } from '../src/lib/util';
+
+const LOS_ANGELES = metroBySlug('los-angeles')!;
 
 /**
  * The three things a card, a profile and a cost page carry that they did not.
@@ -484,7 +487,7 @@ describe('what the site says about money, said once', () => {
         (await costGuidePage(env, DETAILING))!,
         await costIndexPage(env),
         await browseIndexPage(env),
-        await metroPage(env),
+        await metroPage(env, LOS_ANGELES),
       ];
       // Every sentence the Worker used to carry that said a card is taken, or
       // that a fee or a refund is collected today. All of them are now stated

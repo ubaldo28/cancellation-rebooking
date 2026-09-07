@@ -80,10 +80,61 @@ export interface Gap {
 
 export interface MapArea {
   name: string; slug: string; lat: number; lng: number;
+  /**
+   * The slug of the metro this neighbourhood sits in — 'los-angeles',
+   * 'santa-maria'. Matches Metro.slug below, so the map payload can be grouped
+   * against the metro list without a second request. Never null.
+   */
+  metro: string;
   trades: string[];
   slot_count: number;
   from_price: string | null;
   next_when: string | null;
+}
+
+/** One neighbourhood, district or town inside a metro. */
+export interface MetroArea {
+  /**
+   * The same key MapArea.slug uses, and the /near/<slug> URL. Join the two on
+   * it to put a live count against a neighbourhood the metro record names.
+   */
+  slug: string;
+  name: string;
+  lat: number;
+  lng: number;
+}
+
+/**
+ * A place Slotfill serves.
+ *
+ * Everything here is static — it changes when the product opens a new place,
+ * not through the day — so a page can render its name, its state and its
+ * neighbourhood list from one cached call. NOTHING COUNTED IS IN IT: how many
+ * appointments are open in a metro comes from `publicMap`, counted in the
+ * request that asks, and a second copy here could only ever disagree with it.
+ */
+export interface Metro {
+  /** 'santa-maria'. Also the key MapArea.metro carries. */
+  slug: string;
+  /** As a person writes it: 'Santa Maria'. */
+  name: string;
+  /** '/santa-maria' — the server-rendered metro page. Use it; do not build it. */
+  path: string;
+  /** 'California'. Printed beside the name rather than assumed. */
+  state: string;
+  /** IANA zone, e.g. 'America/Los_Angeles'. */
+  timezone: string;
+  /** Roughly the middle of the served area, for centring a map on it. */
+  lat: number;
+  lng: number;
+  areas: MetroArea[];
+  /**
+   * Paragraphs of general facts about the place — climate, terrain, how it is
+   * laid out. Plain text, one string per paragraph, and safe to render as
+   * paragraphs. Deliberately not marketing copy: nothing in here is a claim
+   * about Slotfill, and there is no equivalent field for one.
+   */
+  geography: string[];
 }
 
 /** The one review a card has room for. */
@@ -824,6 +875,16 @@ export const api = {
       `/api/public/threads/${encodeURIComponent(token)}/no-show/${orderItemId}`, { note }),
 
   countries: () => get<{ countries: Country[] }>('/api/countries'),
+
+  /**
+   * Every place Slotfill serves, in the order they opened.
+   *
+   * The one call a metro list or a metro page needs. It is static and cached
+   * for an hour on the server, so calling it on mount is cheap; pair it with
+   * `publicMap` and group `areas[].slug` against `MapArea.slug` for the live
+   * counts, which is where every number on a metro page has to come from.
+   */
+  metros: () => get<{ metros: Metro[] }>('/api/public/metros'),
 
   requestSignIn: (body: { email: string; business_name?: string; country?: string; timezone?: string }) =>
     post<{ ok: true; sign_in_link?: string }>('/api/auth/request', body),

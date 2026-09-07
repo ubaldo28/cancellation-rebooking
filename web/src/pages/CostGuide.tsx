@@ -5,6 +5,7 @@ import Crumbs from '../components/Crumbs';
 import { PAY_TODAY_SHORT } from '../components/PaymentState';
 import PublicPage from '../components/PublicPage';
 import PostcodeFinder from '../components/PostcodeFinder';
+import MetroLinks from '../components/MetroLinks';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-trade.css';
 import { ENOUGH, formatMoney as money, median } from '../lib/format';
@@ -1051,7 +1052,7 @@ export default function CostGuide() {
               ))}
             </ul>
             <p className="tr-sec-foot">
-              <a href="/near">Every neighbourhood Slotfill covers</a>
+              <a href="/near">Every neighbourhood Slotfill covers</a><MetroLinks />
             </p>
           </>
         )}

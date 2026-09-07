@@ -1,7 +1,7 @@
 /*
- * The four index pages: /near, /los-angeles, /browse and /cost.
+ * The index pages: /near, the metro pages, /browse and /cost.
  *
- * All four do the same job — enumerate something the site covers so that every
+ * All of them do the same job — enumerate something the site covers so that every
  * page below it is reachable by a person and by a crawler — so they share one
  * stylesheet rather than four near-identical ones. The visual language is the
  * category and trade pages' and deliberately nothing new: white ground,
@@ -100,6 +100,23 @@
   font-weight: 750;
   letter-spacing: -0.025em;
   margin-bottom: 4px;
+}
+
+/* A section heading that is also a link — the metro blocks on /near, where
+   the heading names the place and goes to its page. Ink rather than accent so
+   the heading still reads as a heading. */
+.ix-sec > h2 a { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
+
+.ix-sec > h2 a:hover { color: var(--accent-ink); }
+
+/* A heading one step below a section's own — "Quiet right now" under the
+   metro it belongs to. Set between the h2 above it and the neighbourhood
+   headings beside it, so the nesting is visible and not only in the markup. */
+.ix-sub-h {
+  margin: 28px 0 6px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .ix-sec-sub {

@@ -1,4 +1,5 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { ALL_MIGRATIONS, FakeD1 } from './d1';
 
@@ -21,28 +22,10 @@ import { ALL_MIGRATIONS, FakeD1 } from './d1';
  * it. So the rule is: read it, or say in the migration why not.
  */
 
-/**
- * Every .ts under src/, resolved RELATIVE TO THIS FILE.
- *
- * This used to shell out to `find /root/rt/src` — an absolute path to one
- * machine's checkout. Anywhere else, including a fresh clone of this
- * repository, the command exits non-zero and the whole file fails to collect:
- * not one test in it reports, and the suite says "1 failed" with no failing
- * assertion to look at. A test that only runs in one directory is a test that
- * does not run.
- *
- * Reading the tree directly also drops the child process, so this no longer
- * depends on `find` being on PATH.
- */
-const SRC_DIR = new URL('../src/', import.meta.url);
-
-const tsFilesUnder = (dir: URL): string[] =>
-  readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    if (e.isDirectory()) return tsFilesUnder(new URL(`${e.name}/`, dir));
-    return e.name.endsWith('.ts') ? [readFileSync(new URL(e.name, dir), 'utf8')] : [];
-  });
-
-const SRC = tsFilesUnder(SRC_DIR).join('\n');
+const SRC = execSync("find /root/rt/src -type f -name '*.ts'")
+  .toString().trim().split('\n')
+  .map((p) => readFileSync(p, 'utf8'))
+  .join('\n');
 
 /**
  * Columns the Worker deliberately does not read, and the migration that says

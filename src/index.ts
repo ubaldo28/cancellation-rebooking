@@ -23,6 +23,7 @@ import {
 } from './lib/offers';
 import { claimSlot, discounted, mapData } from './lib/public';
 import { isDemoOperator, seedDemoIfEmpty, startDemo } from './lib/demo';
+import { METROS, metroPath, publicMetro } from './lib/metros';
 import { listNotifications, markAllRead, markRead, unreadCount } from './lib/feed';
 import {
   assertEnquiryReachAllowed, listMessages, listThreads, markThreadRead, operatorForEnquiry,
@@ -194,7 +195,7 @@ const touchCalendar = (env: Env, operatorId: string) =>
 // on a real customer is a bug and not a defence. Where the honest answer was
 // "I do not know", the number errs loose and says so.
 //
-// The /near pages, /los-angeles, the sitemap and robots.txt are deliberately
+// The /near pages, the metro pages, the sitemap and robots.txt are deliberately
 // not limited: they exist to be crawled, they are the same answer for
 // everybody, and throttling Googlebot to slow down a scraper trades the entire
 // point of those pages for nothing.
@@ -3029,6 +3030,25 @@ route('GET', '/api/public/trade-catalog', async ({ env }) => {
     200, { 'cache-control': 'public, max-age=300' });
 });
 
+/**
+ * The places Slotfill serves, so the front end renders a metro list and a
+ * metro page from data rather than from a name compiled into the bundle.
+ *
+ * Static: the record in lib/metros.ts and nothing counted. What is OPEN in a
+ * metro belongs to /api/public/map, which counts it in the request that asks,
+ * and answering it here as well would be two numbers for one question that can
+ * disagree. Every area in the payload carries its slug, which is the same key
+ * `areas[].slug` in the map payload uses, so the browser groups one against
+ * the other without a second round trip.
+ *
+ * Unauthenticated, identical for everybody, and it changes when the code
+ * changes — so it caches like the country list beside it and is not rate
+ * limited.
+ */
+route('GET', '/api/public/metros', async () => json(
+  { metros: METROS.map(publicMetro) }, 200, { 'cache-control': 'public, max-age=3600' },
+));
+
 route('GET', '/api/public/trades', async ({ env }) => {
   const rows = await env.DB.prepare(
     `SELECT DISTINCT o.trade FROM operators o
@@ -3429,9 +3449,19 @@ route('GET', '/near', async ({ env }) => html(
   await areaIndexPage(env), 200, { 'cache-control': 'public, max-age=300, s-maxage=600' },
 ));
 
-route('GET', '/los-angeles', async ({ env }) => html(
-  await metroPage(env), 200, { 'cache-control': 'public, max-age=300, s-maxage=600' },
-));
+/**
+ * One route per metro, registered from the list rather than written out.
+ *
+ * A literal '/los-angeles' route was fine while there was one metro and is the
+ * thing that would have to be copied for every place opened after this. The
+ * metro is captured per iteration, so each route serves its own page and
+ * adding a third city touches lib/metros.ts and nothing here.
+ */
+for (const metro of METROS) {
+  route('GET', metroPath(metro), async ({ env }) => html(
+    await metroPage(env, metro), 200, { 'cache-control': 'public, max-age=300, s-maxage=600' },
+  ));
+}
 
 // ---------------------------------------------------------------------------
 // The pages that are React routes AND server-rendered.
@@ -3868,7 +3898,10 @@ const WORKER_PATHS = [
   /^\/o\//,
   /^\/near\//,
   /^\/near$/,
-  /^\/los-angeles$/,
+  // One pattern per metro, built from the same list the routes above are
+  // built from. A literal /los-angeles here is what would silently hand a new
+  // metro's URL to the assets binding — the SPA shell, with a 200 on it.
+  ...METROS.map((m) => new RegExp(`^${metroPath(m).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)),
   /^\/book\//,
   /^\/webhooks\//,
   /^\/a\/stop\//,
