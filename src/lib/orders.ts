@@ -87,6 +87,25 @@ export interface PricedOrder {
   problems: OrderProblem[];
 }
 
+/**
+ * The account this order belongs to, resolved by the route before it calls in.
+ *
+ * Present on every order placed since migration 0037: the checkout confirms a
+ * mobile number with a code and hands the account down. It is optional in the
+ * TYPE and not in the product, and the distinction is worth being exact about.
+ * Whether an account is REQUIRED is decided at the door — in index.ts, where
+ * the session and the cookie live — for the same reason requireOperator is a
+ * route-level gate and not something every library function re-derives. What
+ * this type says is only that placeOrder can still be called without one, and
+ * the two callers that do are the ones that must be able to: the tests, and
+ * any future path where the customer has been identified some other way.
+ */
+export interface OrderAccount {
+  id: string;
+  /** E.164, off the account row. Never off the request body — see below. */
+  phone: string;
+}
+
 export interface PlaceOrderInput {
   items: OrderItemInput[];
   guest_name: string;
@@ -96,6 +115,16 @@ export interface PlaceOrderInput {
   postcode?: string | null;
   /** Set when they asked a question before booking, so the thread carries on. */
   thread_token?: string | null;
+  /** Set once the checkout has confirmed a mobile number. */
+  account?: OrderAccount | null;
+  /**
+   * The processor's reference to the card this order would be charged to,
+   * copied off the account at checkout.
+   *
+   * NULL IN EVERY ORDER TODAY, because Stripe is not wired and nothing exists
+   * that produces a reference. See the PAYMENT SEAM below.
+   */
+  card?: { ref: string; brand?: string | null; last4?: string | null } | null;
 }
 
 export interface PlacedOrderItem {
@@ -443,13 +472,26 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
   const { gaps } = await loadContext(env, input.items);
   const rows = priced.items.map((i) => gaps.get(i.gap_id)!);
 
-  // The phone is one number and the basket may span countries, so it is tried
-  // against each country in the order rather than assumed to be the first
-  // one's. A silently mangled number is a booking the business cannot chase.
-  let phone: string | null = null;
-  for (const c of [...new Set(rows.map((r) => r.country))]) {
-    phone = toE164(input.phone, c);
-    if (phone) break;
+  // THE NUMBER COMES OFF THE ACCOUNT, NOT OUT OF THE FORM.
+  //
+  // This is the single line that makes the no-show ladder survive accounts
+  // existing. The number is what customer_standing is keyed on, so if a
+  // signed-in customer could put any number they liked in the checkout, a
+  // suspended person would sign in, type a friend's mobile, and book — and
+  // every rung of the ladder in standing.ts would be one text box wide. Their
+  // account's number is one they have proved they own by receiving a code at
+  // it; what is typed into a form is a claim about somebody else's phone.
+  //
+  // Without an account there is nothing better than the form, and the number
+  // is tried against each country in the basket rather than assumed to be the
+  // first one's, because a silently mangled number is a booking the business
+  // cannot chase.
+  let phone: string | null = input.account?.phone ?? null;
+  if (!phone) {
+    for (const c of [...new Set(rows.map((r) => r.country))]) {
+      phone = toE164(input.phone, c);
+      if (phone) break;
+    }
   }
   if (!phone) throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
 
@@ -503,8 +545,17 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
   // the capture belongs immediately after the batch below commits — so a
   // customer is never charged for slots the batch then failed to claim.
   //
-  // Until that exists, orders.status stays 'pending': the slots are held and
-  // no money has moved, which is the honest description of this state. The
+  // WHAT IS REAL ABOUT THIS TODAY AND WHAT IS NOT. The account above is real:
+  // the number was proved with a code, and it is what the order is written
+  // against. `input.card` is the processor's reference to a card the processor
+  // holds, exactly as operators.payment_ref has been since migration 0023, and
+  // it is recorded on the order below. It is NULL in every order that exists,
+  // because Stripe is not wired and there is nothing in this product that can
+  // produce such a reference — no charge is attempted, no authorisation is
+  // held, and nothing here pretends a card was taken.
+  //
+  // Until the seam exists, orders.status stays 'pending': the slots are held
+  // and no money has moved, which is the honest description of this state. The
   // payment step is what writes 'confirmed'.
   // ---------------------------------------------------------------------
 
@@ -515,11 +566,21 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
   const phoneHash = await claimPhoneHash(env, phone);
   const writes: D1PreparedStatement[] = [
     env.DB.prepare(
-      `INSERT INTO orders (id, status, guest_name, phone_e164, email, address_line,
-         postcode, lat, lng, currency, total_cents, created_at, updated_at)
-       VALUES (?,'pending',?,?,?,?,?,?,?,?,?,?,?)`,
-    ).bind(orderId, guestName, phone, input.email ?? null, input.address_line ?? null,
-      postcode, at?.lat ?? null, at?.lng ?? null, priced.currency, priced.total_cents, t, t),
+      // The card reference is COPIED onto the order rather than read off the
+      // account when the charge eventually happens. An account's card changes;
+      // what the customer agreed to at checkout does not, and a capture that
+      // silently follows whichever card is on the account today would charge a
+      // card the person never associated with this booking. Only the
+      // processor's opaque handle is ever written — see lib/payments.ts, which
+      // refuses anything card-shaped at every D1 bind whatever this line says.
+      `INSERT INTO orders (id, status, customer_account_id, guest_name, phone_e164,
+         email, address_line, postcode, lat, lng, currency, total_cents,
+         payment_ref, payment_brand, payment_last4, created_at, updated_at)
+       VALUES (?,'pending',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(orderId, input.account?.id ?? null, guestName, phone,
+      input.email ?? null, input.address_line ?? null,
+      postcode, at?.lat ?? null, at?.lng ?? null, priced.currency, priced.total_cents,
+      input.card?.ref ?? null, input.card?.brand ?? null, input.card?.last4 ?? null, t, t),
   ];
 
   // One client row per business in the order, not one per item. Two slots at

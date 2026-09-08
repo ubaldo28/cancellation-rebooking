@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError, type Country } from '../api';
 import { useSession } from '../App';
 import Crumbs from '../components/Crumbs';
@@ -173,11 +173,26 @@ export default function SignIn() {
     <Shell>
       <form className="auth card stack" onSubmit={submit}>
         <div>
-          <h1 className="as-h2">Sign in</h1>
+          <h1 className="as-h2">Sign in to your business</h1>
           <p className="muted" style={{ marginTop: 4, marginBottom: 0 }}>
             No password. We email you a link.
           </p>
         </div>
+
+        {/*
+          THE OTHER DOOR, AT THE TOP RATHER THAN THE BOTTOM.
+          This file's own note says most people who open this page are
+          customers who took the wrong one — it was the businesses' door and
+          the only one there was. Now there are two: a business signs in with
+          an email address, a customer with a mobile number and a texted code.
+          Somebody on the wrong one has to find that out before they have typed
+          an email address into a form that will make them a business account.
+        */}
+        <p className="faint" style={{ margin: 0 }}>
+          Booked something and looking for it?{' '}
+          <Link to="/account">Your bookings are over here</Link> — it is your
+          mobile number rather than an email address.
+        </p>
 
         {error && <div className="error">{error}</div>}
 

@@ -154,8 +154,15 @@ export default function Privacy() {
             processor's own form takes them.
           </li>
           <li>
-            Customers have no account. A booking is held together by a secret
-            link, and that link is the whole of a customer's identity here.
+            A customer's account is a mobile number and nothing else — no
+            password, and no mailbox is required. Signing in is a six-digit
+            code texted to that number, and the code is stored only as a
+            one-way hash and deleted once it is used or has expired.
+          </li>
+          <li>
+            Every booking also has its own secret link. Only a fingerprint of
+            that link is stored, so nobody here is able to reissue one or hand
+            it to anybody.
           </li>
           <li>
             The two sides of a booking never see each other's phone number or
@@ -180,6 +187,17 @@ export default function Privacy() {
 
         <h3>If you book something</h3>
         <dl className="info-defs">
+          <div className="info-def">
+            <dt>Your mobile number, as the account you book against</dt>
+            <dd>
+              Booking needs an account and the number is the whole of it. The
+              six-digit code texted to it is never stored as digits — only as a
+              one-way hash, with the number mixed in, and it is deleted once it
+              has been used or has expired. A signed-in device holds a session
+              token which is stored the same way. Nothing here is a password
+              and none of it can be read back out.
+            </dd>
+          </div>
           <div className="info-def">
             <dt>Your name, phone number and email address</dt>
             <dd>
@@ -306,8 +324,9 @@ export default function Privacy() {
           </li>
           <li>
             <strong>Anybody holding your booking link.</strong> It is bearer
-            authority over that booking, by design, because there is no account
-            to sign in to.
+            authority over that booking, by design, so that a booking can be
+            opened on any phone without signing in — including one that has
+            never been signed in at all.
           </li>
           <li>
             <strong>Somebody at Slotfill reviewing a dispute.</strong> A
@@ -411,12 +430,24 @@ export default function Privacy() {
 
         <h3>If you booked something</h3>
         <p>
-          Open your booking from the link you were sent and scroll to the
-          bottom. <strong>Delete my data</strong> is there. You do not have to
+          Two doors, and the same erasure behind both. Open your booking from
+          the link you were sent and scroll to the bottom, where{' '}
+          <strong>Delete my data</strong> is; or sign in to your account with
+          the mobile number you booked on and press it there. You do not have to
           ask anybody and nobody has to approve it. Because your bookings are
           tied together by your phone number, it reaches every business you have
           booked with through this site, not just the one whose link you are
           holding.
+        </p>
+        <p>
+          <strong>Close account</strong> is the smaller request beside it, and
+          it is on the account page only. It empties the account — the mobile
+          number, the name, the email address and any stored card reference —
+          and ends every session on it, and it leaves the bookings and the
+          conversations alone: an order is a record of something that happened
+          between two people, and one of them does not delete it on their own.
+          A live suspension survives it, for the same reason it survives an
+          erasure.
         </p>
         <p>What that removes:</p>
         <ul className="info-list">

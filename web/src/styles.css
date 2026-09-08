@@ -302,6 +302,12 @@ textarea { min-height: 90px; resize: vertical; }
   border-radius: 10px; padding: 12px 14px; font-size: 14px;
 }
 .notice { background: var(--accent-soft); border-radius: 10px; padding: 14px; font-size: 13px; line-height: 1.45; }
+/* A notice is a paragraph, so a link inside one is a link in a text block and
+   colour alone cannot carry it — --accent-ink against the body ink is 1.78:1,
+   against the 3:1 WCAG 1.4.1 asks for. The long note in styles-info.css is the
+   full reasoning; this is the same rule for the one notice that has a link in
+   it, the "keep this link" box on a customer's own booking. */
+.notice a { text-decoration: underline; text-underline-offset: 0.12em; }
 .sms {
   font-size: 12.5px; line-height: 1.5; color: var(--muted);
   background: #faf8f6; border-radius: 8px; padding: 10px 12px; white-space: pre-line;

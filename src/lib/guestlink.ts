@@ -8,8 +8,9 @@ import { notFound, now } from './util';
  *
  * /c/:token is bearer authority over a whole booking -- the address, the
  * conversation, the photographs taken inside somebody's house, the code that
- * gets a stranger through their front door -- held by a person with no account
- * and no password. The token is hashed in the database, which is right, and
+ * gets a stranger through their front door -- held by whoever has the link,
+ * with no sign-in and no password asked for. The token is hashed in the
+ * database, which is right, and
  * until now it was also the entire defence: nothing counted a caller who tried
  * one token, then another, then another.
  *

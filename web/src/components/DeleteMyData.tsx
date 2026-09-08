@@ -5,11 +5,15 @@ import ConfirmDestructive from './ConfirmDestructive';
 /**
  * "Delete my data", on the customer's own page.
  *
- * The link in the address bar is the whole of a customer's identity here —
- * there is no account and no password to re-enter — so the link is also the
- * authority for this. That is not a weak one for the purpose: whoever holds it
- * can already read the booking, the address, the conversation and the
- * photographs that this removes.
+ * The link in the address bar is the authority for this and no sign-in is
+ * asked for on top of it. That is not a weak authority for the purpose:
+ * whoever holds the link can already read the booking, the address, the
+ * conversation and the photographs that this removes.
+ *
+ * Account.tsx carries the same request behind a signed-in session and the two
+ * run the same function on the server — see api.eraseCustomerAccount. Two
+ * doors, one implementation, because a customer who erases through one and
+ * finds the other went further has not been erased.
  *
  * WHAT THE COPY IS ALLOWED TO SAY. Only what eraseCustomerByToken in
  * src/lib/retention.ts actually does, in the order it does it. Three

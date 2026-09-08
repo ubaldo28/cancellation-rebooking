@@ -184,7 +184,13 @@ describe('the trade page', () => {
     expect(types).toContain('BreadcrumbList');
     expect(types).toContain('FAQPage');
     const faq = graph.find((n: any) => n['@type'] === 'FAQPage');
-    expect(faq.mainEntity).toHaveLength(6);
+    // Seven since the model was corrected. "Do I need an account?" leads,
+    // because it is the first thing a stranger has to know before they start
+    // filling anything in, and this page spent its whole existence answering
+    // it wrongly by implication.
+    expect(faq.mainEntity).toHaveLength(7);
+    expect(faq.mainEntity[0].name).toBe('Do I need an account?');
+    expect(faq.mainEntity[0].acceptedAnswer.text).toContain('Booking needs an account');
     // Every answer in the markup is on the page itself.
     for (const q of faq.mainEntity) expect(page!).toContain(escapeish(q.name));
   });

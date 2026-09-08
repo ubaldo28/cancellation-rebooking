@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import Crumbs from '../components/Crumbs';
-import PaymentState, { PAY_TODAY_SHORT } from '../components/PaymentState';
+import PaymentState, { AccountState, PAY_TODAY_SHORT } from '../components/PaymentState';
 import PublicPage from '../components/PublicPage';
 import { useDocumentTitle } from '../lib/title';
 import '../styles-info.css';
@@ -49,10 +49,33 @@ const CUSTOMER: QA[] = [
   {
     q: 'Do I need an account?',
     a: <>
-      No, and there is not one to create. Your booking lives behind a secret
-      link that is emailed to you, and that link is how you open the
-      conversation, see the start code, watch for the van and manage the
-      booking. Keep it: anybody who has it can see all of that.
+      To book, yes. To look, no. Nothing here asks who you are until you press
+      Book, and at that moment you give a mobile number and type the six digits
+      we text back. That is the whole of it: no password, no mailbox and
+      nothing to remember. The account is made in the same press that books the
+      appointment, so it is not a screen standing in front of one. A card is
+      needed as well once paying on the site is switched on, which it is not,
+      so nobody is asked for one today.
+    </>,
+  },
+  {
+    q: 'I have booked before. How do I get back to it?',
+    a: <>
+      Either the link in your confirmation, which opens that booking on any
+      phone whether or not you are signed in, or{' '}
+      <Link to="/account">your account</Link>, where the same mobile number
+      lists every booking you have made — including the ones from before there
+      was an account. The link is the only route to the conversation, the start
+      code and the van, so it is still the one to keep.
+    </>,
+  },
+  {
+    q: 'I lost the link to my booking.',
+    a: <>
+      Sign in at <Link to="/account">your account</Link> with the number you
+      booked on and the booking is listed there. The link itself cannot be sent
+      again — only a fingerprint of it is stored, on purpose, so that nobody
+      here is able to hand anybody a way into your conversation.
     </>,
   },
   {
@@ -149,10 +172,15 @@ const CUSTOMER: QA[] = [
   {
     q: 'How do I delete my data?',
     a: <>
-      Open your booking from the link you were sent, scroll to the bottom, and
-      press <strong>Delete my data</strong>. You do not have to ask anybody. It
-      reaches every business you have booked with using that phone number, not
-      just the one whose link you are holding, and there is no undo.{' '}
+      Two doors onto the same thing, and both run the same code. Open your
+      booking from the link you were sent, scroll to the bottom, and press{' '}
+      <strong>Delete my data</strong>; or sign in at{' '}
+      <Link to="/account">your account</Link> and press it there, which also
+      offers <strong>Close this account</strong> — that one empties the account
+      and leaves the bookings, which is a smaller request. You do not have to
+      ask anybody. Deleting reaches every business you have booked with using
+      that phone number, not just the one whose link you are holding, and there
+      is no undo.{' '}
       <Link to="/privacy">Privacy</Link> lists exactly what goes, what is
       emptied and what is kept.
     </>,
@@ -345,9 +373,14 @@ export default function Help() {
           audiences need different halves of the same fact: a customer wants to
           know what pressing Book does to their card, and a business wants to
           know whether a booking arrives paid. Both are the answer to several of
-          the questions underneath them, which is why neither is a question. */}
+          the questions underneath them, which is why neither is a question.
+
+          The customer's half carries a second one for the same reason: what
+          booking asks of them. That answers as many of the questions below as
+          the payment fact does, and this page used to get it exactly backwards
+          — "Do I need an account? No, and there is not one to create". */}
       <Group id="h-customers" title="Booking something" items={CUSTOMER}
-        intro={<PaymentState />} />
+        intro={<><PaymentState /><AccountState /></>} />
       <Group id="h-business" title="Listing a business" items={BUSINESS}
         intro={<PaymentState audience="pro" />} />
 

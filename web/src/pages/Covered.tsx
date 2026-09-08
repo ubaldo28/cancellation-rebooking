@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import Crumbs from '../components/Crumbs';
-import PaymentState from '../components/PaymentState';
+import PaymentState, { AccountState } from '../components/PaymentState';
 import PublicPage from '../components/PublicPage';
 import { useDocumentTitle } from '../lib/title';
 import '../styles-info.css';
@@ -99,6 +99,12 @@ export default function Covered() {
           hands and none of it does yet. A reader who meets the mechanism first
           and the caveat second has already formed the wrong picture. */}
       <PaymentState />
+
+      {/* And what booking asks of the reader, beside what it costs them. This
+          page described a cancellation ladder in detail while never mentioning
+          that booking needs an account at all, which is a strange thing for the
+          page somebody reads to find out what they are getting into. */}
+      <AccountState />
 
       <section className="info-sec first" aria-labelledby="c-money">
         <h2 id="c-money">How the money is meant to work</h2>

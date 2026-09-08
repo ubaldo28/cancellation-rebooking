@@ -17,10 +17,11 @@ import {
  * slot. Most people are not looking, so the opening expires, the operator eats
  * the empty hour, and the customer who would have taken it never knew.
  *
- * A watch is the push half. It has no account behind it, for the same reason
- * the chat threads do not (migration 0011): asking a stranger to pick a
- * password before they can say "I want detailing near 91403" loses the
- * request. Their identity is the secret in their link and nothing else.
+ * A watch is the push half. It asks for no account, for the same reason the
+ * chat threads do not: making somebody prove a phone number before they can
+ * say "I want detailing near 91403" loses the request, and unlike a booking
+ * there is no money and no appointment on the other side of it. Their identity
+ * is the secret in their link and nothing else.
  *
  * The alert travels over two channels, and a watch needs at least one of them.
  * Web Push is the default: free, revocable in one tap, no identifier to leak.

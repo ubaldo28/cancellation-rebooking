@@ -19,12 +19,21 @@ const POLL_MS = 15_000;
 /**
  * The customer's side of the conversation, at /c/:token.
  *
- * There is no account here and there never will be: the token in the address
- * bar is the whole identity. That makes this page the customer's entire
+ * NOTHING ON THIS PAGE NEEDS AN ACCOUNT AND NOTHING ON IT EVER WILL: the token
+ * in the address bar is the whole authority, and it works on a phone that has
+ * never been signed in. That is what makes this page the customer's entire
  * relationship with the business — the confirmation of what they booked, the
  * way back to it, and the only channel to ask a question. It has to say all
  * three plainly, because nobody is going to be sent an email or a text to
  * make up for it.
+ *
+ * WHAT CHANGED WHEN THE ACCOUNT ARRIVED is only what the "keep this link"
+ * notice is able to promise. Booking now creates an account against the mobile
+ * number, so somebody who loses this link is no longer left with nothing —
+ * /account lists their bookings. It cannot give them THIS link back, because
+ * only a fingerprint of it is stored and that is deliberate, so the
+ * conversation, the start code and the van still live behind the link and
+ * nowhere else. The notice says both halves rather than either one.
  */
 export default function GuestThread() {
   const { token } = useParams<{ token: string }>();
@@ -342,10 +351,18 @@ export default function GuestThread() {
               )}
 
               <div className="notice keeper">
-                <strong>Keep this link.</strong> It is how you get back to this
-                conversation{booking ? ' and to your booking' : ''}. There is no
-                account and no password, so this page is the only way in.
-                Bookmark it now, or save the address somewhere you will find it.
+                <strong>Keep this link.</strong> It opens this conversation
+                {booking ? ' and your booking' : ''} on any phone, signed in or
+                not, and it is the only way to this conversation. Bookmark it
+                now, or save the address somewhere you will find it.
+                {booking && (
+                  <>
+                    {' '}If you lose it, your bookings are still listed at{' '}
+                    <Link to="/account">your account</Link> against the mobile
+                    number you booked on — but this link cannot be sent again,
+                    because only a fingerprint of it is kept.
+                  </>
+                )}
               </div>
 
               {thread.status === 'closed' && (

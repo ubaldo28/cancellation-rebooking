@@ -6,7 +6,8 @@ import type { Env } from '../src/types';
 import { claimSlot, slotsNear } from '../src/lib/public';
 import { getPublicProfile } from '../src/lib/profile';
 import {
-  PAY_TODAY_SHORT, browseIndexPage, costGuidePage, costIndexPage, metroPage, tradePage,
+  ACCOUNT_TODAY_SHORT, PAY_TODAY_SHORT,
+  browseIndexPage, costGuidePage, costIndexPage, metroPage, tradePage,
 } from '../src/lib/seo';
 import { metroBySlug } from '../src/lib/metros';
 import { newId, now } from '../src/lib/util';
@@ -379,16 +380,17 @@ describe('the cost guide’s FAQ markup', () => {
   // question below -- is "Car wash and detailing".
   const DETAILING = 'mobile car wash and detailing';
 
-  it('emits a FAQPage with the six answers the React page carries', async () => {
+  it('emits a FAQPage with the answers the React page carries', async () => {
     const page = (await costGuidePage(env, DETAILING))!;
     const faq = graphOf(page)['@graph'].find((n: any) => n['@type'] === 'FAQPage');
 
     expect(faq).toBeTruthy();
-    expect(faq.mainEntity).toHaveLength(6);
+    expect(faq.mainEntity).toHaveLength(7);
     // Word for word from web/src/pages/CostGuide.tsx. These are the strings a
     // search engine may quote, so a paraphrase here would pass the test while
     // publishing an answer the page does not contain.
     expect(faq.mainEntity.map((q: any) => q.name)).toEqual([
+      'Do I need an account?',
       'Are these average prices for car wash and detailing?',
       'Who sets these prices?',
       'Does the price include parts?',
@@ -396,12 +398,22 @@ describe('the cost guide’s FAQ markup', () => {
       'Why is the same job listed at two different prices?',
       'What does it cost to cancel?',
     ]);
+    // The account answer, which this page did not carry at all until the model
+    // was corrected. Every page in this module was written on "no account is
+    // ever required, here or later", which was never true: an account is
+    // needed to book, a card will be too once payment is switched on, and what
+    // is actually true is only that neither is asked for before somebody has
+    // decided to buy something. Both halves have to be in the same answer or
+    // it is a half-truth with better manners.
+    expect(faq.mainEntity[0].acceptedAnswer.text).toBe(ACCOUNT_TODAY_SHORT);
+    expect(ACCOUNT_TODAY_SHORT).toContain('Booking needs an account');
+    expect(ACCOUNT_TODAY_SHORT).toContain('not yet');
     // The payment seam is not built, so the answer says so first and calls the
     // rest a design. It used to say "You pay for the labour when you book,
     // here on the site", which was a claim about money the Worker has never
     // been able to move -- and it was the version a crawler indexed, because
     // the React page rendering this same URL had already been corrected.
-    expect(faq.mainEntity[3].acceptedAnswer.text).toBe(
+    expect(faq.mainEntity[4].acceptedAnswer.text).toBe(
       `${PAY_TODAY_SHORT} The design is that the labour is paid for here, `
       + 'on the site, at the moment you book, with no cash and nothing paid '
       + 'at the door — but that part is not built yet.');

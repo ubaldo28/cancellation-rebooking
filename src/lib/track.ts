@@ -392,9 +392,10 @@ export type CustomerView =
 /**
  * What a customer holding a chat link may see, which is deliberately very little.
  *
- * The customer has no account -- their identity is the secret in their link,
- * exactly as in migration 0011 -- so this is authorised by the thread token and
- * nothing else, and the thread's own operator_id scopes every query below. A
+ * The identity here is the secret in the link and nothing else -- a customer
+ * with an account is not required to be signed in to watch a van arrive at
+ * their own house -- so this is authorised by the thread token, and the
+ * thread's own operator_id scopes every query below. A
  * customer of one business cannot reach another business's van: there is no
  * parameter here that could name one.
  *

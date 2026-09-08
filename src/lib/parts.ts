@@ -190,8 +190,10 @@ interface ScopeItem {
 /**
  * Everything the holder of this guest link is allowed to see and answer.
  *
- * The customer has no account; the secret in their link is their identity, the
- * same as everywhere else here. That link points at a thread, the thread
+ * The secret in the link is the identity here, the same as on every other
+ * guest route: approving a part is answering a question about a booking you
+ * already have, and that never asks for a sign-in. That link points at a
+ * thread, the thread
  * points at one appointment, and that appointment is one item in an order —
  * so the scope is every item in THAT order belonging to THAT thread's
  * operator. Scoping to the single appointment instead would look right and

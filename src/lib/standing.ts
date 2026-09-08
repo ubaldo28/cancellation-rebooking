@@ -95,12 +95,21 @@ export async function operatorStanding(env: Env, operatorId: string): Promise<St
 /**
  * A customer's standing, by phone number.
  *
- * The number is the only durable identity a customer has here, and that is a
- * real limitation worth being straight about: a new SIM is a clean record.
- * It is still worth doing, because what this deters is casual — somebody who
- * books three slots to see which suits and never cancels the other two — and
- * the alternative, making everyone create an account so they can be tracked,
- * costs far more bookings than no-shows ever will.
+ * KEYED ON THE NUMBER, WHICH IS NOW ALSO THE ACCOUNT. Migration 0023 chose
+ * this column while explaining that a customer had no account and never would,
+ * and reasoned that the limitation was acceptable because a new SIM being a
+ * clean record still deters the casual case. The model has since been
+ * corrected — migration 0037 — and the choice turns out to have been the right
+ * one for a better reason than the one given: an account IS a verified mobile
+ * number, so an account and a standing row are the same subject, keyed on the
+ * same value, and there is no second identity for a suspension to fall
+ * between. Signing up again after a suspension produces the same row, still
+ * suspended; closing the account or erasing it leaves a live sanction in
+ * place; and a code sent to the number is what proves somebody owns it, so a
+ * suspended person cannot simply type a different one.
+ *
+ * The old limitation is genuinely narrower now rather than gone: a new SIM is
+ * still a clean record, and it costs whoever wants one a new SIM.
  */
 export async function customerStanding(env: Env, phone: string): Promise<Standing> {
   const row = await env.DB.prepare(

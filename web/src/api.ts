@@ -739,6 +739,134 @@ export interface ErasureResult {
   standing_retained: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// The customer's account
+//
+// A mobile number, proved by a six-digit code sent to it in a text message. No
+// password and no mailbox: the account is created at the confirm step of the
+// checkout, in the same action that would take the card.
+//
+// THE MODEL THIS REPLACES WAS WRONG, and a good deal of this bundle still says
+// so — "No account. No app. No card." on the hero, "no account is ever
+// required, here or later" in the FAQs and on /covered and /help. A customer
+// needs an account and a card to book; what is true is only that neither is
+// asked for until they have decided to buy something. `bookingState()` below
+// is the server's own statement of what this deployment requires today, and a
+// page should read it rather than carry its own copy of the answer — a
+// hard-coded "no account needed" in a bundle is exactly how the site came to
+// claim a thing that was never the model.
+//
+// THE GUEST LINK IS UNAFFECTED. /c/:token opens a booking on a phone that has
+// never been signed in, and none of these calls is needed to read, message,
+// cancel or erase through it.
+// ---------------------------------------------------------------------------
+
+/**
+ * The account as the Worker describes it.
+ *
+ * The processor's card reference is deliberately not here and never will be:
+ * no screen shows it, and putting it in a response body only means a copy in
+ * every browser cache and every error report. `has_card`, the brand and the
+ * last four are what a person needs to recognise their own card.
+ */
+export interface CustomerAccount {
+  id: string;
+  /** E.164. Null only on an account that has been closed or erased. */
+  phone_e164: string | null;
+  first_name: string | null;
+  email: string | null;
+  has_card: boolean;
+  payment_brand: string | null;
+  payment_last4: string | null;
+  payment_added_at: number | null;
+  created_at: number;
+}
+
+/** What came back from asking for a code. The code itself never appears here. */
+export interface CodeSent {
+  ok: true;
+  /** Seconds the code lasts, so a page can count down without its own constant. */
+  expires_in: number;
+}
+
+/** What came back from typing the code in. The session cookie is set by the Worker. */
+export interface CustomerSignedIn {
+  account: CustomerAccount;
+  /** True when this call created the account rather than finding an existing one. */
+  created: boolean;
+  /** Bookings made before there was an account, now attached to it. */
+  claimed: { orders: number };
+  /**
+   * Their standing, given at sign-in rather than discovered at checkout.
+   *
+   * A suspended customer can still sign in, read their bookings and message a
+   * business; only booking is refused. Telling them here means they do not
+   * find out after filling a basket in.
+   */
+  standing: Standing;
+  /** What the card is for, written on the server so the two cannot drift. */
+  card_note: string;
+}
+
+/** One booking of this customer's, at one business. */
+export interface CustomerBooking {
+  order_id: string;
+  status: string;
+  currency: string;
+  total_cents: number;
+  created_at: number;
+  payment_brand: string | null;
+  payment_last4: string | null;
+  order_item_id: string;
+  operator_id: string;
+  starts_at: number;
+  ends_at: number;
+  price_cents: number;
+  parts_cents: number;
+  cancelled_at: number | null;
+  cancelled_by: string | null;
+  arrived_at: number | null;
+  settlement: string;
+  refund_cents: number | null;
+  /** The four digits read out on the doorstep. */
+  start_code: string | null;
+  business_name: string | null;
+  profile_slug: string | null;
+  trade: string | null;
+}
+
+/**
+ * What booking actually requires on this deployment, said by the server.
+ *
+ * Not a constant, which is the whole reason it is a request. Whether a card is
+ * needed depends on a Worker secret, and whether an account can be created at
+ * all depends on whether a text message can be delivered — neither of which a
+ * bundle can know, and both of which a page has to state correctly or it is
+ * lying to somebody about to spend money.
+ */
+export interface BookingState {
+  /** True since the model was corrected. Booking is what needs one. */
+  account_required: boolean;
+  /** Reading a booking you already have never needs one. */
+  guest_link_works: boolean;
+  /**
+   * False on every deployment today: no text-message provider is configured,
+   * so no account can be created and nothing can be booked. That is a refusal
+   * rather than a fallback — the code endpoint answers 503 — so a page that
+   * reads this can say so up front instead of letting somebody fill a basket
+   * in first.
+   */
+  sms_ready: boolean;
+  /** False everywhere today. No money moves through this product yet. */
+  payments_live: boolean;
+  /** A card is asked for at checkout only once payment is switched on. */
+  card_required: boolean;
+  account_note: string;
+  card_note: string;
+  /** The sentence explaining the refusal, or null when texts can be sent. */
+  sms_note: string | null;
+}
+
 export const api = {
   // --- parts ---------------------------------------------------------------
   quotableBookings: () => get<{ bookings: QuotableBooking[] }>('/api/parts/bookings'),
@@ -874,6 +1002,118 @@ export const api = {
     post<{ id: string }>(
       `/api/public/threads/${encodeURIComponent(token)}/no-show/${orderItemId}`, { note }),
 
+  // --- the customer's account ----------------------------------------------
+  /**
+   * What booking requires here, today. Cheap, uncached, and worth calling
+   * before a checkout renders: it is what lets a page say "bookings are not
+   * open yet" instead of showing a form whose first request answers 503.
+   */
+  bookingState: () => get<BookingState>('/api/public/booking-state'),
+
+  /**
+   * Step one: text a six-digit code to a mobile number.
+   *
+   * The answer is deliberately identical whether or not that number already
+   * has an account, so nothing here can be used to ask whether somebody's
+   * mobile has booked before. Two refusals are worth handling by name.
+   * 503 `sms_not_configured` means no text can be sent on this deployment and
+   * therefore nothing can be booked — say so, do not retry. 429 means too many
+   * texts have been aimed at that number lately; the message carries the wait.
+   *
+   * `country` picks how a national number is read and defaults to US on the
+   * server. `language` decides which language the message is written in.
+   */
+  requestCustomerCode: (b: {
+    phone: string; country?: string; language?: string;
+    /** See placeOrder. This route is challenged: each call sends a real text. */
+    turnstile_token?: string;
+  }) => post<CodeSent>('/api/customer/auth/code', b),
+
+  /**
+   * Step two: the six digits. Creates the account if the number has none, and
+   * signs this device in for a year.
+   *
+   * A wrong, expired, used or never-sent code all answer 400 `bad_code` with
+   * one sentence, on purpose — there is no way to tell them apart, because a
+   * caller who could would have an oracle. Five wrong guesses kill the code
+   * and the remedy is to ask for another.
+   */
+  verifyCustomerCode: (b: {
+    phone: string; code: string; country?: string;
+    first_name?: string; email?: string;
+  }) => post<CustomerSignedIn>('/api/customer/auth/verify', b),
+
+  customerMe: () => get<{
+    account: CustomerAccount; standing: Standing;
+    payments_live: boolean; card_note: string;
+  }>('/api/customer/me'),
+
+  customerLogout: () => post<{ ok: true }>('/api/customer/logout'),
+
+  /**
+   * Every booking this account has, at every business, including the ones made
+   * before the account existed — those are attached to it the first time the
+   * same number is verified.
+   *
+   * The `/c/:token` link is not in this payload and cannot be: only its hash
+   * is stored. An account reaches its bookings by id instead.
+   */
+  customerBookings: () => get<{ bookings: CustomerBooking[] }>('/api/customer/bookings'),
+
+  /**
+   * The customer's card, in the only form this codebase ever holds one.
+   *
+   * NO CARD NUMBER PASSES THROUGH HERE. The processor's own form takes the
+   * details in the browser and hands back an opaque reference; that reference
+   * is all `saveCustomerCard` sends, and the Worker refuses anything shaped
+   * like a card number outright. Nothing produces such a reference today —
+   * Stripe is not wired — so this is the seam and not a working card step.
+   */
+  customerCard: () => get<{
+    card: { payment_brand: string | null; payment_last4: string | null;
+      payment_added_at: number | null } | null;
+    payments_live: boolean; note: string;
+  }>('/api/customer/payment-method'),
+  saveCustomerCard: (b: { ref: string; brand?: string; last4?: string }) =>
+    post<{ ok: true }>('/api/customer/payment-method', b),
+
+  /**
+   * Closing the account: the number, name, mailbox and card reference are
+   * emptied and every session dies. The bookings stay — an order is a record
+   * between two people. A live suspension is not cleared by this, and signing
+   * up again with the same number lands back on it.
+   */
+  closeCustomerAccount: () =>
+    post<{ closed: true; sessions_revoked: number }>('/api/customer/close'),
+
+  /**
+   * "Delete everything you hold about me", from the account.
+   *
+   * The same erasure `eraseMyData` performs from a guest link, running the
+   * same code on the server. Not reversible, no grace period: put a
+   * confirmation in front of it.
+   */
+  eraseCustomerAccount: () => del<ErasureResult>('/api/customer/data'),
+
+  /**
+   * Ring a business that is working right now.
+   *
+   * NEEDS AN ACCOUNT, the same as a checkout does, because an accepted request
+   * becomes a real appointment at an agreed price. Either this device is
+   * already signed in, or `phone` and `code` are sent and the account is
+   * created here. Without either it answers 401 `account_required`.
+   */
+  requestNow: (b: {
+    operator_id: string; service_id?: string; guest_name?: string;
+    address_line?: string; postcode?: string; note?: string;
+    duration_seconds?: number; price_cents?: number;
+    /** Only when this device is not signed in yet. */
+    phone?: string; code?: string; country?: string;
+    /** See placeOrder. This form rings somebody's phone, so it is challenged. */
+    turnstile_token?: string;
+  }) => post<{ token: string; link?: string; request?: Record<string, unknown> }>(
+    '/api/public/online/requests', b),
+
   countries: () => get<{ countries: Country[] }>('/api/countries'),
 
   /**
@@ -964,10 +1204,42 @@ export const api = {
     get<GapServices>(`/api/public/gaps/${encodeURIComponent(gapId)}/services`),
   priceOrder: (items: Array<{ gap_id: string; service_ids: string[] }>) =>
     post<PricedOrder>('/api/public/orders/price', { items }),
+  /**
+   * Confirm the basket. THIS IS ALSO WHERE THE ACCOUNT IS MADE.
+   *
+   * Pricing needs nobody signed in and never will; confirming does, because
+   * this is the moment somebody has decided to buy. Two ways to satisfy it and
+   * no third:
+   *
+   *   already signed in   send nothing extra. The number on the order is taken
+   *                       off the account, not out of `phone` — which is what
+   *                       stops a suspended customer booking under somebody
+   *                       else's mobile, so do not expect `phone` to be
+   *                       honoured for a signed-in caller.
+   *   signing up here     send `phone` and the `code` that was texted to it by
+   *                       `requestCustomerCode`. The account is created, the
+   *                       session cookie is set on this response, and the
+   *                       order is placed in the same request.
+   *
+   * Neither: 401 `account_required`, whose message is the sentence to show.
+   *
+   * `card_ref` is the processor's reference to a card, never a card number —
+   * see `saveCustomerCard`. Nothing produces one today, and while payment is
+   * switched off none is asked for. Once it is on, a checkout with no card on
+   * the account and no `card_ref` answers 402 `card_required`.
+   */
   placeOrder: (b: {
     items: Array<{ gap_id: string; service_ids: string[] }>;
     guest_name: string; phone: string; email?: string;
     address_line?: string; postcode?: string; thread_token?: string;
+    /** The six digits, when this device is not signed in yet. */
+    code?: string;
+    /** How to read a national `phone`. Defaults to US on the server. */
+    country?: string;
+    /** A processor reference. NEVER a card number — the Worker refuses those. */
+    card_ref?: string;
+    card_brand?: string;
+    card_last4?: string;
     /**
      * A solved Turnstile challenge, when there was one to solve.
      *
@@ -982,6 +1254,8 @@ export const api = {
     order_id: string; status: string; currency: string;
     total_cents: number; total: string;
     thread_token: string; link: string;
+    /** The account this order was placed against, created here or found. */
+    account: CustomerAccount;
   }>('/api/public/orders', b),
 
   credentials: () =>

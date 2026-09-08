@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import Crumbs from '../components/Crumbs';
 import PaymentState from '../components/PaymentState';
 import PublicPage from '../components/PublicPage';
+import { useBookingState } from '../lib/customer';
 import { useDocumentTitle } from '../lib/title';
 import '../styles-info.css';
 
@@ -42,6 +43,13 @@ import '../styles-info.css';
 
 export default function ForPros() {
   useDocumentTitle('How Slotfill works for pros');
+  /**
+   * Whether a customer can actually complete a booking on this deployment.
+   * Read from the Worker, because it turns on a secret this bundle cannot see
+   * — and because a business deciding whether to list is entitled to the real
+   * answer rather than one written down months ago.
+   */
+  const bookingState = useBookingState();
 
   return (
     <PublicPage className="info-page">
@@ -72,6 +80,33 @@ export default function ForPros() {
           works the same way. Somebody books the slot and it lands in your
           diary.
         </p>
+        {/* What the other side of the transaction goes through, said on the
+            page where a business decides whether to list. It matters to that
+            decision in both directions: a customer confirming a number is
+            friction on your listing, and it is also the thing that makes the
+            no-show ladder mean anything. */}
+        <p>
+          Taking one means an account on the customer's side: they give a mobile
+          number and type the six digits texted back to it, in the same press
+          that books the appointment. There is no sign-up screen standing in
+          front of your listing and nobody is asked to make an account to look
+          at it. That number is also what a no-show is recorded against, which
+          is what makes the ladder further down follow a person rather than a
+          browser.
+        </p>
+        {/* And the honest state of it, which a business deciding this week is
+            entitled to before they spend an evening on the five screens. The
+            sentence is the Worker's own rather than written here: whether a
+            text can be sent depends on a Worker secret, and a page carrying its
+            own answer to that would be guessing about whether anybody can book
+            what it is inviting somebody to list. */}
+        {bookingState && !bookingState.sms_ready && bookingState.sms_note && (
+          <p className="note">
+            <strong>And none of it can happen yet.</strong>{' '}
+            {bookingState.sms_note} Your listings, your prices and your diary
+            all work; the last step, somebody taking one, does not.
+          </p>
+        )}
       </section>
 
       {/* --- what you control --------------------------------------------- */}

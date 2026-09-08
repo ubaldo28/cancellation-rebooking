@@ -393,10 +393,12 @@ const coord = (v: unknown): number | null => {
  * never become anything, and a table of half-bookings from people who moved on
  * is a table every later query has to be taught to ignore.
  *
- * The customer has no account, so the raw token returned here is their only
- * way back to the answer. It is returned ONCE, to the caller, and only its
- * hash is stored -- the same rule as every other guest secret in this
- * codebase, so a leaked database hands out no working links.
+ * This route asks for no sign-in, so the raw token returned here is the
+ * caller's only way back to the answer. It is returned ONCE, to the caller,
+ * and only its hash is stored -- the same rule as every other guest secret in
+ * this codebase, so a leaked database hands out no working links. Making the
+ * request itself does need an account, since an accepted one becomes a real
+ * appointment; the link is how the answer is read, not how it is authorised.
  */
 export async function createInstantRequest(
   env: Env, input: CreateInstantRequestInput,

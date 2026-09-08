@@ -35,6 +35,7 @@ import Privacy from './pages/Privacy';
 import Help from './pages/Help';
 import PublicProfile from './pages/PublicProfile';
 import SignIn from './pages/SignIn';
+import Account from './pages/Account';
 import Today from './pages/Today';
 import FillSlot from './pages/FillSlot';
 import Schedule from './pages/Schedule';
@@ -255,6 +256,12 @@ export default function App() {
           <Route path="/a/:token" element={<Watch />} />
           <Route path="/signin" element={<SignIn />} />
           <Route path="/auth/verify" element={<SignIn />} />
+          {/* The customer's own door, and a different one from /signin above:
+              a business signs in with an email address and a link, a customer
+              with a mobile number and a code texted to it. Signed out this is
+              that sign-in; signed in it is their bookings, their card and the
+              two ways of getting rid of the account. */}
+          <Route path="/account" element={<Account />} />
           <Route path="/app" element={<Protected><Today /></Protected>} />
           <Route path="/app/gaps/:gapId" element={<Protected><FillSlot /></Protected>} />
           <Route path="/app/schedule" element={<Protected><Schedule /></Protected>} />

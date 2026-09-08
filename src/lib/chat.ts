@@ -9,11 +9,19 @@ import { badRequest, conflict, newId, newToken, notFound, now } from './util';
  * In-app messages between a customer and a business.
  *
  * The requirement is "no number exchange, no sms": the two sides talk here or
- * not at all. The customer has no account -- their identity is the secret in
- * the link they were given -- so everything a guest does is authorised by that
- * token and nothing else, and everything an operator does is scoped by
- * operator_id in the WHERE clause, the same as everywhere else in this
- * codebase.
+ * not at all. A guest's identity here is the secret in the link they were
+ * given, so everything a guest does is authorised by that token and nothing
+ * else, and everything an operator does is scoped by operator_id in the WHERE
+ * clause, the same as everywhere else in this codebase.
+ *
+ * CUSTOMERS DO HAVE ACCOUNTS SINCE MIGRATION 0037, and nothing in this file
+ * asks for one. That is deliberate rather than an oversight, and it is the
+ * point of /c/:token: the link opens the conversation on a phone that has
+ * never been signed in, which is how somebody reads a message from the
+ * business while standing in their own driveway. Booking needs an account;
+ * reading and answering a booking you already have does not, and putting a
+ * sign-in in front of this would take the product's one genuinely
+ * frictionless surface away for nothing.
  */
 
 /** One conversation. */
@@ -87,10 +95,11 @@ const MAX_SUBJECT_CHARS = 140;
 /**
  * The guest rate limit: at most 20 messages from one thread in five minutes.
  *
- * The guest endpoint has no account behind it -- a token is enough to post --
- * so without this it is a free relay for anyone who scrapes one link. The
- * limit is per thread rather than per IP because the token is the only
- * identity we actually have.
+ * The guest endpoint asks for no sign-in -- a token is enough to post -- so
+ * without this it is a free relay for anyone who scrapes one link. The limit
+ * is per thread rather than per IP because the token is the only identity this
+ * endpoint has: a customer with an account is not required to be signed in
+ * here and usually will not be.
  */
 const GUEST_WINDOW_SECONDS = 300;
 const GUEST_MAX_IN_WINDOW = 20;

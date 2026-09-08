@@ -52,12 +52,21 @@ const STEPS = [
     // Paying here is the design and is not built — see PaymentState.tsx — and
     // this step is the front page's own description of what the Book button
     // does, so it is the step that would have been caught out first.
-    title: 'Book it in one step',
+    //
+    // It also said no card was asked for and left the account out entirely,
+    // which was the front page repeating the site's central mistake in the one
+    // place a stranger reads before deciding whether to start. Booking needs
+    // an account; the honest thing is that making one is the same press as
+    // booking, which is what this step now describes.
+    title: 'Book it in the same press you sign up in',
     body:
-      'Take the opening and say what the job is. The time is yours from that '
-      + 'moment — there is nothing to confirm and nobody to chase. Nothing is '
-      + 'paid on the site yet, so no card is asked for and you settle the '
-      + 'listed price with the business directly.',
+      'Take the opening and say what the job is. Making an account is part of '
+      + 'that press and not a screen before it: you give a mobile number, type '
+      + 'the six digits we text back, and the time is yours from that moment. '
+      + 'No password, and nothing to confirm afterwards. A card is what you '
+      + 'will pay with once paying on the site is switched on; until then '
+      + 'nobody is asked for one and you settle the listed price with the '
+      + 'business directly.',
   },
   {
     title: 'They turn up, you approve anything extra',

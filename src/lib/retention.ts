@@ -18,7 +18,9 @@ import { badRequest, newId, notFound, now, sha256 } from './util';
  *
  *   ERASURE      a customer asks for their personal data to be removed. Real
  *                deletion of the personal parts, immediately, on their say-so,
- *                proved by the secret link that is their only identity here.
+ *                proved either by the secret link in their confirmation or by
+ *                the account that link's booking now belongs to. Both doors
+ *                run the same code and remove the same rows.
  *   CLOSURE      an operator closes their account. The personal columns on
  *                their row are emptied and their customers' data goes with
  *                them; the settled financial records stay, describing a
@@ -404,13 +406,20 @@ async function sanctioned(env: Env, phone: string): Promise<boolean> {
 }
 
 /**
- * Erases a customer, proved by the secret link that is their only identity.
+ * Erases a customer, proved by the secret link in their confirmation.
  *
- * The customer has no account — migration 0011 — so there is no password to
- * re-enter and no email to send a confirmation to that would be any stronger
- * than the link itself. The link IS the authority: it already reads the whole
- * booking, the conversation and the photographs, so somebody holding it can
- * already see everything this removes.
+ * THIS PATH KEEPS WORKING EXACTLY AS IT DID, and migration 0037 adding
+ * accounts is not allowed to change that. Somebody reading their booking on a
+ * phone that has never been signed in must be able to ask to be forgotten from
+ * the page they are already on; making them verify a mobile number first would
+ * be asking somebody to create an account in order to delete one. The link IS
+ * the authority here: it already reads the whole booking, the conversation and
+ * the photographs, so somebody holding it can already see everything this
+ * removes.
+ *
+ * A customer who does have an account reaches the same erasure through
+ * DELETE /api/customer/data, which is behind their session and runs the same
+ * function — see eraseCustomerByPhone below.
  *
  * SCOPE. The thread names one booking; the booking names a phone number; the
  * phone number is what ties this person's rows together across every business
@@ -426,9 +435,6 @@ export async function eraseCustomerByToken(
 ): Promise<ErasureResult> {
   const thread = await threadByToken(env, rawToken ?? '');
   if (!thread) throw notFound('That link is not valid any more.');
-
-  const removed: Record<string, number> = {};
-  const add = (k: string, n: number) => { removed[k] = (removed[k] ?? 0) + n; };
 
   // The number on the order this link belongs to, if there is an order yet.
   const order = thread.appointment_id
@@ -447,6 +453,8 @@ export async function eraseCustomerByToken(
     // Nothing but a conversation. Deleting the thread takes the messages with
     // it, and that is the whole of this person's footprint — except for the
     // feed rows below, which are the copy of it kept somewhere else.
+    const removed: Record<string, number> = {};
+    const add = (k: string, n: number) => { removed[k] = (removed[k] ?? 0) + n; };
     add('notifications', changes(await env.DB.prepare(
       `DELETE FROM notifications WHERE thread_id = ?`,
     ).bind(thread.id).run()));
@@ -456,6 +464,34 @@ export async function eraseCustomerByToken(
     await recordErasure(env, 'customer', thread.id, sum(removed));
     return { removed, standing_retained: false };
   }
+
+  // The thread this link named is passed through because it may not be one of
+  // the ones reachable from an appointment: an enquiry that later became a
+  // booking keeps its original thread, and dropping it here would leave the
+  // conversation standing after everything it was about had gone.
+  return eraseCustomerByPhone(env, phone, { extraThreadIds: [thread.id] });
+}
+
+/**
+ * The same erasure, reached from a signed-in account instead of from a link.
+ *
+ * ONE IMPLEMENTATION, TWO DOORS, and it is one implementation deliberately.
+ * The link path and the account path have to remove exactly the same rows --
+ * a customer who is erased through their account and finds that the version
+ * of erasure reachable from a link went further has not been erased -- and two
+ * copies of a fourteen-step deletion drift the first time one of them gains a
+ * table. So the link path resolves its token to a number and calls this, and
+ * this is the only place that knows what erasing somebody means.
+ *
+ * The scope is the NUMBER, not the account and not the booking. That is what
+ * makes "forget me" reach the March booking made before there was an account,
+ * the June one made after it, and the conversations attached to both.
+ */
+export async function eraseCustomerByPhone(
+  env: Env, phone: string, opts: { extraThreadIds?: string[] } = {},
+): Promise<ErasureResult> {
+  const removed: Record<string, number> = {};
+  const add = (k: string, n: number) => { removed[k] = (removed[k] ?? 0) + n; };
 
   const retainStanding = await sanctioned(env, phone);
 
@@ -477,6 +513,25 @@ export async function eraseCustomerByToken(
   const itemIds = (items.results ?? []).map((r) => r.id);
   const appointmentIds = (items.results ?? [])
     .map((r) => r.appointment_id).filter((v): v is string => !!v);
+
+  // Every mailbox this person has given us, read HERE and used at step 9.
+  //
+  // Read before anything is emptied, which is the whole reason it is up here
+  // rather than beside the delete it feeds: step 4 clears both the email and
+  // the phone number off the order rows, so the same query run in its natural
+  // place would return nothing at all and the standing alerts would survive
+  // the erasure — the most visible possible way to fail at one, since they
+  // keep arriving by email afterwards. The account is asked as well as the
+  // orders, because somebody may have set an address on the account and never
+  // typed one into a checkout.
+  const mailboxes = new Set<string>();
+  for (const r of ((await env.DB.prepare(
+    `SELECT DISTINCT email FROM orders WHERE phone_e164 = ? AND email IS NOT NULL`,
+  ).bind(phone).all<{ email: string }>()).results ?? [])) mailboxes.add(r.email);
+  for (const r of ((await env.DB.prepare(
+    `SELECT DISTINCT email FROM customer_accounts
+      WHERE phone_e164 = ? AND email IS NOT NULL`,
+  ).bind(phone).all<{ email: string }>()).results ?? [])) mailboxes.add(r.email);
 
   // 1. Photographs. The objects first, then the rows — including any the
   //    customer had published on a review, because "erase me" covers the
@@ -511,7 +566,7 @@ export async function eraseCustomerByToken(
   //    with, so there is no business record inside it to keep. Found by both
   //    of the keys a feed row can carry, because a chat notification names the
   //    thread and a booking notification names the appointment.
-  const threadIds = [thread.id, ...(appointmentIds.length
+  const threadIds = [...(opts.extraThreadIds ?? []), ...(appointmentIds.length
     ? ((await env.DB.prepare(
         `SELECT id FROM threads WHERE appointment_id IN (${appointmentIds.map(() => '?').join(',')})`,
       ).bind(...appointmentIds).all<{ id: string }>()).results ?? []).map((r) => r.id)
@@ -535,9 +590,11 @@ export async function eraseCustomerByToken(
       `DELETE FROM threads WHERE appointment_id IN (${holes})`,
     ).bind(...appointmentIds).run()));
   }
-  add('threads', changes(await env.DB.prepare(
-    `DELETE FROM threads WHERE id = ?`,
-  ).bind(thread.id).run()));
+  if (threadIds.length) {
+    add('threads', changes(await env.DB.prepare(
+      `DELETE FROM threads WHERE id IN (${threadIds.map(() => '?').join(',')})`,
+    ).bind(...threadIds).run()));
+  }
 
   // 4. The order rows. Real deletion of every personal column; the money, the
   //    currency and the dates stay, because a settled transaction is not the
@@ -612,10 +669,12 @@ export async function eraseCustomerByToken(
     `DELETE FROM instant_requests WHERE phone_e164 = ?`,
   ).bind(phone).run()));
 
-  if (order?.email) {
+  // The mailboxes gathered at the top of this function, before step 4 emptied
+  // the rows they were read from.
+  for (const email of mailboxes) {
     add('watches', changes(await env.DB.prepare(
       `DELETE FROM watches WHERE email = ?`,
-    ).bind(order.email).run()));
+    ).bind(email).run()));
   }
 
   add('messages', changes(await env.DB.prepare(
@@ -630,7 +689,38 @@ export async function eraseCustomerByToken(
       WHERE phone_e164 = ? AND status <> 'open' AND ? = 0`,
   ).bind(now(), phone, retainStanding ? 1 : 0).run()));
 
-  // 11. Standing, and the suspensions that produced it.
+  // 11. The account itself, if this number ever made one.
+  //
+  //     Emptied and closed rather than deleted, and the number set to NULL,
+  //     which is what releases it: the unique index treats NULLs as distinct,
+  //     so the row can sit here forever without stopping the same person
+  //     signing up again one day. Every session on it dies in the same breath,
+  //     because a cookie in a browser must not outlive the row it names — and
+  //     currentCustomer refuses on closed_at anyway, which is the second of
+  //     the two reasons that is true.
+  //
+  //     The row is kept rather than deleted for the same reason the order is:
+  //     order_items and reviews point at work that really happened, and a
+  //     dangling id is worse evidence than an emptied one. Nothing
+  //     identifying a person is left on it.
+  add('customer_sessions', changes(await env.DB.prepare(
+    `UPDATE customer_sessions SET revoked_at = ?
+      WHERE revoked_at IS NULL AND account_id IN (
+        SELECT id FROM customer_accounts WHERE phone_e164 = ?)`,
+  ).bind(now(), phone).run()));
+  add('customer_login_codes', changes(await env.DB.prepare(
+    `DELETE FROM customer_login_codes WHERE phone_e164 = ?`,
+  ).bind(phone).run()));
+  add('customer_accounts', changes(await env.DB.prepare(
+    `UPDATE customer_accounts
+        SET phone_e164 = NULL, first_name = NULL, email = NULL,
+            payment_ref = NULL, payment_brand = NULL, payment_last4 = NULL,
+            payment_added_at = NULL, password_hash = NULL,
+            closed_at = COALESCE(closed_at, ?), updated_at = ?
+      WHERE phone_e164 = ?`,
+  ).bind(now(), now(), phone).run()));
+
+  // 12. Standing, and the suspensions that produced it.
   if (!retainStanding) {
     add('customer_standing', changes(await env.DB.prepare(
       `DELETE FROM customer_standing WHERE phone_e164 = ?`,

@@ -164,10 +164,11 @@ export default function Enquiry({ slug, businessName, kind, onClose }: {
         ...(kind === 'quote' ? { request: said } : { first_message: said }),
         ...(captcha.current ? { turnstile_token: captcha.current } : {}),
       });
-      // The link this mints is the only copy that will ever exist — nothing is
-      // emailed and there is no account to find it from later — so the page is
-      // handed straight to it rather than reporting success and waiting to be
-      // clicked.
+      // The link this mints is the only copy that will ever exist. Nothing is
+      // emailed, and an enquiry carries no phone number, so there is nothing
+      // for a customer account to attach it to later either — only a booking
+      // is claimable. So the page is handed straight to it rather than
+      // reporting success and waiting to be clicked.
       navigate(`/c/${res.token}`);
     } catch (err) {
       const code = err instanceof ApiError ? err.code : undefined;
@@ -265,8 +266,8 @@ export default function Enquiry({ slug, businessName, kind, onClose }: {
 
         <p className="field-note">
           Sending this opens a private conversation page and takes you
-          straight to it. There is no account and no password, so that page
-          is the only way back — bookmark it when you land on it.
+          straight to it. Asking a question needs no account, so that page is
+          the only way back — bookmark it when you land on it.
         </p>
       </form>
     </Sheet>

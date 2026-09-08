@@ -3,6 +3,7 @@ import { ALL_MIGRATIONS, makeEnv } from './d1';
 import worker from '../src/index';
 import type { Env } from '../src/types';
 import { startThread } from '../src/lib/chat';
+import { signInCustomer } from './customer';
 import { newId, now } from '../src/lib/util';
 
 /**
@@ -61,11 +62,12 @@ beforeEach(async () => {
 afterEach(() => { globalThis.fetch = realFetch; });
 
 function makeReq(method: string, path: string, opts: {
-  body?: unknown; ip?: string;
+  body?: unknown; ip?: string; cookie?: string;
 } = {}) {
   const headers: Record<string, string> = {};
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
   if (opts.ip) headers['cf-connecting-ip'] = opts.ip;
+  if (opts.cookie) headers.cookie = opts.cookie;
   return new Request(`${BASE}${path}`, {
     method, headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
@@ -133,8 +135,13 @@ const orderBody = (gapId: string, extra: Record<string, unknown> = {}) => ({
 describe('with no secret set, nothing about these endpoints has changed', () => {
   it('places an order with no token at all', async () => {
     const { gapId } = await seed();
+    // Signed in first, because booking needs an account since migration 0037
+    // and this file is about the challenge rather than about the account. The
+    // sign-in happens with the challenge switched off and makes no siteverify
+    // call, so `calls` still counts only what the booking itself asked for.
+    const me = await signInCustomer(env, '(818) 555-0142');
     const res = await call('POST', '/api/public/orders', {
-      ip: '203.0.113.10', body: orderBody(gapId),
+      ip: '203.0.113.10', cookie: me.cookie, body: orderBody(gapId),
     });
     expect(res.status).toBe(201);
     expect(await count(`SELECT COUNT(*) AS n FROM orders`)).toBe(1);
@@ -165,8 +172,10 @@ describe('with no secret set, nothing about these endpoints has changed', () => 
     // A bundle built with a site key against a Worker whose secret has not
     // been set yet. The token is meaningless here and must not become an error.
     const { gapId } = await seed();
+    const me = await signInCustomer(env, '(818) 555-0142');
     const res = await call('POST', '/api/public/orders', {
-      ip: '203.0.113.13', body: orderBody(gapId, { turnstile_token: 'whatever' }),
+      ip: '203.0.113.13', cookie: me.cookie,
+      body: orderBody(gapId, { turnstile_token: 'whatever' }),
     });
     expect(res.status).toBe(201);
     expect(calls).toHaveLength(0);
@@ -174,9 +183,10 @@ describe('with no secret set, nothing about these endpoints has changed', () => 
 
   it('is off for an empty or whitespace secret, not just an absent one', async () => {
     const { gapId } = await seed();
+    const me = await signInCustomer(env, '(818) 555-0142');
     env.TURNSTILE_SECRET = '   ';
     const res = await call('POST', '/api/public/orders', {
-      ip: '203.0.113.14', body: orderBody(gapId),
+      ip: '203.0.113.14', cookie: me.cookie, body: orderBody(gapId),
     });
     expect(res.status).toBe(201);
     expect(calls).toHaveLength(0);
@@ -260,8 +270,10 @@ describe('with the secret set, Cloudflare decides', () => {
 
   it('lets a token Cloudflare accepts straight through to the booking', async () => {
     const { gapId } = await seed();
+    const me = await signInCustomer(env, '(818) 555-0142');
     const res = await call('POST', '/api/public/orders', {
-      ip: '203.0.113.31', body: orderBody(gapId, { turnstile_token: 'solved' }),
+      ip: '203.0.113.31', cookie: me.cookie,
+      body: orderBody(gapId, { turnstile_token: 'solved' }),
     });
     expect(res.status).toBe(201);
     expect(await count(`SELECT COUNT(*) AS n FROM orders`)).toBe(1);
@@ -285,8 +297,9 @@ describe('with the secret set, Cloudflare decides', () => {
     // What arrives if a form is ever posted the way Turnstile's own hidden
     // input names it, rather than as the JSON body the SPA sends.
     const { gapId } = await seed();
+    const me = await signInCustomer(env, '(818) 555-0142');
     const res = await call('POST', '/api/public/orders', {
-      ip: '203.0.113.33',
+      ip: '203.0.113.33', cookie: me.cookie,
       body: orderBody(gapId, { 'cf-turnstile-response': 'solved' }),
     });
     expect(res.status).toBe(201);

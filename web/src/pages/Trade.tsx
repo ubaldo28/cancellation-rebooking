@@ -5,7 +5,14 @@ import {
   type MapArea, type PublicSlot, type TradeCategory, type TradeReview,
 } from '../api';
 import Crumbs from '../components/Crumbs';
+// TWO IMPORT LINES FROM ONE MODULE, DELIBERATELY. test/public-payload.test.ts
+// pins the first of them character for character: it is how the test proves
+// this page's payment answer is built from the shared constant rather than
+// from a paraphrase that would pass a looser check. The account constant is
+// therefore imported beside it rather than folded into the same braces, which
+// would break a pin that has nothing to do with the account.
 import { PAY_TODAY_SHORT } from '../components/PaymentState';
+import { ACCOUNT_TODAY_SHORT } from '../components/PaymentState';
 import PublicPage from '../components/PublicPage';
 import PostcodeFinder from '../components/PostcodeFinder';
 import MetroLinks from '../components/MetroLinks';
@@ -174,6 +181,16 @@ const reviewDate = (s: number) =>
  */
 function faqsFor(tradeName: string): { q: string; a: string }[] {
   return [
+    {
+      // First, because it is the first thing a stranger wants settled before
+      // they start filling anything in, and because this page used to answer it
+      // wrongly by implication: an FAQ that carefully explains cancellation
+      // fees while leaving out the one requirement for booking at all is not a
+      // complete answer to anything. Word for word the answer the cost guide
+      // gives and the one src/lib/seo.ts renders into this URL's crawler copy.
+      q: 'Do I need an account?',
+      a: ACCOUNT_TODAY_SHORT,
+    },
     {
       q: 'How do I pay?',
       a: `${PAY_TODAY_SHORT} The design is that the labour is paid for here, on `

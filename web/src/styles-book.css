@@ -268,6 +268,48 @@
 }
 .wrap.book .book-pay strong { color: var(--ink); }
 
+/* --- the account, and the card ------------------------------------------
+   The sign-up sits inside the confirm step's own card rather than in a panel
+   of its own, because it is one more question on that step and not a second
+   journey. It gets a rule above it and nothing else: a boxed treatment here
+   would read as the separate sign-up screen this deliberately is not. */
+.wrap.book .book-account {
+  display: flex; flex-direction: column; gap: 12px;
+  padding-top: 16px; border-top: 1px solid var(--line);
+}
+.wrap.book .book-account > h3 {
+  margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -0.02em;
+}
+/* The hints on this step are running copy rather than notes beside a field, so
+   they take the body size the rest of the step uses. `.book-fields .book-hint`
+   is the smaller one and is scoped to that form. */
+.wrap.book .book-account .book-hint {
+  margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--ink-3);
+}
+
+/* The card seam, drawn as what it is: a labelled empty space with the reason it
+   is empty inside it. Dashed, because a solid box reads as a control somebody
+   has switched off and this is a box that has not been built. */
+.wrap.book .book-seam {
+  margin: 0; padding: 13px 15px;
+  border: 1px dashed var(--line-strong); border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: 13.5px; line-height: 1.6; color: var(--ink-3);
+}
+.wrap.book .book-seam strong { color: var(--ink); }
+
+/* "Bookings are not open yet", at the top of the page. Amber, the site's
+   existing treatment for "this is not what it looks like", and the same one
+   PaymentState wears — this is the same kind of gap between what a page appears
+   to offer and what is actually behind it. */
+.wrap.book .book-blocked {
+  margin: 18px 0 0; padding: 13px 15px; max-width: 72ch;
+  border: 1px solid var(--alert-line); border-radius: var(--r-md);
+  background: var(--alert-soft); color: var(--alert);
+  font-size: 14px; line-height: 1.6;
+}
+.wrap.book .book-blocked strong { color: var(--ink); }
+
 /* Visible focus everywhere, including on the cards that act as buttons. */
 .wrap.book :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 

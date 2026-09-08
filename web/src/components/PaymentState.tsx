@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+import { api, type BookingState } from '../api';
 import '../styles-payment.css';
 
 /**
@@ -34,6 +36,12 @@ import '../styles-payment.css';
  * is different from a page reciting them as though money were already at
  * stake. When the seam lands, these strings change and every surface changes
  * with them.
+ *
+ * THE SECOND HALF OF THIS FILE IS THE SAME ARRANGEMENT FOR THE ACCOUNT. The
+ * site made the identical mistake there — one sentence per page, every one of
+ * them written from the same wrong belief that a customer never signs up — so
+ * that correction is kept in one place too, next to the money it is always
+ * read beside.
  */
 
 /**
@@ -53,12 +61,13 @@ export const PAY_TODAY_SHORT =
  * reading as a threat about money that does not exist.
  */
 export const PAY_TODAY_LONG =
-  'Paying on the site is not built yet. Pressing Book holds the appointment, '
-  + 'asks for no card details and takes no money; the business confirms it and '
-  + 'arranges the price with you directly. Everything this site says about '
-  + 'paying here, about refunds and about cancellation fees is how it is meant '
-  + 'to work once payment is switched on. Until then there is nothing to '
-  + 'refund and cancelling costs nobody anything.';
+  'Paying on the site is not built yet. Pressing Book holds the appointment '
+  + 'and takes no money, and no card is asked for until payment is switched '
+  + 'on; the business confirms it and arranges the price with you directly. '
+  + 'Everything this site says about paying here, about refunds and about '
+  + 'cancellation fees is how it is meant to work once payment is switched on. '
+  + 'Until then there is nothing to refund and cancelling costs nobody '
+  + 'anything.';
 
 /**
  * The business's half of the same fact, for /pros and the business questions
@@ -94,6 +103,82 @@ export default function PaymentState(
     <p className={`pay-state${className ? ` ${className}` : ''}`}>
       <strong>{PAY_TODAY_TITLE}.</strong>{' '}
       {audience === 'pro' ? PAY_TODAY_PRO : PAY_TODAY_LONG}
+    </p>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The other half of the same correction: the account
+// ---------------------------------------------------------------------------
+
+/**
+ * What booking actually requires of a customer, in one sentence.
+ *
+ * THE MODEL THIS REPLACES WAS WRONG, and this bundle said so in about thirty
+ * places: "No account. No app. No card." on the hero, "there is no account to
+ * create, here or later" at the checkout, "Do I need an account? No, and there
+ * is not one to create" on /help. A customer needs an account and a card to
+ * book. What is true — and all that was ever true — is that neither is asked
+ * for until they have decided to buy something.
+ *
+ * SEPARATE FROM PAY_TODAY_SHORT ON PURPOSE, and not because the two describe
+ * different moments. PAY_TODAY_SHORT is pinned character for character against
+ * src/lib/seo.ts by test/public-payload.test.ts, so the crawler's copy of a
+ * page and the React copy of the same URL cannot say different things about
+ * money; folding the account into it would break that pin for a reason that
+ * has nothing to do with what the pin protects. This constant is the mirror of
+ * ACCOUNT_TODAY_SHORT in src/lib/seo.ts and has to stay word for word the same
+ * as it, for exactly the reason that one does: /s/<trade> and /cost/<trade>
+ * are rendered twice, once by the Worker and once here.
+ *
+ * The account half is stated as a fact, because it is one and the checkout
+ * enforces it today. The card half is stated as the design, because nothing in
+ * this product can take a card yet.
+ */
+export const ACCOUNT_TODAY_SHORT =
+  'Booking needs an account, and making one is a text message: you give a '
+  + 'mobile number at the moment you book and type the six digits we send '
+  + 'back. Looking, comparing prices and messaging a business need no account '
+  + 'at all, and neither does opening a booking you already have — the link in '
+  + 'your confirmation still works on any phone. A card is needed as well once '
+  + 'paying on the site is switched on, which it is not yet.';
+
+/** The heading the account notice wears wherever it is drawn as its own block. */
+export const ACCOUNT_TODAY_TITLE = 'What booking needs from you';
+
+/**
+ * The account notice, as a block, with this deployment's own answer under it.
+ *
+ * WHY THIS ASKS THE SERVER RATHER THAN CARRYING THE ANSWER. Whether an account
+ * can be created at all depends on whether a text message can be delivered,
+ * which is a Worker secret and not something a bundle can know. Today no
+ * deployment has an SMS provider configured, so no account can be created and
+ * nothing can be booked — and a page that recites the sign-up without saying
+ * that is inviting somebody to fill a basket in and meet a 503. The sentence
+ * shown is the Worker's own `sms_note`, so the site and the API cannot come to
+ * disagree about it; see api.bookingState.
+ *
+ * A failed request leaves the deployment line off rather than guessing at one.
+ * The checkout does not rely on this — Book.tsx reads the same state itself and
+ * stops the button — so the worst a failure here costs is one missing sentence
+ * on an information page.
+ */
+export function AccountState({ className }: { className?: string }) {
+  const [state, setState] = useState<BookingState | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api.bookingState()
+      .then((s) => { if (live) setState(s); })
+      .catch(() => { /* see above: the deployment line is simply not drawn */ });
+    return () => { live = false; };
+  }, []);
+
+  return (
+    <p className={`pay-state${className ? ` ${className}` : ''}`}>
+      <strong>{ACCOUNT_TODAY_TITLE}.</strong>{' '}
+      {ACCOUNT_TODAY_SHORT}
+      {state && !state.sms_ready && state.sms_note && <>{' '}{state.sms_note}</>}
     </p>
   );
 }

@@ -2,7 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, sentence, type MapArea, type PublicSlot, type TradeCategory } from '../api';
 import Crumbs from '../components/Crumbs';
+// TWO IMPORT LINES FROM ONE MODULE, DELIBERATELY. test/public-payload.test.ts
+// pins the first of them character for character: it is how the test proves
+// this page's payment answer is built from the shared constant rather than
+// from a paraphrase that would pass a looser check. The account constant is
+// therefore imported beside it rather than folded into the same braces, which
+// would break a pin that has nothing to do with the account.
 import { PAY_TODAY_SHORT } from '../components/PaymentState';
+import { ACCOUNT_TODAY_SHORT } from '../components/PaymentState';
 import PublicPage from '../components/PublicPage';
 import PostcodeFinder from '../components/PostcodeFinder';
 import MetroLinks from '../components/MetroLinks';
@@ -73,6 +80,15 @@ function duration(minutes: number): string {
  */
 function faqsFor(tradeName: string): { q: string; a: string }[] {
   return [
+    {
+      // The one answer this page and the trade page carry in identical words,
+      // because it is the same question wherever it is asked — and because
+      // both pages spent their whole existence implying the opposite answer.
+      // src/lib/seo.ts renders the same string into the crawler's copy of this
+      // URL, so the two halves of one address cannot disagree about it.
+      q: 'Do I need an account?',
+      a: ACCOUNT_TODAY_SHORT,
+    },
     {
       q: `Are these average prices for ${tradeName}?`,
       a: `No. Every figure on this page is a price a business on Slotfill is `

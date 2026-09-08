@@ -128,13 +128,28 @@ export default function Terms() {
           controls the mailbox controls the account.
         </p>
         <p>
-          A customer has no account. A booking is held together by a secret
-          link, and that link is the whole of a customer's identity here.
-          Anybody holding it can read the booking, the address, the
-          conversation, the photographs and the start code, and can delete the
-          data behind it. Treat it the way you would treat a password. After
-          ten invalid links from one place, that place is locked out for
-          fifteen minutes.
+          A customer has an account, identified by a mobile number. There is no
+          password: signing in is a six-digit code sent to that number by text,
+          so whoever controls the number controls the account. The code lasts
+          ten minutes, can be used once, and stops working after five wrong
+          attempts. An account is required to book and is created at the moment
+          of booking; browsing, comparing prices and messaging a business do
+          not require one.
+        </p>
+        <p>
+          Every booking also has its own secret link. Anybody holding it can
+          read the booking, the address, the conversation, the photographs and
+          the start code, and can delete the data behind it, whether or not
+          they are signed in to the account that made it. Treat it the way you
+          would treat a password. After ten invalid links from one place, that
+          place is locked out for fifteen minutes.
+        </p>
+        <p>
+          A customer may close their account, which empties the number, the
+          name, the email address and any stored card reference and ends every
+          session on it; the bookings themselves remain, and deleting those is
+          the separate request described in section 10. Closing an account does
+          not clear a suspension recorded against that number.
         </p>
       </section>
 
@@ -146,6 +161,13 @@ export default function Terms() {
             yet, and terms that read as though it did would be the site's most
             consequential untruth rather than merely a marketing one. */}
         <PaymentState />
+        <p>
+          Booking requires a customer account, which is created at the moment of
+          booking by confirming a mobile number as described in section 2.
+          Under these terms it also requires a card on that account; that step
+          is not yet implemented, so no card is asked for and a booking without
+          one is accepted.
+        </p>
         <p>
           The price shown on an opening is set by the business that listed it
           and is the price of the labour. Booking holds the appointment. Under
@@ -342,8 +364,10 @@ export default function Terms() {
         <h2 id="t-ending">10. Ending it</h2>
         <p>
           A customer can delete their personal data from the bottom of their own
-          booking page, at any time, without asking anybody. It is immediate and
-          there is no undo. A business can close its account from{' '}
+          booking page or from their account, at any time, without asking
+          anybody; both run the same erasure. It is immediate and there is no
+          undo. Closing the account instead is the smaller request and is
+          described in section 2. A business can close its account from{' '}
           <span className="mono">Settings</span> in the app once there is
           nothing left in the diary — closing with live bookings is refused,
           because it would leave those customers with nobody coming and no way

@@ -198,8 +198,18 @@ export default function Safety() {
             the middle of a live job.
           </li>
           <li>
-            <strong>There is no password to steal on the business side.</strong>{' '}
-            Signing in is a link emailed to the address on the account.
+            <strong>There is no password to steal on either side.</strong> A
+            business signs in with a link emailed to the address on the
+            account. A customer signs in with a six-digit code texted to their
+            mobile number: it lasts ten minutes, works once, and dies after
+            five wrong guesses — and asking for a new one kills the one before
+            it, so there is never more than one live code for a number.
+          </li>
+          <li>
+            <strong>A customer's account is that number and nothing else.</strong>{' '}
+            It is also what a suspension is recorded against, which is why
+            closing an account does not clear one: signing up again with the
+            same number lands back on the same standing.
           </li>
         </ul>
       </section>
@@ -242,10 +252,11 @@ export default function Safety() {
             </li>
             <li>
               <strong>Whether a customer is who they say they are.</strong> A
-              customer books with a phone number and no account, and a new
-              number is a clean record. That is a real limitation and it is
-              worth knowing rather than glossing over: what the standing ladder
-              deters is casual, not determined.
+              customer's account is a mobile number proved by a code texted to
+              it, so what is established is that somebody was holding that
+              phone — not who they are. A new number is a clean record. That is
+              a real limitation and it is worth knowing rather than glossing
+              over: what the standing ladder deters is casual, not determined.
             </li>
             <li>
               <strong>Everything typed into a message.</strong> The contact-detail

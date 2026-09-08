@@ -9,10 +9,11 @@ import { useDocumentTitle } from '../lib/title';
 /**
  * The operator's inbox, at /app/messages.
  *
- * Customers here have no account and no phone number the operator can see —
- * "no number exchange, no sms" was the requirement — so this screen is the
- * only place a question from a stranger can be answered. Missing one means
- * losing the job, which is why unread has to be visible at arm's length.
+ * A customer's phone number is never shown to the operator — "no number
+ * exchange, no sms" was the requirement, and it is unchanged by customers
+ * having accounts now — so this screen is the only place a question from a
+ * stranger can be answered. Missing one means losing the job, which is why
+ * unread has to be visible at arm's length.
  */
 
 /**
@@ -200,8 +201,8 @@ export default function Messages() {
         {!loading && !error && threads.length === 0 && (
           <Empty>
             No conversations yet. This fills up when a customer asks about one
-            of your openings or books one. They have no account and no number
-            for you, so they reply here.
+            of your openings or books one. They have no number for you and you
+            have none for them, so this is where both of you reply.
           </Empty>
         )}
 

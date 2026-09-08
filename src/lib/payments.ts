@@ -211,6 +211,27 @@ export const STRIPE_TOLERANCE_SECONDS = 300;
 export const stripeWebhooksConfigured = (env: Env): boolean =>
   typeof env.STRIPE_WEBHOOK_SECRET === 'string' && env.STRIPE_WEBHOOK_SECRET.trim() !== '';
 
+/**
+ * Whether money can move through this product at all.
+ *
+ * ONE SIGNAL, READ IN SEVERAL PLACES, and it is deliberately the webhook
+ * secret rather than a new switch of its own. A charge is not a charge until
+ * something confirms it succeeded, and the only thing that ever will is the
+ * signed webhook at /webhooks/stripe — so a deployment without that secret
+ * cannot take money no matter what else is configured, and inventing a second
+ * flag would create a state where the two disagree and the product claims to
+ * be taking payment while nothing can confirm one.
+ *
+ * FALSE IN EVERY ENVIRONMENT TODAY. What it gates is the customer's card at
+ * checkout: while this is false a booking is placed with no card and the order
+ * says 'pending', which is exactly what happens now and is the truth about it.
+ * When it is true a card is required before an opening is claimed, because at
+ * that point a booking without one is an appointment nobody can be charged
+ * for — which is the situation the whole cancellation ladder in bypass.ts is
+ * written to prevent.
+ */
+export const paymentsLive = (env: Env): boolean => stripeWebhooksConfigured(env);
+
 /** Pulls `t` and every `v1` out of the Stripe-Signature header. */
 export function parseStripeSignature(header: string | null): {
   timestamp: number | null; signatures: string[];

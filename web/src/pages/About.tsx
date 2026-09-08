@@ -75,10 +75,14 @@ export default function About() {
           areas, and nothing here sets a price for them.
         </p>
         <p>
-          On the other, anybody in range of one of those vans. There is no
-          account to create and no password to remember: a booking is held
-          together by a link, and that link is the whole of a customer's
-          identity here.
+          On the other, anybody in range of one of those vans. Looking around
+          asks for nothing at all. Booking needs an account, and an account
+          here is a mobile number and the six digits we text to it — no
+          password to choose and none to remember. It is made at the moment
+          somebody books rather than before they have decided to, which is the
+          only part of “no account needed” that was ever true. Every booking
+          also gets its own link, and that link opens it on any phone whether
+          or not anybody is signed in.
         </p>
       </section>
 

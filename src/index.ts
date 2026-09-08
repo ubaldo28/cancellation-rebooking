@@ -17,7 +17,13 @@ import { RateLimitedError, clientIp, enforceRateLimit } from './lib/ratelimit';
 import { withSecurityHeaders } from './lib/headers';
 import { requireTurnstile, tokenFromBody } from './lib/turnstile';
 import { START_WORDS, STOP_WORDS, SUPPORTED_LANGUAGES, isLang } from './lib/messages';
-import { verifyTwilioSignature } from './lib/twilio';
+import { smsConfigured, verifyTwilioSignature } from './lib/twilio';
+import {
+  CARD_NOTE_CUSTOMER, SMS_NOT_CONFIGURED, clearCustomerCookie, closeCustomerAccount,
+  currentCustomer, publicAccount, requireCustomer, revokeCustomerSession,
+  saveCustomerCard, sendSignInCode, signInWithCode, sweepCustomerAuth,
+  type CustomerAccount,
+} from './lib/customers';
 import {
   acceptOffer, createOffers, declineOffer, loadOfferByToken, markViewed,
 } from './lib/offers';
@@ -45,14 +51,16 @@ import {
   cancelByCustomer, cancelByOperator, feesOwed, listFees, listingBlock, markArrived,
   quoteRefund,
 } from './lib/bypass';
-import { addressReleaseColumns, maskCustomerRow, maskEmail, maskPhone } from './lib/redact';
 import {
-  assertNoCardData, assertPaymentRef, cardSafeDb, safeBrand, safeLast4,
+  addressReleaseColumns, firstNameOnly, maskCustomerRow, maskEmail, maskPhone,
+} from './lib/redact';
+import {
+  assertNoCardData, assertPaymentRef, cardSafeDb, paymentsLive, safeBrand, safeLast4,
   stripeWebhooksConfigured, verifyStripeSignature,
 } from './lib/payments';
 import { listAdminActions, recordAdminAction } from './lib/audit';
 import {
-  closeOperatorAccount, eraseCustomerByToken, forgetVan, sweepRetention,
+  closeOperatorAccount, eraseCustomerByPhone, eraseCustomerByToken, forgetVan, sweepRetention,
 } from './lib/retention';
 import { catalogFor, TRADE_CATEGORIES } from './lib/trades';
 import { deleteFaq, listFaqs, saveFaq } from './lib/profile';
@@ -428,6 +436,240 @@ route('POST', '/api/auth/demo', async ({ req, env }) => {
 route('POST', '/api/auth/logout', async ({ req, env }) => {
   await revokeSession(req, env);
   return json({ ok: true }, 200, { 'set-cookie': clearCookie() });
+});
+
+// ---------------------------------------------------------------------------
+// The customer's account
+//
+// A mobile number, proved by a code sent to it in a text message. No password,
+// no mailbox, no separate journey: the account is created at the confirm step
+// of the checkout, in the same action that would take the card. See
+// lib/customers.ts for why each number below is what it is, and migration 0037
+// for why this exists at all when thirty comments in this codebase say a
+// customer never has an account.
+//
+// THESE ROUTES AND THE OPERATOR'S ARE DISJOINT, and not by convention. A
+// customer's cookie has a different name, its digest is computed in a
+// different domain, and it names a row in a different table — so there is no
+// value that satisfies both requireOperator and requireCustomer, and no
+// refactor of one lookup that could make one appear.
+//
+// /c/:token is untouched by every line of this. It is how somebody opens their
+// booking on a phone that has never been signed in, and it does not ask for an
+// account before, during or after.
+// ---------------------------------------------------------------------------
+
+/** The sentence a caller gets when a booking needs an account and has none. */
+const ACCOUNT_REQUIRED =
+  'Booking needs an account, and making one takes one text message: give us '
+  + 'your mobile number, type the six digits we send back, and the account is '
+  + 'created as you book. Reading a booking you already have never needs one — '
+  + 'the link in your confirmation still opens it.';
+
+route('POST', '/api/customer/auth/code', async ({ req, env }) => {
+  const b = await body(req);
+  const country = (str(b.country) ?? 'US').toUpperCase();
+  const phone = toE164(str(b.phone), country);
+  if (!phone) throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
+
+  // A door, and one that costs money to open: every call is a text message
+  // somebody pays for, aimed at a phone the caller has merely named. That is
+  // the exact shape the rate limits cannot see — ten thousand hosts sending
+  // one each — so the challenge belongs here, and it runs before a message is
+  // composed and before an allowance is spent.
+  await requireTurnstile(env, req, tokenFromBody(b));
+
+  // Fails closed with no provider configured. The volume ceilings, the reasons
+  // for each of them and the refusal all live in sendSignInCode.
+  const sent = await sendSignInCode(env, {
+    phone,
+    ip: clientIp(req),
+    lang: str(b.language),
+    // Local development only: AUTH_DEBUG_TOKEN set as a secret, presented by
+    // the caller, and APP_URL on localhost. The same gate the operator's
+    // sign-in link is echoed behind, and the only path on which a code is ever
+    // returned to whoever asked for it.
+    echo: mayEchoSignInLink(env, req.headers.get('x-auth-debug')),
+  });
+  // The same answer whether or not an account exists for that number. This
+  // must never become the way to ask whether somebody's mobile has booked here.
+  return json({ ok: true, ...sent }, 200, { 'cache-control': 'no-store' });
+});
+
+route('POST', '/api/customer/auth/verify', async ({ req, env }) => {
+  const b = await body(req);
+  const country = (str(b.country) ?? 'US').toUpperCase();
+  const phone = toE164(str(b.phone), country);
+  if (!phone) throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
+
+  // A SECOND CEILING ON TOP OF THE PER-CODE ATTEMPT COUNTER, and it is not
+  // redundant with it. Five wrong guesses kill one code; this bounds how fast
+  // somebody can cycle "ask for a code, guess five times" against a number,
+  // and it counts a caller who is guessing at codes that were never sent —
+  // which reaches no row and so increments no counter at all.
+  await enforceRateLimit(env, `otp-verify:${phone}`, 10, 900);
+  await enforceRateLimit(env, `otp-verify-ip:${clientIp(req)}`, 30, 900);
+
+  const signed = await signInWithCode(env, {
+    phone,
+    code: String(b.code ?? ''),
+    userAgent: req.headers.get('user-agent'),
+    // Only the first word of it, the same rule the checkout applies, because
+    // this name becomes the default on a booking and a booking's name is
+    // written onto the operator's own client row. See firstNameOnly.
+    first_name: firstNameOnly(str(b.first_name)) || null,
+    email: str(b.email),
+  });
+
+  return json({
+    account: publicAccount(signed.account),
+    created: signed.created,
+    claimed: signed.claimed,
+    // Told at sign-in rather than discovered at checkout. Somebody serving a
+    // suspension can still read their bookings and message a business; what
+    // they cannot do is book, and finding that out after filling in a basket
+    // is a worse way to learn it.
+    standing: await customerStanding(env, phone),
+    card_note: CARD_NOTE_CUSTOMER,
+  }, 200, { 'set-cookie': signed.cookie, 'cache-control': 'no-store' });
+});
+
+route('POST', '/api/customer/logout', async ({ req, env }) => {
+  await revokeCustomerSession(req, env);
+  return json({ ok: true }, 200, { 'set-cookie': clearCustomerCookie() });
+});
+
+route('GET', '/api/customer/me', async ({ req, env }) => {
+  const account = await requireCustomer(req, env);
+  return json({
+    account: publicAccount(account),
+    standing: await customerStanding(env, account.phone_e164 ?? ''),
+    /** False in every environment today. See paymentsLive in lib/payments.ts. */
+    payments_live: paymentsLive(env),
+    card_note: CARD_NOTE_CUSTOMER,
+  }, 200, { 'cache-control': 'no-store' });
+});
+
+/**
+ * This person's bookings, across every business they have used.
+ *
+ * The thing an account buys a customer that a link never could: one place
+ * showing all of it, including the bookings they made before they had an
+ * account, which were attached to it the first time they verified the number.
+ *
+ * The guest link is NOT in this payload and cannot be. Only its hash is stored
+ * — see claimGuestHistory — so there is nothing to hand back; an account
+ * reaches its own bookings by id instead, and whoever still has an old link
+ * keeps using it.
+ */
+route('GET', '/api/customer/bookings', async ({ req, env }) => {
+  const account = await requireCustomer(req, env);
+  const rows = await env.DB.prepare(
+    `SELECT o.id AS order_id, o.status, o.currency, o.total_cents, o.created_at,
+            o.payment_brand, o.payment_last4,
+            oi.id AS order_item_id, oi.operator_id, oi.starts_at, oi.ends_at,
+            oi.price_cents, oi.parts_cents, oi.cancelled_at, oi.cancelled_by,
+            oi.arrived_at, oi.settlement, oi.refund_cents, oi.start_code,
+            op.business_name, op.profile_slug, op.trade
+       FROM orders o
+       JOIN order_items oi ON oi.order_id = o.id
+       LEFT JOIN operators op ON op.id = oi.operator_id
+      WHERE o.customer_account_id = ?
+      ORDER BY oi.starts_at DESC
+      LIMIT 200`,
+  ).bind(account.id).all<Record<string, unknown>>();
+  return json({ bookings: rows.results ?? [] }, 200, { 'cache-control': 'no-store' });
+});
+
+// ---------------------------------------------------------------------------
+// The customer's card
+//
+// NO CARD NUMBER EVER REACHES THIS WORKER, on this side of the market any more
+// than on the operator's. The processor's own form takes the details in the
+// customer's browser and hands back an opaque reference; that reference is all
+// these two routes carry, and lib/payments.ts refuses anything card-shaped at
+// ingress, at every database bind and at egress whatever a handler intends.
+//
+// NOTHING PRODUCES SUCH A REFERENCE TODAY. Stripe is not wired, so the POST
+// below is reachable and unused: it is the seam, not a claim that a card has
+// been taken. paymentsLive() is false everywhere, so no booking is refused for
+// want of a card and no card is charged.
+// ---------------------------------------------------------------------------
+route('GET', '/api/customer/payment-method', async ({ req, env }) => {
+  const account = await requireCustomer(req, env);
+  return json({
+    // The reference itself is deliberately absent — see publicAccount. The
+    // brand, the last four and the date are what lets a person recognise
+    // their own card, and they are the whole of what any screen needs.
+    card: account.payment_ref
+      ? {
+          payment_brand: account.payment_brand,
+          payment_last4: account.payment_last4,
+          payment_added_at: account.payment_added_at,
+        }
+      : null,
+    payments_live: paymentsLive(env),
+    note: CARD_NOTE_CUSTOMER,
+  }, 200, { 'cache-control': 'no-store' });
+});
+
+route('POST', '/api/customer/payment-method', async ({ req, env }) => {
+  const account = await requireCustomer(req, env);
+  const b = await body(req);
+  // PAYMENT SEAM. assertPaymentRef is the same check the operator's card goes
+  // through: a value with no letters in it is not a processor handle whatever
+  // else it may be, and that is the shape a mis-wired form actually sends.
+  await saveCustomerCard(env, account.id, {
+    ref: String(b.ref ?? ''), brand: str(b.brand), last4: str(b.last4),
+  });
+  return json({ ok: true }, 200, { 'cache-control': 'no-store' });
+});
+
+/**
+ * Closing a customer account.
+ *
+ * The number, the name, the mailbox and the card reference are emptied and
+ * every session on it dies. The bookings stay: an order is a record of
+ * something that happened between two people and one of them does not get to
+ * delete it unilaterally. Somebody who wants the bookings gone as well asks
+ * for the erasure below, which says what it is before it runs.
+ *
+ * A LIVE SUSPENSION IS NOT CLEARED BY THIS. Standing is keyed on the number
+ * and outlives the account, so "close it and sign up again" is not the way
+ * round the no-show ladder — verifying the same number produces an account
+ * that is still suspended.
+ */
+route('POST', '/api/customer/close', async ({ req, env }) => {
+  const account = await requireCustomer(req, env);
+  const result = await closeCustomerAccount(env, account.id);
+  return json(result, 200, {
+    'set-cookie': clearCustomerCookie(), 'cache-control': 'no-store',
+  });
+});
+
+/**
+ * "Delete everything you hold about me", from the account rather than a link.
+ *
+ * The same erasure DELETE /api/public/threads/:token/data performs and the same
+ * function underneath it — see eraseCustomerByPhone. Two doors, one
+ * implementation, because a customer who is erased through their account and
+ * finds the link version went further has not been erased.
+ *
+ * DELETE rather than POST because it is a deletion, and it is deliberately not
+ * reversible: no undo, no grace period, no tombstone. The front end must say
+ * so before it calls this.
+ */
+route('DELETE', '/api/customer/data', async ({ req, env }) => {
+  const account = await requireCustomer(req, env);
+  const phone = account.phone_e164;
+  if (!phone) throw badRequest('This account has nothing left to erase.', 'no_subject');
+  await enforceRateLimit(env, `erase-account:${account.id}`, 3, 3600);
+  const result = await eraseCustomerByPhone(env, phone);
+  // The account went with it, so the cookie in this browser now names a closed
+  // row. Cleared here rather than left to fail silently on the next request.
+  return json(result, 200, {
+    'set-cookie': clearCustomerCookie(), 'cache-control': 'no-store',
+  });
 });
 
 /**
@@ -1871,7 +2113,9 @@ route('GET', '/api/public/photo/:key', async ({ env, params, req }) => {
   return new Response(object.body, { headers });
 });
 
-// The map the landing page draws. Public on purpose: no account, no postcode.
+// The map the landing page draws. Public on purpose: no sign-in, no postcode.
+// Looking is free and always will be — an account is asked for at the moment
+// somebody books and not one step earlier.
 /**
  * How long an anonymous map response is reused at the edge.
  *
@@ -1945,8 +2189,11 @@ route('GET', '/api/public/map', async ({ req, env, url }) => {
 // Messages.
 //
 // A customer talks to a business without either side handing over a phone
-// number. The customer has no account: their identity is the secret in their
-// link, which is also how they get back to their booking.
+// number. A guest's identity on these routes is the secret in their link,
+// which is also how they get back to their booking — no sign-in is asked for
+// here even though customers have accounts since migration 0037, because
+// answering a business about a booking you already have is not the moment to
+// stop somebody and ask who they are.
 // ---------------------------------------------------------------------------
 
 /** Everything the guest page needs, without leaking anything the operator owns. */
@@ -2147,8 +2394,8 @@ route('GET', '/api/public/threads/:token', async ({ env, params }) => {
 });
 
 route('POST', '/api/public/threads/:token/messages', async ({ req, env, params }) => {
-  // Bucketed on the token rather than the IP: the guest has no account, the
-  // link is who they are, and a family on one connection must not share a
+  // Bucketed on the token rather than the IP: this route asks for no sign-in,
+  // the link is who they are, and a family on one connection must not share a
   // budget. Thirty a minute is roughly one message every two seconds — well
   // past how fast anybody types and slow enough that a script cannot fill an
   // operator's inbox.
@@ -2886,11 +3133,18 @@ route('POST', '/api/public/online/requests', async ({ req, env }) => {
   // cost of a scripted request is paid by a person mid-job — and it geocodes
   // an address against somebody else's quota on the way.
   await requireTurnstile(env, req, tokenFromBody(b));
+  // AN ACCOUNT, FOR THE SAME REASON THE CHECKOUT NEEDS ONE. An accepted
+  // instant request becomes an appointment: somebody is driving to a house at
+  // an agreed price, which is a booking whatever the route is called. Leaving
+  // this door open would have made "an account is needed to book" true of one
+  // path and false of the other, and the number typed into the form would once
+  // again be the way past a suspension. The number used below is the account's.
+  const { account, cookie } = await checkoutAccount(req, env, b);
   const made = await createInstantRequest(env, {
     operator_id: str(b.operator_id) ?? '',
     service_id: str(b.service_id),
-    guest_name: str(b.guest_name) ?? '',
-    phone: str(b.phone) ?? '',
+    guest_name: str(b.guest_name) ?? account.first_name ?? '',
+    phone: account.phone_e164 ?? '',
     email: str(b.email),
     address_line: str(b.address_line),
     postcode: str(b.postcode),
@@ -2898,7 +3152,7 @@ route('POST', '/api/public/online/requests', async ({ req, env }) => {
     duration_seconds: int(b.duration_seconds) ?? undefined,
     price_cents: int(b.price_cents) ?? undefined,
   } as never);
-  return json(made, 201);
+  return json(made, 201, cookie ? { 'set-cookie': cookie } : {});
 });
 
 // Polled by the customer while the fuse burns. Expiry is decided on read, so
@@ -2986,7 +3240,128 @@ route('DELETE', '/api/estimates/:id', async ({ req, env, params }) => {
 // "and pay for the lot once" is what this will be. Nothing here takes money —
 // placeOrder writes the order as 'pending' and says so — so the two routes
 // below price the basket and hold the appointments. See lib/payments.ts.
+//
+// THE CONFIRM STEP IS ALSO WHERE THE ACCOUNT IS MADE. Pricing a basket needs
+// nobody to be signed in and never will: browsing, comparing and changing your
+// mind are the whole of what this product is for, and a sign-in wall in front
+// of them is the friction the owner explicitly does not want. Placing the
+// order is the moment somebody has decided to buy, and that is the moment they
+// confirm a mobile number — one text, six digits, account created, order
+// placed, all in the same action.
 // ---------------------------------------------------------------------------
+
+/**
+ * The account a booking is placed against.
+ *
+ * Two ways in and no third. Either this device is already signed in — which is
+ * the ordinary case, because a customer's session lasts a year and is extended
+ * on use — or the request carries a number and the code that was texted to it,
+ * and verifying the code creates the account and the session in the same
+ * breath. Anything else is refused with `account_required`, which is a 401 the
+ * front end turns into the two-field step rather than a dead end.
+ *
+ * The cookie comes back so the caller can put it on the response: a customer
+ * who has just signed up must not have to do it again for the next thing they
+ * do, and a session minted and then dropped is worse than none.
+ */
+async function checkoutAccount(
+  req: Request, env: Env, b: Record<string, unknown>,
+): Promise<{ account: CustomerAccount; cookie: string | null }> {
+  const existing = await currentCustomer(req, env);
+  if (existing) return { account: existing, cookie: null };
+
+  const country = (str(b.country) ?? 'US').toUpperCase();
+  const phone = toE164(str(b.phone), country);
+  const code = str(b.code);
+  if (!phone || !code) throw new HttpError(401, ACCOUNT_REQUIRED, 'account_required');
+
+  // The same two ceilings the standalone verify route applies, because this is
+  // the same act and a second door onto it must not be the cheap one.
+  await enforceRateLimit(env, `otp-verify:${phone}`, 10, 900);
+  await enforceRateLimit(env, `otp-verify-ip:${clientIp(req)}`, 30, 900);
+
+  const signed = await signInWithCode(env, {
+    phone, code,
+    userAgent: req.headers.get('user-agent'),
+    first_name: firstNameOnly(str(b.guest_name) ?? str(b.first_name)) || null,
+    email: str(b.email),
+  });
+  return { account: signed.account, cookie: signed.cookie };
+}
+
+/** What a customer is told when a card is required and there is not one. */
+const CARD_REQUIRED =
+  'Add a card to finish booking. It is what the job is paid with, and it is '
+  + 'the same card a late cancellation is charged against — see the amounts on '
+  + 'your account.';
+
+/**
+ * The card this order would be charged to, saved onto the account on the way.
+ *
+ * PAYMENT SEAM, and the honest state of it is that the third branch is the
+ * only one anything reaches today: nothing in this product produces a
+ * processor reference, because Stripe is not wired, so `card_ref` is never
+ * sent and no account has one. paymentsLive() is false in every environment,
+ * so a booking without a card is placed exactly as it is now and the order
+ * says 'pending'. The day the seam lands, the same three branches start
+ * refusing a booking that has no card — which is the point of writing them
+ * now rather than discovering the requirement on the day money moves.
+ */
+async function checkoutCard(
+  env: Env, account: CustomerAccount, b: Record<string, unknown>,
+): Promise<{ ref: string; brand: string | null; last4: string | null } | null> {
+  const ref = str(b.card_ref);
+  if (ref) {
+    // Validated and stored before the order, so that a customer who adds a
+    // card and then loses the race for a slot still has the card they added.
+    await saveCustomerCard(env, account.id, {
+      ref, brand: str(b.card_brand), last4: str(b.card_last4),
+    });
+    return { ref: assertPaymentRef(ref), brand: safeBrand(str(b.card_brand)), last4: safeLast4(str(b.card_last4)) };
+  }
+  if (account.payment_ref) {
+    return {
+      ref: account.payment_ref,
+      brand: account.payment_brand,
+      last4: account.payment_last4,
+    };
+  }
+  if (paymentsLive(env)) throw new HttpError(402, CARD_REQUIRED, 'card_required');
+  return null;
+}
+/**
+ * What booking actually requires on this deployment, said once by the server.
+ *
+ * THE POINT OF THIS ROUTE IS THAT THE ANSWER IS NOT A CONSTANT IN A BUNDLE.
+ * Whether a card is needed depends on a Worker secret, and whether an account
+ * can be created at all depends on whether a text message can be delivered —
+ * neither of which the browser can know, and both of which a page has to state
+ * correctly or it is lying to somebody about to spend money. A build with a
+ * hard-coded "no account needed" is exactly how the whole site came to say a
+ * thing that was never the model.
+ *
+ * `sms_ready` false is the honest description of every deployment today: no
+ * text-message provider is configured, so no account can be created and
+ * nothing can be booked. That is a refusal rather than a fallback — see
+ * sendSignInCode — and a page that knows it can say so before somebody fills
+ * in a basket.
+ */
+route('GET', '/api/public/booking-state', async ({ env }) => {
+  return json({
+    /** Always true since migration 0037. Booking is what needs one. */
+    account_required: true,
+    /** Reading a booking you already have never needs one. */
+    guest_link_works: true,
+    sms_ready: smsConfigured(env),
+    payments_live: paymentsLive(env),
+    /** A card is asked for at checkout only once payment is switched on. */
+    card_required: paymentsLive(env),
+    account_note: ACCOUNT_REQUIRED,
+    card_note: CARD_NOTE_CUSTOMER,
+    sms_note: smsConfigured(env) ? null : SMS_NOT_CONFIGURED,
+  }, 200, { 'cache-control': 'no-store' });
+});
+
 route('POST', '/api/public/orders/price', async ({ req, env }) => {
   const b = await body(req);
   const items = Array.isArray(b.items) ? b.items : [];
@@ -3010,17 +3385,32 @@ route('POST', '/api/public/orders', async ({ req, env }) => {
   // ladder at the operator's expense, and enough of them walk the business
   // into the suspension ladder. Nothing above this line has written anything.
   await requireTurnstile(env, req, tokenFromBody(b));
+  // Before placeOrder and after the challenge. An account is what the booking
+  // is written against — the number on the order comes off it and not out of
+  // this body, which is what stops a suspended customer booking under somebody
+  // else's mobile — so it has to be resolved before a single row is written.
+  const { account, cookie } = await checkoutAccount(req, env, b);
+  const card = await checkoutCard(env, account, b);
   const placed = await placeOrder(env, {
     items: Array.isArray(b.items) ? b.items as any : [],
-    guest_name: String(b.guest_name ?? ''),
+    guest_name: String(b.guest_name ?? account.first_name ?? ''),
     phone: String(b.phone ?? ''),
-    email: str(b.email) ?? undefined,
+    email: str(b.email) ?? account.email ?? undefined,
     address_line: str(b.address_line) ?? undefined,
     postcode: str(b.postcode) ?? undefined,
     thread_token: str(b.thread_token) ?? undefined,
+    account: { id: account.id, phone: account.phone_e164 ?? '' },
+    card,
   });
   const base = env.APP_URL.replace(/\/$/, '');
-  return json({ ...placed, link: `${base}/c/${placed.thread_token}` }, 201);
+  return json(
+    { ...placed, account: publicAccount(account), link: `${base}/c/${placed.thread_token}` },
+    201,
+    // Only when this request is what created the session. A customer who was
+    // already signed in gets no Set-Cookie, so their session is not silently
+    // replaced by a shorter one on every booking.
+    cookie ? { 'set-cookie': cookie } : {},
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -3640,6 +4030,21 @@ route('GET', '/book/:gapId', async ({ req, env }) => {
   return assets.fetch(req);
 });
 
+/**
+ * The fields the no-JavaScript booking form carries, put back into the page as
+ * hidden inputs while the customer types the code we just texted them.
+ *
+ * Without this the code step would lose the address and the name and the whole
+ * form would have to be filled in twice. Every value is escaped on the way
+ * back out: these are strings a stranger typed and they are about to be
+ * rendered into a document.
+ */
+const rebookFields = (b: Record<string, unknown>, keys: string[]): string =>
+  keys.map((k) => {
+    const v = str(b[k]);
+    return v ? `<input type="hidden" name="${k}" value="${escapeHtml(v)}">` : '';
+  }).join('');
+
 route('POST', '/book/:gapId', async ({ req, env, params }) => {
   const b = await body(req);
   // The no-JavaScript booking form, so the same reasoning as /api/public/orders
@@ -3649,20 +4054,79 @@ route('POST', '/book/:gapId', async ({ req, env, params }) => {
   await enforceRateLimit(env, `order:${clientIp(req)}`, 10, 3600);
   await enforceRateLimit(env, `book-gap:${params.gapId ?? ''}`, 20, 3600);
   try {
-    const { slot, thread_token } = await claimSlot(env, {
+    // THE SAME ACCOUNT RULE AS THE JSON CHECKOUT, IN THE ONLY SHAPE A FORM CAN
+    // TAKE IT. A page with no JavaScript cannot call one endpoint for a code
+    // and another for the booking, so the one form posts twice: the first post
+    // sends the code and comes back as this page with everything typed so far
+    // held in hidden fields, and the second carries the code and books. It is
+    // the same two steps the React checkout does, drawn in HTML.
+    let account = await currentCustomer(req, env);
+    let cookie: string | null = null;
+
+    if (!account) {
+      const gap = await env.DB.prepare(
+        `SELECT o.country FROM gaps g JOIN operators o ON o.id = g.operator_id
+          WHERE g.id = ?`,
+      ).bind(params.gapId ?? '').first<{ country: string }>();
+      const phone = toE164(str(b.phone), gap?.country ?? 'US');
+      if (!phone) {
+        throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
+      }
+
+      const code = str(b.code);
+      if (!code) {
+        // Step one. Nothing is booked and nothing is written except the code
+        // row; the opening is still there for this person to come back to.
+        const sent = await sendSignInCode(env, {
+          phone, ip: clientIp(req), lang: str(b.language),
+          echo: mayEchoSignInLink(env, req.headers.get('x-auth-debug')),
+        });
+        return html(page('Confirm your mobile', `<h1>Confirm your mobile</h1>
+<p class="meta">We have texted a six-digit code to ${escapeHtml(phone)}. It lasts
+${Math.round(sent.expires_in / 60)} minutes and works once. Typing it in creates your
+account and books the slot — there is nothing else to fill in.</p>
+<form method="post" action="/book/${encodeURIComponent(params.gapId ?? '')}">
+${rebookFields(b, ['first_name', 'phone', 'email', 'address_line', 'postcode', 'thread_token', 'language'])}
+<div class="find"><label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code"
+ pattern="[0-9]*" maxlength="6" required></label></div>
+<button class="yes" type="submit">Confirm and book</button>
+</form>
+<p class="note">Already have a booking? The link in your confirmation opens it without
+signing in.</p>`));
+      }
+
+      await enforceRateLimit(env, `otp-verify:${phone}`, 10, 900);
+      await enforceRateLimit(env, `otp-verify-ip:${clientIp(req)}`, 30, 900);
+      const signed = await signInWithCode(env, {
+        phone, code,
+        userAgent: req.headers.get('user-agent'),
+        first_name: firstNameOnly(str(b.first_name)) || null,
+        email: str(b.email),
+      });
+      account = signed.account;
+      cookie = signed.cookie;
+    }
+
+    const { thread_token } = await claimSlot(env, {
       gapId: params.gapId ?? '',
-      first_name: String(b.first_name ?? ''),
+      first_name: String(b.first_name ?? account.first_name ?? ''),
       phone: String(b.phone ?? ''),
       email: str(b.email),
       address_line: str(b.address_line),
       postcode: str(b.postcode),
       thread_token: str(b.thread_token),
+      account: { id: account.id, phone: account.phone_e164 ?? '' },
     });
-    // Straight to their conversation. That page is the confirmation, the way
-    // to reach the business, and the only way back — there is no account.
+    // Straight to their conversation. That page is the confirmation and the
+    // way to reach the business, and it keeps working on any phone with the
+    // link in it — signed in or not.
     return new Response(null, {
       status: 303,
-      headers: { location: `/c/${thread_token}`, 'cache-control': 'no-store' },
+      headers: {
+        location: `/c/${thread_token}`,
+        'cache-control': 'no-store',
+        ...(cookie ? { 'set-cookie': cookie } : {}),
+      },
     });
   } catch (e) {
     const msg = e instanceof HttpError ? e.message : 'Could not book that slot.';
@@ -3765,12 +4229,17 @@ route('POST', '/webhooks/twilio/status', async ({ req, env }) => {
 /**
  * A customer erasing themselves, authorised by their own link.
  *
- * The link is the only identity a customer has here -- migration 0011 -- and
- * it is not a weak one for this purpose: whoever holds it can already read the
- * booking, the address, the conversation and the photographs. Asking for
- * anything more would mean building the account this product deliberately does
- * not make people create, and the practical result of that is a "delete my
- * data" button nobody can use.
+ * THIS ROUTE IS UNCHANGED BY ACCOUNTS EXISTING, and it stays that way. The
+ * link is not a weak authority for this purpose: whoever holds it can already
+ * read the booking, the address, the conversation and the photographs, so
+ * asking them to prove a mobile number first would add a step and no security.
+ * More to the point, somebody who wants to be forgotten should not have to
+ * make an account in order to be forgotten -- and a customer who booked before
+ * migration 0037 has none to sign in with.
+ *
+ * A customer who does have one reaches the identical erasure at
+ * DELETE /api/customer/data, behind their session. Both call the same function
+ * and remove the same rows -- see eraseCustomerByPhone.
  *
  * DELETE rather than POST because it is a deletion, and it is deliberately not
  * reversible: there is no undo, no thirty-day grace period and no tombstone
@@ -4094,6 +4563,14 @@ async function runScheduled(env: Env): Promise<void> {
     // contacted whom, and there is no reason to keep one of those a minute
     // longer than the thing it exists to measure.
     await step('sweep enquiry reach', () => sweepEnquiryReach(env));
+
+    // Sign-in codes and dead customer sessions. A used or expired code is a
+    // permanent record that a particular number once signed in, held for no
+    // purpose whatsoever, and a revoked session is the same. Both age out an
+    // hour and a day past the point anything could accept them, so that a
+    // request in flight when this runs still gets the refusal it would have
+    // got rather than a different one.
+    await step('sweep customer auth', () => sweepCustomerAuth(env));
 
     // Gaps whose start time has passed are dead.
     await step('expire gaps', () => env.DB.prepare(

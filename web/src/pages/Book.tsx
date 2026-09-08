@@ -6,12 +6,14 @@ import {
   ApiError, api, durationLabel,
   type PricedItem, type PricedOrder, type PricedService, type PublicSlot,
 } from '../api';
+import CodeSignIn, { CODE_DIGITS } from '../components/CodeSignIn';
 import PaymentState from '../components/PaymentState';
 import SiteHeader from '../components/SiteHeader';
 import Turnstile, { type TurnstileHandle } from '../components/Turnstile';
 import { Icon, Spinner } from '../components/ui';
 import '../styles-book.css';
 import '../styles-parts.css';
+import { useBookingState, useCustomer } from '../lib/customer';
 import { useDocumentTitle } from '../lib/title';
 
 /**
@@ -58,7 +60,33 @@ import { useDocumentTitle } from '../lib/title';
  *   - a way forward. No step may be a dead end: where a button is off, the
  *     sentence under it says what to do, and the thing to do is on the same
  *     screen.
- *   - the account that is never required. Nothing below asks for one.
+ *
+ * WHERE THE ACCOUNT COMES IN, AND WHY IT IS NOT A FIFTH STEP.
+ *
+ * Booking needs an account and, once payment is switched on, a card. The model
+ * this page was written on — "no account to create, here or later" — was never
+ * the model, and that sentence was on the step below until now.
+ *
+ * What is true is that neither is asked for until somebody has decided to buy
+ * something, which is exactly what arriving at the confirm step means. So the
+ * sign-up lives ON that step, in the same action as the card and under the same
+ * button: the mobile number was already answered two steps back, so all that is
+ * added is the six digits texted to it, and `placeOrder` creates the account
+ * and holds the appointments in one request. A fifth step headed "Create an
+ * account" would be the separate journey the owner explicitly does not want,
+ * and it would put a wall between a decision and the thing it was a decision
+ * about.
+ *
+ * Somebody already signed in is not asked again — a customer's session lasts a
+ * year and is extended on use, so the ordinary case for a returning customer is
+ * that this step says who they are and moves on.
+ *
+ * AND TODAY NONE OF IT CAN COMPLETE. No text-message provider is configured on
+ * this deployment, so no account can be created and nothing can be booked. That
+ * is read off the Worker rather than assumed — see `api.bookingState` — and it
+ * is said at the top of this page rather than discovered at the bottom of it,
+ * because letting somebody fill a basket in first and then refusing them is the
+ * one thing worse than saying so.
  */
 
 /** The four questions, in the order they are asked. */
@@ -85,8 +113,9 @@ const STEP_HEADING: Record<Step, string> = {
 const STEP_SUB: Record<Step, string> = {
   what: 'Tick what you want from this opening. You can add openings from other '
     + 'businesses and other days before you go on.',
-  where: 'Asked once, and it covers every appointment in your basket. There is '
-    + 'no account to create, here or later.',
+  where: 'Asked once, and it covers every appointment in your basket. The '
+    + 'mobile number is also the account you book against — we text a code to '
+    + 'it on the last step.',
   extra: 'Optional. Skip it and nothing is lost — you can write to them in your '
     + 'messages the moment this is booked.',
   confirm: 'Nothing is booked until you press the button at the bottom. Every '
@@ -153,6 +182,17 @@ const PROBLEM: Record<string, string> = {
     + 'itself, so press Book again.',
   turnstile_unavailable: 'The security check is not answering at the moment. '
     + 'Nothing is lost — wait a few seconds and press Book again.',
+  // The account, at the moment it is needed. None of these is a dead end: the
+  // fields that answer all three are on this same step.
+  account_required: 'Type the six digits we texted you, and the account is '
+    + 'created as this books. Nothing in your basket has been taken.',
+  bad_code: 'That code is wrong or has expired. Ask for a new one — the button '
+    + 'above sends another, and nothing you have typed is lost.',
+  sms_not_configured: 'We cannot send a text message on this deployment, so an '
+    + 'account cannot be created and nothing can be booked yet. That is our end '
+    + 'rather than anything you did.',
+  card_required: 'A card is needed to finish this, and there is nowhere on this '
+    + 'site to add one yet. Nothing in your basket has been taken.',
 };
 
 const say = (code: string, fallback: string) => PROBLEM[code] ?? fallback;
@@ -265,6 +305,39 @@ export default function Book() {
 
   const [placing, setPlacing] = useState(false);
   const [placeError, setPlaceError] = useState<string | null>(null);
+
+  /**
+   * The account this order is placed against.
+   *
+   * `customer` is who is already signed in, which is the ordinary case for
+   * anybody who has booked here before — a customer session lasts a year and is
+   * extended on use. `bookingState` is what this deployment requires and what
+   * it can actually do today; both are read from the Worker rather than assumed
+   * here, because a bundle that carries its own answer to "does booking need an
+   * account" is how this site came to promise one that was never true.
+   */
+  const { account, standing, loading: sessionLoading, refresh: refreshAccount } = useCustomer();
+  const bookingState = useBookingState();
+  /**
+   * The six digits, when this device is not signed in yet.
+   *
+   * They are never verified on their own: they go with the order, so the
+   * account is created and the appointments held in one request and somebody
+   * signing up does not lose the slot to a second round trip.
+   */
+  const [code, setCode] = useState('');
+  /** Whatever the Worker said about those digits, drawn against the field. */
+  const [codeError, setCodeError] = useState<string | null>(null);
+  /**
+   * What the Worker said when the code request itself turned out to be
+   * impossible.
+   *
+   * `bookingState.sms_ready` answers that before anything is pressed, and this
+   * is the same answer arriving late — the state request failed, or the
+   * provider went away since it was asked. Without it the page would go on
+   * telling somebody to type digits that are never going to arrive.
+   */
+  const [signUpBlocked, setSignUpBlocked] = useState<string | null>(null);
 
   // --- which question is on screen ------------------------------------------
   const [step, setStep] = useState<Step>('what');
@@ -501,6 +574,7 @@ export default function Book() {
     if (placing || wanted.length === 0) return;
     setPlacing(true);
     setPlaceError(null);
+    setCodeError(null);
     try {
       const res = await api.placeOrder({
         items: wanted,
@@ -510,10 +584,21 @@ export default function Book() {
         ...(zip.trim() ? { postcode: zip.trim() } : {}),
         ...(threadToken ? { thread_token: threadToken } : {}),
         ...(captcha.current ? { turnstile_token: captcha.current } : {}),
+        // Only when this device is not signed in. A signed-in caller's order is
+        // written against the account and not against anything in this body —
+        // which is what stops a suspended customer booking under somebody
+        // else's mobile — so sending digits as well would be noise.
+        ...(account ? {} : { code, country: 'US' }),
       });
+      // The Worker set the session cookie on that response when the account was
+      // created here, so this page stops asking for a code the moment it knows
+      // — the customer may go straight back for a second opening.
+      if (!account) void refreshAccount();
       if (!res.thread_token) {
-        // The order exists but there is no conversation to send them to, and
-        // that page is the only record a customer without an account gets.
+        // The order exists but there is no conversation to send them to. The
+        // account now holds the booking, so it is not lost — but the
+        // conversation is where the messages, the start code and the van live,
+        // and none of those is reachable without that link.
         setPlaceError('Your booking went through, but we could not open your '
           + `conversation. Keep this reference and contact the business: ${res.order_id}`);
         return;
@@ -536,7 +621,17 @@ export default function Book() {
     } catch (err) {
       const code = err instanceof ApiError ? err.code : undefined;
       const fallback = err instanceof Error ? err.message : 'That did not go through.';
-      setPlaceError(code ? say(code, fallback) : fallback);
+      // A refusal about the code goes against the code field and NOWHERE ELSE.
+      // CodeSignIn announces it and puts the caret back in the box it is about,
+      // so the customer is already looking at it; printing the same sentence a
+      // second time under the button is two amber boxes saying one thing, and
+      // the "why this button is off" line below already covers the button's
+      // own side of it.
+      if (code === 'bad_code' || code === 'account_required') {
+        setCodeError(say(code, fallback));
+      } else {
+        setPlaceError(code ? say(code, fallback) : fallback);
+      }
       // A Turnstile token is single-use and short-lived, so the one just spent
       // is dead whatever the failure was — a lost slot as much as a refused
       // challenge. Resetting on every failure is what makes the second press
@@ -551,7 +646,8 @@ export default function Book() {
     } finally {
       setPlacing(false);
     }
-  }, [placing, wanted, name, phone, address, zip, note, threadToken, navigate]);
+  }, [placing, wanted, name, phone, address, zip, note, threadToken, navigate,
+    account, code, refreshAccount]);
 
   // Named after the business once we know it. An opening that has gone says so
   // in the tab too, because that is the branch the page renders.
@@ -561,7 +657,55 @@ export default function Book() {
         : 'Book an appointment');
 
   const orderProblems = priced?.problems ?? [];
-  const ready = Boolean(priced?.ok) && wanted.length > 0;
+
+  /**
+   * Whether a code can be sent here at all, and the sentence saying it cannot.
+   *
+   * Two sources for one fact: what the Worker said before anything was pressed,
+   * and what it said when the send was actually tried. The second wins, because
+   * it is the newer answer and because the first can be missing — a failed GET
+   * leaves `bookingState` null, and null is deliberately not a no.
+   */
+  const smsOff = signUpBlocked
+    ?? (bookingState && !bookingState.sms_ready ? bookingState.sms_note : null);
+
+  /**
+   * Why this basket cannot be booked at all right now, or null.
+   *
+   * SAID BEFORE THE BASKET RATHER THAN UNDER THE BUTTON. Both of these are
+   * facts about the deployment or about the reader that no amount of ticking
+   * services can change, so meeting one at the bottom of a checkout — after
+   * choosing, after typing an address — is meeting it at the worst possible
+   * moment. The ordinary sign-up is not in here, because that one IS answerable
+   * on the confirm step and belongs beside the field that answers it.
+   *
+   * Refusing to let somebody book because a GET failed would be worse than
+   * letting the Worker refuse the order itself, which it will, so an
+   * unanswered question stops nothing.
+   */
+  const cannotBook: { lead: string; note: string } | null =
+    smsOff && !account
+      ? { lead: 'Bookings are not open yet.', note: smsOff }
+      : standing?.blocked && standing.message
+        // A different sentence, because it is a different fact: the site is
+        // working and this person in particular is paused. Telling somebody
+        // serving a no-show suspension that "bookings are not open yet" would
+        // be a lie of exactly the kind this whole change exists to remove.
+        ? { lead: 'Booking is paused on this account.', note: standing.message }
+        : null;
+
+  /**
+   * The digits, when this device is not signed in.
+   *
+   * Only whole codes turn the button on. A five-digit code is not a code the
+   * Worker can do anything with, and spending a press of Book on one costs the
+   * customer a round trip to be told what the field already knew.
+   */
+  const needsCode = !sessionLoading && !account;
+  const codeReady = !needsCode || code.length === CODE_DIGITS;
+
+  const ready = Boolean(priced?.ok) && wanted.length > 0
+    && !sessionLoading && !cannotBook && codeReady;
   const isSample = menu?.slot?.is_sample ?? false;
 
   const stepNo = STEPS.indexOf(step) + 1;
@@ -623,6 +767,20 @@ export default function Book() {
           <Icon name="back" size={16} />
           All open appointments
         </Link>
+
+        {/* THE FIRST THING ON THE PAGE WHEN NOTHING HERE CAN COMPLETE.
+            No text-message provider is configured on any deployment today, so
+            no account can be created and so nothing can be booked; a suspended
+            number is the other case. Both are said here, in the Worker's own
+            words, rather than left to be discovered by a customer who has
+            already chosen three services and typed their address. */}
+        {cannotBook && (
+          <p className="book-blocked" role="status">
+            <strong>{cannotBook.lead}</strong> {cannotBook.note} You can still
+            look around, compare prices and message a business, and a booking
+            you already have still opens from its own link.
+          </p>
+        )}
 
         {menuState === 'loading' && <Spinner label="Opening this appointment" />}
 
@@ -1271,6 +1429,72 @@ export default function Book() {
               </p>
             )}
 
+            {/* --- the account, and the card --------------------------------
+                The sign-up, at the moment it belongs and nowhere else: after
+                every question has been answered, in the same action as the
+                card, under the same button. The mobile number was answered two
+                steps back and is shown here with its own way back to that
+                step, so all this adds is the six digits texted to it — and a
+                customer who is already signed in is not asked anything at all.
+            */}
+            <section className="book-account" aria-labelledby="bk-acct">
+              <h3 id="bk-acct">Your account</h3>
+
+              {sessionLoading ? (
+                <p className="book-hint">Checking whether you are signed in…</p>
+              ) : account ? (
+                <p className="book-hint">
+                  Signed in as <strong>{account.phone_e164}</strong>. Nothing
+                  else is asked for — this device stays signed in, so the next
+                  booking is one button.
+                </p>
+              ) : (
+                <>
+                  <p className="book-hint">
+                    Booking needs an account, and this is the whole of making
+                    one. We text six digits to{' '}
+                    <strong>{phone.trim() || 'the number you gave'}</strong> and
+                    you type them in below; the account is created as this books,
+                    in the same press.{' '}
+                    <button type="button" className="linkish" onClick={() => go('where')}>
+                      Use a different number
+                      <span className="sr-only"> — go back to where you are</span>
+                    </button>
+                  </p>
+                  <CodeSignIn
+                    phone={phone} code={code} onCode={setCode}
+                    state={bookingState} codeError={codeError}
+                    turnstileToken={() => captcha.current}
+                    onTokenSpent={() => {
+                      captcha.current = null;
+                      widget.current?.reset();
+                    }}
+                    // A 503 from the send is the same fact the top of this page
+                    // states when the deployment is known to be unready, so it
+                    // is raised to the same notice rather than left as a line
+                    // beside a button that has gone.
+                    onBlocked={setSignUpBlocked}
+                  />
+                </>
+              )}
+
+              {/* THE CARD SEAM, and the honest description of it. There is
+                  deliberately no card number field here: the processor's own
+                  element will own that box, the Worker refuses anything shaped
+                  like a card number at ingress, and a dead-looking card form
+                  would say the opposite of both. The sentence about what the
+                  card is for is the Worker's own, so this page and the account
+                  page cannot come to describe it differently. */}
+              <p className="book-seam">
+                <strong>No card is asked for today, and none can be taken.</strong>
+                {' '}
+                {bookingState?.card_note
+                  ?? 'A card is what you will pay with, and it is not charged '
+                    + 'when you add it. Nothing can be taken from one until '
+                    + 'payment is switched on.'}
+              </p>
+            </section>
+
             {/* Last thing before the button, which is where it belongs: after
                 everything the customer types, and in front of the one control
                 that spends it. Renders nothing at all until a site key is
@@ -1278,7 +1502,11 @@ export default function Book() {
             <Turnstile ref={widget} action="book"
               onToken={(t) => { captcha.current = t; }} />
 
-            {placeError && <div className="error">{placeError}</div>}
+            {/* Announced rather than merely drawn. A press of Book that comes
+                back refused — a lost slot, a wrong code — otherwise leaves
+                somebody who cannot see this box with a button that appears to
+                have done nothing at all. */}
+            {placeError && <div className="error" role="alert">{placeError}</div>}
 
             <div className="book-nav">
               {/* Back is beside the button that spends the money on every
@@ -1294,11 +1522,23 @@ export default function Book() {
               </button>
             </div>
 
+            {/* One sentence, and it is always the reason that actually applies.
+                The order matters: the two the customer can do nothing about
+                come first, so nobody is told to type a code on a deployment
+                that cannot send one. */}
             {!ready && !placing && (
               <p className="book-nav-why">
-                {pricing
-                  ? 'Checking your basket is still bookable…'
-                  : 'Sort out the notes above and this button turns on.'}
+                {cannotBook
+                  ? 'Nothing can be booked here yet — the note at the top of '
+                    + 'this page says why.'
+                  : sessionLoading
+                    ? 'Checking whether you are already signed in…'
+                    : !codeReady
+                      ? `Type the ${CODE_DIGITS} digits we texted you and this `
+                        + 'button turns on. Ask for the code with the button above.'
+                      : pricing
+                        ? 'Checking your basket is still bookable…'
+                        : 'Sort out the notes above and this button turns on.'}
               </p>
             )}
           </form>

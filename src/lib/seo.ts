@@ -1331,6 +1331,35 @@ export const PAY_TODAY_SHORT =
   + 'directly.';
 
 /**
+ * What booking actually requires of a customer, in one sentence.
+ *
+ * SEPARATE FROM PAY_TODAY_SHORT ON PURPOSE, and not because the two describe
+ * different moments — they describe the same one. PAY_TODAY_SHORT is pinned
+ * character for character against web/src/components/PaymentState.tsx by
+ * test/public-payload.test.ts, so that the crawler's copy of a page and the
+ * React copy of the same URL cannot say different things about money. This
+ * sentence is about the ACCOUNT rather than the money; folding it into the
+ * pinned constant would break that pin for a reason that has nothing to do
+ * with what the pin protects.
+ *
+ * THE CORRECTION IT EXISTS TO MAKE. Every page this module renders was written
+ * on "no account is ever required, here or later". That was never the model.
+ * A customer needs an account and a card to book; what is true is only that
+ * neither is asked for until they have decided to buy something. So the
+ * account half is stated as a fact — it is real, it works, and the checkout
+ * enforces it today — and the card half is stated as the design, exactly as
+ * every other sentence about money on these pages is, because nothing in this
+ * product can take a card yet.
+ */
+export const ACCOUNT_TODAY_SHORT =
+  'Booking needs an account, and making one is a text message: you give a '
+  + 'mobile number at the moment you book and type the six digits we send '
+  + 'back. Looking, comparing prices and messaging a business need no account '
+  + 'at all, and neither does opening a booking you already have — the link in '
+  + 'your confirmation still works on any phone. A card is needed as well once '
+  + 'paying on the site is switched on, which it is not yet.';
+
+/**
  * One opening per gap, whatever it is tagged with.
  *
  * mapData offers a whole free day in every neighbourhood the business covers,
@@ -1425,13 +1454,23 @@ business trading today. Each one is labelled where it appears.</p>`;
 }
 
 /**
- * The six answers the React trade page carries, kept in one array so the
- * visible block and the FAQPage below it are built from the same words. Every
- * one of them describes something this product actually does; there is nothing
- * here about vetting, insurance, licensing or response times.
+ * The answers the React trade page carries, kept in one array so the visible
+ * block and the FAQPage below it are built from the same words. Every one of
+ * them describes something this product actually does; there is nothing here
+ * about vetting, insurance, licensing or response times.
+ *
+ * "Do I need an account?" was added when the model was corrected. It is the
+ * first thing a stranger wants to know before they start filling anything in,
+ * these pages used to answer it wrongly by implication, and an FAQ that
+ * carefully explains cancellation fees while leaving out the one requirement
+ * for booking at all is not a complete answer to anything.
  */
 function faqsFor(tradeName: string): Array<{ q: string; a: string }> {
   return [
+    {
+      q: 'Do I need an account?',
+      a: ACCOUNT_TODAY_SHORT,
+    },
     {
       q: 'How do I pay?',
       a: `${PAY_TODAY_SHORT} The design is that the labour is paid for here, on `
@@ -1791,7 +1830,7 @@ doing the work.</p>`;
 const ENOUGH = 3;
 
 /**
- * The six answers the React cost page carries, word for word.
+ * The answers the React cost page carries, word for word.
  *
  * This file and web/src/pages/CostGuide.tsx render the same route — one for a
  * visitor with no JavaScript and for crawlers, one for a visitor with it — and
@@ -1800,9 +1839,17 @@ const ENOUGH = 3;
  * silently, so any edit here has to be made in that file's faqsFor as well.
  * The trade page keeps its own set: those answers are about booking a job,
  * these are about where a price on this page came from.
+ *
+ * "Do I need an account?" is the one answer both sets carry, in the same
+ * words, because it is the same question wherever it is asked and because
+ * these pages spent their whole existence implying the opposite answer.
  */
 function costFaqsFor(tradeName: string): Array<{ q: string; a: string }> {
   return [
+    {
+      q: 'Do I need an account?',
+      a: ACCOUNT_TODAY_SHORT,
+    },
     {
       q: `Are these average prices for ${tradeName}?`,
       a: 'No. Every figure on this page is a price a business on Slotfill is '
@@ -2823,7 +2870,9 @@ ${entry
     : '<p><a class="book" href="/">See what is open near you</a></p>'}
 <p class="note">You can message ${escapeHtml(o.business_name)} or ask them for a quote
 without booking anything first — both are on this page, and neither needs an
-account. Messages go through the app. No phone numbers are exchanged.</p>
+account. Booking does: a mobile number and the six-digit code we text back,
+given at the moment you book. Messages go through the app. No phone numbers are
+exchanged.</p>
 ${o.bio ? `<section><h2>About</h2><p>${escapeHtml(o.bio)}</p></section>` : ''}
 <section>
 <h2>Overview</h2>

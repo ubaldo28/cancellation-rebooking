@@ -1,0 +1,135 @@
+/*
+ * The customer's account: the sign-up box, and the small page behind it.
+ *
+ * Two owners and one file, because the two are always read together — the
+ * sign-up box IS the whole of /account when nobody is signed in, and it is the
+ * last thing on the checkout when they are not. CodeSignIn.tsx and Account.tsx
+ * both import this, the same arrangement PaymentState and its stylesheet use:
+ * a page gets the appearance by rendering the component rather than by
+ * remembering a stylesheet.
+ *
+ * NOTHING HERE SETS A COLOUR THAT IS NOT ALREADY IN THE PALETTE. The error and
+ * refusal lines wear the same amber the payment notice wears, which is the
+ * site's existing treatment for "this is not what it looks like", and the body
+ * copy is --ink-3 and --muted like every other hint on the site. That is what
+ * keeps the contrast ratios the palette was measured for.
+ */
+
+/* --------------------------------------------------------------------------
+ * Links inside running text, underlined
+ *
+ * The same rule and the same reason as the block in styles-info.css: styles.css
+ * sets `a { text-decoration: none }` globally, and --accent-ink against the body
+ * ink is 1.78:1 — nowhere near the 3:1 WCAG 1.4.1 asks for between a link and
+ * the words around it, so with no underline colour is the only signal and there
+ * is effectively no signal at all for a reader who does not see the green. Every
+ * link on this page sits inside a sentence, so every one of them is underlined.
+ * axe caught this on the signed-out page as `link-in-text-block` and it would
+ * have caught the rest as soon as they had a paragraph to sit in.
+ * ----------------------------------------------------------------------- */
+.acct p a,
+.acct-row a,
+.signup a {
+  text-decoration: underline;
+  /* Clear of the descenders rather than striking the tail of every "y". */
+  text-underline-offset: 0.12em;
+}
+
+.signup { display: flex; flex-direction: column; gap: 12px; }
+
+.signup-field { display: flex; flex-direction: column; gap: 5px; }
+.signup-field label { display: flex; flex-direction: column; gap: 5px; font-weight: 620; }
+
+/* The code is read off a lock screen and typed one digit at a time, so it gets
+   the mono face and room between the characters. Capped rather than full width:
+   a six-character field as wide as the card invites a sentence. */
+.signup-field input[inputmode='numeric'] {
+  max-width: 11ch;
+  font-family: var(--mono);
+  font-size: 19px;
+  letter-spacing: 0.24em;
+}
+
+.signup-hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* Always in the document; empty until the text arrives. Zero height when there
+   is nothing in it so an empty live region does not open a gap. */
+.signup-said {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+.signup-said:empty { display: none; }
+
+.signup-error,
+.signup-blocked {
+  margin: 0;
+  padding: 11px 13px;
+  border: 1px solid var(--alert-line);
+  border-radius: var(--r-md);
+  background: var(--alert-soft);
+  color: var(--alert);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.signup-do { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+/* ------------------------------------------------------------------------
+ * /account
+ * --------------------------------------------------------------------- */
+
+.acct { display: flex; flex-direction: column; gap: 22px; padding: 22px 0 40px; }
+
+.acct-head { display: flex; flex-direction: column; gap: 8px; }
+.acct-head h1 { margin: 0; font-size: 27px; font-weight: 760; letter-spacing: -0.03em; }
+.acct-lede { margin: 0; max-width: 62ch; font-size: 15px; line-height: 1.6; color: var(--ink-3); }
+
+.acct-sec { display: flex; flex-direction: column; gap: 12px; }
+.acct-sec > h2 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
+.acct-sec > p { margin: 0; max-width: 62ch; font-size: 14px; line-height: 1.6; color: var(--ink-3); }
+
+.acct-rows { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+
+.acct-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.acct-row-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.acct-row-top strong { font-size: 15px; letter-spacing: -0.01em; }
+.acct-row-price { font-family: var(--mono); font-size: 15px; font-weight: 650; }
+.acct-row-when { font-size: 13.5px; color: var(--ink-3); }
+.acct-row-note { font-size: 13px; color: var(--muted); }
+
+.acct-do { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+/* The card seam, drawn as what it is: a labelled empty space with the reason
+   it is empty inside it. Dashed, because a solid box reads as a control that
+   is merely switched off and this is a box that has not been built. */
+.acct-seam {
+  margin: 0;
+  padding: 14px 15px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}

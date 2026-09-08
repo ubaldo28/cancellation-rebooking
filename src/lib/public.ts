@@ -666,6 +666,15 @@ export async function claimSlot(env: Env, input: {
   address_line?: string | null; postcode?: string | null;
   /** Set when they asked a question before booking, so the thread carries on. */
   thread_token?: string | null;
+  /**
+   * The account that confirmed a mobile number, when the caller has one.
+   *
+   * Same rule as placeOrder's: with an account present the number on the
+   * booking comes off the account and never out of the form, so a suspended
+   * customer cannot book by typing somebody else's mobile. Whether an account
+   * is required is decided at the route, which is where the cookie is.
+   */
+  account?: { id: string; phone: string } | null;
 }): Promise<{ appointment_id: string; slot: PublicSlot; thread_token: string }> {
   const t = now();
 
@@ -710,7 +719,8 @@ export async function claimSlot(env: Env, input: {
   const firstName = firstNameOnly(input.first_name);
   if (!firstName) throw badRequest('We need a name for the booking.', 'no_name');
 
-  const phone = toE164(input.phone, row.country);
+  // Off the account where there is one — see the note on `account` above.
+  const phone = input.account?.phone ?? toE164(input.phone, row.country);
   if (!phone) throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
 
   // The same check placeOrder and createInstantRequest make, after the number
@@ -869,8 +879,10 @@ export async function claimSlot(env: Env, input: {
 
   // Every booking gets a conversation, whether or not they asked anything
   // first. It is how they reach the business without either side handing over
-  // a phone number, and the link is the only way back to this booking — there
-  // is no account to sign in to.
+  // a phone number, and the link is the way back to this booking from a phone
+  // that has never been signed in — which is what /c/:token is for and why
+  // migration 0037 adding accounts deliberately did not put a sign-in in front
+  // of it.
   let threadToken = '';
   const existing = input.thread_token
     ? await threadByToken(env, input.thread_token)

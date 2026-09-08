@@ -21,12 +21,15 @@ import { useDocumentTitle } from '../lib/title';
  * hours between a cancellation and someone else taking the slot. Most people
  * are not looking. This is the push half.
  *
- * There is no account, for the same reason the chat threads have none: asking
- * a stranger to choose a password before they can say what they want loses the
- * request. The secret in the link is the whole identity, which makes "keep
- * this link" the most important sentence on the page — it is said on creation,
- * and again every time the page is opened, because nothing here can send a
- * replacement: the address on a watch is used for openings and nothing else.
+ * AN ALERT HAS NO ACCOUNT BEHIND IT and is not attached to one, even for
+ * somebody who has a customer account: a watch is created from a postcode and
+ * nothing else, so there is no number on it to tie it to anybody. That is
+ * deliberate — asking a stranger to sign up before they can say what they want
+ * loses the request. The secret in the link is the whole identity, which makes
+ * "keep this link" the most important sentence on the page: it is said on
+ * creation, and again every time the page is opened, because nothing here can
+ * send a replacement — the address on a watch is used for openings and nothing
+ * else.
  *
  * The page has one job beyond collecting the watch: making sure something can
  * actually reach this person. Push is refused, blocked or simply absent often
@@ -371,7 +374,7 @@ export default function WatchPage() {
 
             <div className="notice keeper">
               <strong>You already have one?</strong> Open the link you saved when
-              you made it. There is no account and no password here, so nobody —
+              you made it. An alert is not attached to any account, so nobody —
               including us — can look your watch up for you.
             </div>
           </>
@@ -517,11 +520,11 @@ export default function WatchPage() {
               <section className="card alert-card">
                 <h2>Keep this link</h2>
                 <p className="muted" style={{ marginTop: 0 }}>
-                  It is the only way back to this watch. There is no account and
-                  no password, and an address on this watch is used for openings
-                  and nothing else — it will never be sent this link. Anyone who
-                  has the link can change or delete the watch, so keep it to
-                  yourself.
+                  It is the only way back to this watch. An alert is not
+                  attached to any account, and an address on this watch is used
+                  for openings and nothing else — it will never be sent this
+                  link. Anyone who has the link can change or delete the
+                  watch, so keep it to yourself.
                 </p>
                 <CopyLink link={link} />
               </section>

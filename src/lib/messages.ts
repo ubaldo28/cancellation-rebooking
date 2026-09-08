@@ -26,6 +26,26 @@ interface Copy {
   sms: (v: { name: string; business: string; when: string; price: string; service: string; url: string }) => string;
   optOut: string;
 
+  /**
+   * The text a customer gets when they are creating an account or signing in
+   * on a new device.
+   *
+   * Three things it has to do and one it must not. It has to name the site, so
+   * that a code arriving out of nowhere is identifiable; it has to say how long
+   * the code lasts, so somebody who reads it an hour later knows why it failed;
+   * and it has to say what to do if they did not ask for it, because the one
+   * person guaranteed to receive an unwanted code is somebody whose number
+   * another person typed in. It must NOT carry a link. A sign-in message with a
+   * tappable URL in it is the exact shape of the phishing text this product
+   * would otherwise be teaching its customers to trust.
+   *
+   * No opt-out line, unlike the offer message above: this is a message the
+   * recipient asked for seconds earlier, it is sent once, and there is nothing
+   * to unsubscribe from. STOP still works at the carrier and in our inbound
+   * handler; advertising it here would only make the code longer.
+   */
+  signInCode: (v: { code: string; minutes: number }) => string;
+
   /** Public offer page. */
   greeting: (name: string) => string;
   hasSlotFree: (business: string) => string;
@@ -56,6 +76,10 @@ const EN: Copy = {
     `${price ? ` — ${price}` : ''}. ${service}. Want it? ${url}`,
   optOut: 'Reply STOP to opt out.',
 
+  signInCode: ({ code, minutes }) =>
+    `${code} is your Slotfill code. It lasts ${minutes} minutes and works once. `
+    + 'If you did not ask for it, ignore this message and do not pass the code on.',
+
   greeting: (name) => `Hi ${name}`,
   hasSlotFree: (business) => `${business} has a slot free`,
   yesBookMe: 'Yes, book me in',
@@ -84,6 +108,10 @@ const ES: Copy = {
     `Hola ${name}, soy ${business}. Se me desocupó un horario: ${when}` +
     `${price ? ` — ${price}` : ''}. ${service}. ¿Lo quieres? ${url}`,
   optOut: 'Responde PARE o STOP para no recibir más mensajes.',
+
+  signInCode: ({ code, minutes }) =>
+    `${code} es tu código de Slotfill. Dura ${minutes} minutos y sirve una sola vez. `
+    + 'Si no lo pediste, ignora este mensaje y no le des el código a nadie.',
 
   greeting: (name) => `Hola ${name}`,
   hasSlotFree: (business) => `${business} tiene un horario libre`,

@@ -10,6 +10,7 @@ import SlotCard from '../components/SlotCard';
 import SlotFilters, { useSlotFilters } from '../components/SlotFilters';
 import { HowItWorks, WhyBook } from '../components/HowItWorks';
 import { Icon, Spinner } from '../components/ui';
+import { useBookingState } from '../lib/customer';
 import { groupByMetro, metroNames, useMetros } from '../lib/metros';
 import '../styles-parts.css';
 import '../styles-home.css';
@@ -17,9 +18,11 @@ import '../styles-home.css';
 /**
  * The front door.
  *
- * Whoever lands here has never heard of this and has no account. The page has
- * one job: prove that a van is already working near them this week, and show
- * what an hour of it costs — before asking for anything at all.
+ * Whoever lands here has never heard of this and is not signed in. The page
+ * has one job: prove that a van is already working near them this week, and
+ * show what an hour of it costs — before asking for anything at all. That is
+ * the true version of the promise this page used to make in six words at the
+ * top of it; see the note on the hero line for what was wrong with them.
  *
  * The page is built as bands with different grounds, because the previous
  * version was one white sheet and every section on it weighed the same. A dark
@@ -58,6 +61,13 @@ function useMatches(query: string): boolean {
 }
 
 export default function Discover() {
+  /**
+   * What booking requires on this deployment, and whether it is possible at
+   * all today. Read from the Worker because neither answer is a constant a
+   * bundle can hold — see the note on the hero line below, which is where the
+   * whole "no account is ever required" mistake was most visible.
+   */
+  const bookingState = useBookingState();
   const [areas, setAreas] = useState<MapArea[]>([]);
   const [slots, setSlots] = useState<PublicSlot[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -407,14 +417,38 @@ export default function Discover() {
                   {locating ? 'Looking…' : 'Search'}
                 </button>
               </form>
-              {/* Six words under a search box, so it says the two things that
-                  are true and drops the third. "Pay when you book" was a
-                  promise about a payment step that does not exist, made in the
-                  first thing a stranger reads. */}
+              {/*
+                THIS SAID "No account. No app. No card." AND TWO OF THE THREE
+                WERE WRONG about the product, in the first thing a stranger
+                reads. Booking needs an account, and it will need a card; what
+                is true — and what was always the only true part of it — is
+                that neither is asked for until somebody has decided to buy
+                something. So the line now separates the two halves it was
+                collapsing: looking costs nothing and asks for nothing, and
+                booking asks for a number we can text.
+
+                The app half is the one claim of the three that survived. There
+                is no app, and nothing on this site will ask anybody to install
+                one.
+              */}
               <p className="finder-note">
-                No account. No app. No card.
+                Free to look, and no app. Booking needs an account — a mobile
+                number, and the six digits we text back.
               </p>
             </div>
+
+            {/* AND TODAY IT CANNOT BE DONE AT ALL, which the hero is the right
+                place to say and the checkout is the wrong place to discover.
+                The sentence is the Worker's own: whether a text can be sent
+                depends on a Worker secret, so a bundle carrying its own answer
+                would be guessing about the one thing this band is inviting
+                somebody to start. */}
+            {bookingState && !bookingState.sms_ready && bookingState.sms_note && (
+              <p className="hero-warn" role="status">
+                <strong>Bookings are not open yet.</strong>{' '}
+                {bookingState.sms_note}
+              </p>
+            )}
 
             {locateError && <p className="hero-warn" role="status">{locateError}</p>}
 
@@ -623,7 +657,8 @@ export default function Discover() {
                           lets this list put the businesses with the shortest trip
                           to you first, and say which of them can reach you at all.
                           Without one, all this page can order by is what starts
-                          soonest. No account, and nothing else is asked for.
+                          soonest. Nothing else is asked for, and looking around
+                          needs no account.
                         </p>
                         <div className="gate-do">
                           <button type="button" className="btn sm" onClick={askPostcode}>
