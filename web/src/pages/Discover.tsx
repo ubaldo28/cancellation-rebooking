@@ -418,22 +418,25 @@ export default function Discover() {
                 </button>
               </form>
               {/*
-                THIS SAID "No account. No app. No card." AND TWO OF THE THREE
-                WERE WRONG about the product, in the first thing a stranger
-                reads. Booking needs an account, and it will need a card; what
-                is true — and what was always the only true part of it — is
-                that neither is asked for until somebody has decided to buy
-                something. So the line now separates the two halves it was
-                collapsing: looking costs nothing and asks for nothing, and
-                booking asks for a number we can text.
+                THIS SAID "No account. No app. No card." AND ALL THREE WERE
+                WRONG, in the first thing a stranger reads. Booking needs an
+                account and it will need a card; what is true — and what was
+                always the only true part of it — is that neither is asked for
+                until somebody has decided to buy something. So the line
+                separates the two halves it was collapsing: looking costs
+                nothing and asks for nothing, and booking asks for a number we
+                can text.
 
-                The app half is the one claim of the three that survived. There
-                is no app, and nothing on this site will ask anybody to install
-                one.
+                "No app" is gone too, and not because it is untrue today. An
+                app is coming, and a promise printed on the front page is the
+                most expensive kind to go back on — the day it ships, this
+                sentence would have to be walked back in public. Nothing here
+                asks anybody to install anything, which is the useful half, and
+                that is said without swearing off a thing we intend to build.
               */}
               <p className="finder-note">
-                Free to look, and no app. Booking needs an account — a mobile
-                number, and the six digits we text back.
+                Free to look, and nothing to install. Booking needs an account —
+                a mobile number, and the six digits we text back.
               </p>
             </div>
 
