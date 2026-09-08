@@ -6,6 +6,7 @@ import { notify } from './feed';
 import { partsLine, type PartsPolicy } from './parts';
 import { driveSeconds, geocode } from './geo';
 import { discounted } from './public';
+import { claimPhoneHash, firstNameOnly } from './redact';
 import { customerStanding } from './standing';
 import { newStartCode } from './startcode';
 import { formatTimeRange } from './tz';
@@ -422,7 +423,13 @@ function raise(problems: OrderProblem[]): never {
  */
 export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<PlacedOrder> {
   const t = now();
-  const guestName = (input?.guest_name ?? '').trim();
+  // Only the first word of it, and that is not a tidy-up. This name is written
+  // onto the operator's own client row, so "Jane Smith" typed into one box was
+  // a surname handed to the business beside a street address -- the exact pair
+  // redact.ts deletes last_name to prevent. The checkout now asks for a first
+  // name and says why; this is what makes it true of a request the checkout
+  // did not send. See firstNameOnly.
+  const guestName = firstNameOnly(input?.guest_name);
   if (!guestName) throw badRequest('We need a name for the booking.', 'no_name');
 
   const priced = await priceOrder(env, input?.items ?? []);
@@ -502,6 +509,10 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
   // ---------------------------------------------------------------------
 
   const orderId = newId();
+  // Computed once for the whole basket, outside the per-item loop below, and
+  // before the batch is assembled: a statement list is built synchronously and
+  // this is the one value in it that has to be awaited.
+  const phoneHash = await claimPhoneHash(env, phone);
   const writes: D1PreparedStatement[] = [
     env.DB.prepare(
       `INSERT INTO orders (id, status, guest_name, phone_e164, email, address_line,
@@ -577,13 +588,18 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
 
     // The row the race is decided on: one confirmed claim per gap, enforced by
     // the partial unique index from migration 0006.
+    //
+    // No name, no number, no mailbox on it -- see migration 0035. This table
+    // carries an operator_id, and the three columns it used to copy them into
+    // were read by nothing at all, which made them a leak waiting for the
+    // first `SELECT *`. The digest is what erasure still finds the row by.
     writes.push(env.DB.prepare(
       `INSERT INTO public_claims (id, operator_id, gap_id, service_id, client_id,
-         appointment_id, first_name, phone_e164, email, address_line, postcode,
+         appointment_id, phone_hash, address_line, postcode,
          lat, lng, detour_seconds, price_cents, deposit_cents, status, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'confirmed', ?,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'confirmed', ?,?)`,
     ).bind(claimId, row.operator_id, item.gap_id, primary.service_id, clientId, apptId,
-      guestName, phone, input.email ?? null, input.address_line ?? null, postcode,
+      phoneHash, input.address_line ?? null, postcode,
       at?.lat ?? null, at?.lng ?? null, detours.get(item.gap_id) ?? null,
       item.price_cents, row.deposit_cents, t, t));
 
@@ -691,13 +707,16 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
   for (const p of placed) {
     const row = gaps.get(p.gap_id)!;
     const locale = localeFor(row.country, row.language);
+    // Without the doorstep, for the reason given at the same call in public.ts:
+    // this row is prose nothing can put a mask in front of, so cancelling the
+    // booking would leave the address readable here long after the schedule,
+    // the client list and the leads list had all withdrawn it.
     await notify(env, p.operator_id, {
       kind: 'public_booking',
       title: `${guestName} booked ${p.services.map((s) => s.name).join(' + ')}`,
       body: [
         formatTimeRange(p.starts_at, p.ends_at, row.timezone, locale),
         formatMoney(p.price_cents, row.currency, locale),
-        input.address_line ?? postcode,
       ].filter(Boolean).join(' · '),
       appointment_id: p.appointment_id, claim_id: null, starts_at: p.starts_at,
     });

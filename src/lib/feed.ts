@@ -1,4 +1,5 @@
 import type { Env } from '../types';
+import { redactContact } from './redact';
 import { newId, now } from './util';
 
 /** What kinds of thing the feed carries. Mirrors the CHECK in migration 0021. */
@@ -46,6 +47,25 @@ export interface Notification {
   created_at: number;
 }
 
+/**
+ * WHAT A FEED ROW IS ALLOWED TO SAY ABOUT A PERSON.
+ *
+ * A notification is the one thing this product writes about a customer that
+ * nothing can afterwards take back. Every other operator-facing view of them
+ * is a row read through maskCustomerRow, so cancelling a booking withdraws the
+ * doorstep from the schedule, the client list and the leads list at the next
+ * read. A feed row is not read off anything: it is prose frozen at the moment
+ * the booking landed, and there is no query to put a mask in front of.
+ *
+ * So the doorstep never goes in one. `title` and `body` carry who, what, when
+ * and how much — the facts that stay true after a cancellation — and the
+ * operator reads the street line off the schedule, where it is masked. The
+ * row's own `appointment_id`, `thread_id` and `starts_at` are the way back to
+ * the booking; a street address in the text is not navigation, it is a copy.
+ *
+ * A phone number or a mailbox is caught rather than trusted — see notify()
+ * below. An address cannot be, which is why this paragraph is the rule.
+ */
 export interface NotifyInput {
   kind: NotificationKind;
   title: string;
@@ -81,17 +101,30 @@ const SELECT_FIELDS =
  * notification is bad, a lost booking is worse. The caller gets on with the
  * thing that actually earns money, and the operator finds out from the calendar
  * this once.
+ *
+ * THE SAME FILTER THE CUSTOMER'S OWN TYPING GOES THROUGH, applied to what the
+ * system writes about them. redact.ts was built for two people handing each
+ * other a phone number in a chat box, and every argument in it holds harder
+ * here: a feed row outlives the conversation, it is the copy the retention
+ * sweep clears last, and nobody reviews it before it is stored. Most call
+ * sites below quote text that has already been cleaned once, so this is a
+ * no-op on almost every row written today — which is the point. It is here so
+ * that the next line somebody assembles out of a customer's details cannot
+ * freeze a number into the feed by being written before anyone thought about
+ * it. See NotifyInput above for the doorstep, which no pattern can catch.
  */
 export async function notify(
   env: Env, operatorId: string, input: NotifyInput,
 ): Promise<void> {
   try {
     const t = now();
+    const title = redactContact(input.title).body;
+    const body = input.body == null ? null : redactContact(input.body).body;
     await env.DB.prepare(
       `INSERT INTO notifications (id, operator_id, kind, title, body,
          appointment_id, claim_id, thread_id, starts_at, read_at, created_at)
        VALUES (?,?,?,?,?,?,?,?,?,NULL,?)`,
-    ).bind(newId(), operatorId, input.kind, input.title, input.body ?? null,
+    ).bind(newId(), operatorId, input.kind, title, body,
       input.appointment_id ?? null, input.claim_id ?? null, input.thread_id ?? null,
       input.starts_at ?? null, t).run();
   } catch {

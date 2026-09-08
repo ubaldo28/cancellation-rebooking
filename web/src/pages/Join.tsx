@@ -893,7 +893,7 @@ function AddArea({ onAdded }: { onAdded: (a: ServiceArea) => void }) {
         <label>Area name<input required value={name}
           onChange={(e) => setName(e.target.value)} placeholder="Neighbourhood or town" /></label>
         <label>Postcode<input required value={postcode}
-          onChange={(e) => setPostcode(e.target.value)} placeholder="Postcode or ZIP" /></label>
+          onChange={(e) => setPostcode(e.target.value)} placeholder="Postcode" /></label>
       </div>
       <button className="btn ghost block" type="submit"
         disabled={busy || !name.trim() || !postcode.trim()}>
@@ -1055,7 +1055,7 @@ function AddBooking({ services, tz, onAdded }: {
 
       <label>Postcode
         <input value={postcode} onChange={(e) => setPostcode(e.target.value)}
-          placeholder="Postcode or ZIP" />
+          placeholder="Postcode" />
         <span className="faint">Used to work out the drive between jobs.</span>
       </label>
 

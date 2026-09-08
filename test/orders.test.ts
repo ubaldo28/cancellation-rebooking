@@ -232,8 +232,8 @@ describe('placing an order', () => {
   it('says so up front when one of the slots has already gone', async () => {
     const { n, detailerSlot, barberSlot } = await seed();
     await env.DB.prepare(
-      `INSERT INTO public_claims (id,operator_id,gap_id,first_name,phone_e164,status,created_at,updated_at)
-       VALUES (?,?,?,'Dan','+18185550199','confirmed',?,?)`,
+      `INSERT INTO public_claims (id,operator_id,gap_id,status,created_at,updated_at)
+       VALUES (?,?,?,'confirmed',?,?)`,
     ).bind(newId(), BARBER, barberSlot, n, n).run();
 
     await expect(placeOrder(env, {
@@ -262,8 +262,8 @@ describe('placing an order', () => {
       if (!raced) {
         raced = true;
         await realBatch([env.DB.prepare(
-          `INSERT INTO public_claims (id,operator_id,gap_id,first_name,phone_e164,status,created_at,updated_at)
-           VALUES (?,?,?,'Dan','+18185550199','confirmed',?,?)`,
+          `INSERT INTO public_claims (id,operator_id,gap_id,status,created_at,updated_at)
+           VALUES (?,?,?,'confirmed',?,?)`,
         ).bind(newId(), BARBER, barberSlot, n, n)]);
       }
       return realBatch(statements);
@@ -320,4 +320,155 @@ describe('placing an order', () => {
     await expect(placeOrder(env, { ...BUYER, guest_name: '   ', items }))
       .rejects.toThrow(/name/i);
   });
+});
+
+// ---------------------------------------------------------------------------
+describe('the checkout takes a first name, and takes only that', () => {
+  /**
+   * The box said "Your name" and whatever was typed into it was written whole:
+   * onto the order, onto the operator's own client row, onto the claim and
+   * onto the conversation. So the very common answer "Jane Smith" handed the
+   * business a surname beside the street address it was about to be given —
+   * which is the pair redact.ts deletes last_name to prevent, undone by the
+   * busiest form in the product.
+   *
+   * The field now asks for a first name and says why. These are about the half
+   * that has to be true whatever the field says, because a form is a
+   * suggestion and this is the server.
+   */
+  const FULL = { ...BUYER, guest_name: 'Jane Smith' };
+
+  it('keeps the first word and never writes the rest down', async () => {
+    const { detailerSlot } = await seed();
+    const placed = await placeOrder(env, {
+      ...FULL, items: [{ gap_id: detailerSlot, service_ids: ['a-wash'] }],
+    });
+
+    const order = await env.DB.prepare(`SELECT guest_name FROM orders WHERE id = ?`)
+      .bind(placed.order_id).first<{ guest_name: string }>();
+    expect(order?.guest_name).toBe('Jane');
+
+    // The row the operator actually reads. This is the one the promise is
+    // about: a first name and a street address is a customer, a full name and
+    // a street address is an identity.
+    const client = await env.DB.prepare(`SELECT first_name, last_name FROM clients`)
+      .first<{ first_name: string; last_name: string | null }>();
+    expect(client?.first_name).toBe('Jane');
+    expect(client?.last_name).toBeNull();
+
+    const thread = await env.DB.prepare(`SELECT guest_name FROM threads`)
+      .first<{ guest_name: string }>();
+    expect(thread?.guest_name).toBe('Jane');
+  });
+
+  it('leaves no copy of the surname anywhere in the database', async () => {
+    const { detailerSlot } = await seed();
+    await placeOrder(env, {
+      ...FULL, items: [{ gap_id: detailerSlot, service_ids: ['a-wash'] }],
+    });
+
+    // Every table the checkout writes to, asked the blunt question. A single
+    // column that still carries it is the whole failure, and naming them one
+    // by one is how a new one gets missed.
+    const tables = await env.DB.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table'`,
+    ).all<{ name: string }>();
+    for (const { name } of tables.results ?? []) {
+      const rows = await env.DB.prepare(`SELECT * FROM "${name}"`).all<Record<string, unknown>>();
+      expect(JSON.stringify(rows.results ?? []), `${name} still holds it`)
+        .not.toContain('Smith');
+    }
+  });
+
+  it('is not fooled by the spacing somebody types', async () => {
+    const { detailerSlot } = await seed();
+    const placed = await placeOrder(env, {
+      ...BUYER, guest_name: '  Jane   Smith  ',
+      items: [{ gap_id: detailerSlot, service_ids: ['a-wash'] }],
+    });
+    const order = await env.DB.prepare(`SELECT guest_name FROM orders WHERE id = ?`)
+      .bind(placed.order_id).first<{ guest_name: string }>();
+    expect(order?.guest_name).toBe('Jane');
+  });
+
+  it('still refuses a booking with no name at all', async () => {
+    const { detailerSlot } = await seed();
+    // Cutting a name down must not turn an empty box into a booking under no
+    // name, which is what a naive "take the first word" would do.
+    await expect(placeOrder(env, {
+      ...BUYER, guest_name: '   ',
+      items: [{ gap_id: detailerSlot, service_ids: ['a-wash'] }],
+    })).rejects.toThrow(/name/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('the claim row holds nothing that could reach the customer', () => {
+  /**
+   * public_claims decides the booking race and carries an operator_id. Until
+   * migration 0035 it also carried the customer's first name, phone number and
+   * email address in full — read by nothing, since every query against it is
+   * an EXISTS or a COUNT, and therefore harmless right up until the first
+   * `SELECT *` somebody writes for a dashboard. That query would hand a
+   * business the contact details this entire product exists to withhold.
+   */
+  it('has no column that could carry a name, a number or a mailbox', async () => {
+    await seed();
+    const cols = await env.DB.prepare(`PRAGMA table_info(public_claims)`)
+      .all<{ name: string }>();
+    const names = (cols.results ?? []).map((c) => c.name);
+    // Named individually rather than pattern-matched: these three are the ones
+    // that were there, and a column that cannot be written cannot leak.
+    expect(names).not.toContain('phone_e164');
+    expect(names).not.toContain('email');
+    expect(names).not.toContain('first_name');
+  });
+
+  it('survives the query it was always one line away from', async () => {
+    const { detailerSlot } = await seed();
+    await placeOrder(env, {
+      ...BUYER, guest_name: 'Rosa', email: 'rosa@example.com',
+      items: [{ gap_id: detailerSlot, service_ids: ['a-wash'] }],
+    });
+
+    // The dashboard query nobody has written yet, run here so it can never
+    // become the way this is found out.
+    const rows = await env.DB.prepare(
+      `SELECT * FROM public_claims WHERE operator_id = ?`,
+    ).bind(DETAILER).all<Record<string, unknown>>();
+    expect(rows.results).toHaveLength(1);
+
+    const body = JSON.stringify(rows.results);
+    expect(body).not.toContain('8185550142');
+    expect(body).not.toContain('rosa@example.com');
+    expect(body).not.toContain('Rosa');
+
+    // The number is still on the order, which is the platform's own record and
+    // carries no operator_id. That is what the standing ladder counts no-shows
+    // against and what erasure follows, and neither may be weakened by this.
+    const order = await env.DB.prepare(`SELECT phone_e164 FROM orders`)
+      .first<{ phone_e164: string }>();
+    expect(order?.phone_e164).toBe('+18185550142');
+  });
+
+  it('can still be found and emptied by the number when somebody asks to be erased',
+    async () => {
+      const { detailerSlot } = await seed();
+      const placed = await placeOrder(env, {
+        ...BUYER, items: [{ gap_id: detailerSlot, service_ids: ['a-wash'] }],
+      });
+
+      const { eraseCustomerByToken } = await import('../src/lib/retention');
+      await eraseCustomerByToken(env, placed.thread_token);
+
+      // The row stays — its unique index on gap_id is the double-booking guard
+      // — and everything that led back to a person is gone from it.
+      const claim = await env.DB.prepare(
+        `SELECT phone_hash, address_line, lat FROM public_claims`,
+      ).first<{ phone_hash: string | null; address_line: string | null; lat: number | null }>();
+      expect(claim).not.toBeNull();
+      expect(claim?.phone_hash).toBeNull();
+      expect(claim?.address_line).toBeNull();
+      expect(claim?.lat).toBeNull();
+    });
 });

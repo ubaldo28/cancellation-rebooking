@@ -213,14 +213,18 @@ describe('the score', () => {
     expect(displayName('  ')).toBe('A customer');
   });
 
-  it('hands the profile the shortened name, never the full one', async () => {
+  it('signs the review with the only name the customer was asked for', async () => {
     await seed();
     const { itemId, token } = await finishedBooking();
     await leaveReview(env, token, { order_item_id: itemId, rating: 5, body: 'Great' });
     const stored = await one<{ author_name: string }>(
       `SELECT author_name FROM reviews LIMIT 1`);
-    // Stored whole so a correction stays possible; cut at display time.
-    expect(stored!.author_name).toBe('Debra Dawson');
+    // The signature is copied off the order, and the checkout takes a first
+    // name only, so "Dawson" was never collected and cannot be published.
+    // displayName still cuts a surname when there is one -- an operator can
+    // correct a name on a review -- but this is no longer the path that
+    // produces one.
+    expect(stored!.author_name).toBe('Debra');
   });
 });
 

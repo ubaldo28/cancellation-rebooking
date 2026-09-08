@@ -1,5 +1,6 @@
 import type { Env } from '../types';
 import { threadByToken } from './chat';
+import { claimPhoneHash } from './redact';
 import { badRequest, newId, notFound, now, sha256 } from './util';
 
 /**
@@ -444,7 +445,11 @@ export async function eraseCustomerByToken(
 
   if (!phone) {
     // Nothing but a conversation. Deleting the thread takes the messages with
-    // it, and that is the whole of this person's footprint.
+    // it, and that is the whole of this person's footprint — except for the
+    // feed rows below, which are the copy of it kept somewhere else.
+    add('notifications', changes(await env.DB.prepare(
+      `DELETE FROM notifications WHERE thread_id = ?`,
+    ).bind(thread.id).run()));
     const res = await env.DB.prepare(`DELETE FROM threads WHERE id = ?`)
       .bind(thread.id).run();
     add('threads', changes(res));
@@ -489,7 +494,41 @@ export async function eraseCustomerByToken(
     ).bind(...itemIds).run()));
   }
 
-  // 2. Conversations, which cascade to every message in them.
+  // 2. Feed rows, before the conversations they point at.
+  //
+  //    THE ONE COPY OF THIS PERSON THAT NOTHING HERE USED TO REACH. Every step
+  //    in this function either deletes a row or empties the columns that name
+  //    somebody, because those are all read out of tables. A notification is
+  //    not: it is a sentence written at the moment something happened, holding
+  //    the customer's first name and an excerpt of what they wrote, and it
+  //    survived erasure entirely — an operator who was told "that person asked
+  //    to be forgotten" could still scroll their Bookings tab and read them.
+  //    The retention sweep got there in the end, which is not what somebody
+  //    asking to be erased is asking for.
+  //
+  //    Deleted rather than emptied, unlike the appointment and the claim: a
+  //    notification is a nudge about something that has already been dealt
+  //    with, so there is no business record inside it to keep. Found by both
+  //    of the keys a feed row can carry, because a chat notification names the
+  //    thread and a booking notification names the appointment.
+  const threadIds = [thread.id, ...(appointmentIds.length
+    ? ((await env.DB.prepare(
+        `SELECT id FROM threads WHERE appointment_id IN (${appointmentIds.map(() => '?').join(',')})`,
+      ).bind(...appointmentIds).all<{ id: string }>()).results ?? []).map((r) => r.id)
+    : [])];
+
+  const feedKeys: Array<[string, string[]]> = [
+    ['appointment_id', appointmentIds],
+    ['thread_id', threadIds],
+  ];
+  for (const [column, ids] of feedKeys) {
+    if (!ids.length) continue;
+    add('notifications', changes(await env.DB.prepare(
+      `DELETE FROM notifications WHERE ${column} IN (${ids.map(() => '?').join(',')})`,
+    ).bind(...ids).run()));
+  }
+
+  // 3. Conversations, which cascade to every message in them.
   if (appointmentIds.length) {
     const holes = appointmentIds.map(() => '?').join(',');
     add('threads', changes(await env.DB.prepare(
@@ -500,7 +539,7 @@ export async function eraseCustomerByToken(
     `DELETE FROM threads WHERE id = ?`,
   ).bind(thread.id).run()));
 
-  // 3. The order rows. Real deletion of every personal column; the money, the
+  // 4. The order rows. Real deletion of every personal column; the money, the
   //    currency and the dates stay, because a settled transaction is not the
   //    customer's to erase and is no longer about a person once these are out.
   if (orderIds.length) {
@@ -513,7 +552,7 @@ export async function eraseCustomerByToken(
     ).bind(now(), ...orderIds).run()));
   }
 
-  // 4. The appointment: kept as a business record of work done, emptied of
+  // 5. The appointment: kept as a business record of work done, emptied of
   //    where it happened and of anything anybody wrote about the household.
   if (appointmentIds.length) {
     const holes = appointmentIds.map(() => '?').join(',');
@@ -524,20 +563,31 @@ export async function eraseCustomerByToken(
     ).bind(now(), ...appointmentIds).run()));
   }
 
-  // 5. The claim row, which duplicates the whole lot for the booking race.
+  // 6. The claim row, which holds the doorstep for the booking race.
   //
   // Emptied rather than deleted: the unique index on gap_id is what stops two
   // people confirming the same opening, and removing the row would take that
-  // guard away from a slot that may still be in the future. phone_e164 is
-  // NOT NULL on this table, so it is emptied to a string that is not a phone
-  // number rather than to NULL.
+  // guard away from a slot that may still be in the future.
+  //
+  // Found by the peppered digest of the number rather than by the number,
+  // because migration 0035 took the number itself off this table -- it sat
+  // beside an operator_id, was read by nothing, and was one `SELECT *` away
+  // from being the whole promise. The reach is the same as it was: every claim
+  // this person ever made, at every business, not merely the one whose link
+  // they happened to open.
+  //
+  // The second arm is for claims written before that migration, which have no
+  // digest and could not be given one. Those are reachable through the
+  // appointment the order names, and this is the only way back to them.
+  const claimHoles = appointmentIds.length
+    ? ` OR appointment_id IN (${appointmentIds.map(() => '?').join(',')})` : '';
   add('public_claims', changes(await env.DB.prepare(
-    `UPDATE public_claims SET first_name = 'Removed', phone_e164 = '', email = NULL,
+    `UPDATE public_claims SET phone_hash = NULL,
             address_line = NULL, postcode = NULL, lat = NULL, lng = NULL, updated_at = ?
-      WHERE phone_e164 = ?`,
-  ).bind(now(), phone).run()));
+      WHERE phone_hash = ?${claimHoles}`,
+  ).bind(now(), await claimPhoneHash(env, phone), ...appointmentIds).run()));
 
-  // 6. Client rows the PLATFORM created for this person. Deleted outright:
+  // 7. Client rows the PLATFORM created for this person. Deleted outright:
   //    appointments hold client_id ON DELETE SET NULL, so the work survives.
   //    An operator's own imported client with the same number is untouched —
   //    they typed that in themselves and it is their record, not ours.
@@ -545,7 +595,7 @@ export async function eraseCustomerByToken(
     `DELETE FROM clients WHERE phone_e164 = ? AND acquired = 'public'`,
   ).bind(phone).run()));
 
-  // 7. Reviews. The rating and the words stay — they are the business's
+  // 8. Reviews. The rating and the words stay — they are the business's
   //    record and other customers rely on them — and the name attached to
   //    them goes, which is the part that identifies anybody.
   if (itemIds.length) {
@@ -556,7 +606,7 @@ export async function eraseCustomerByToken(
     ).bind(now(), ...itemIds).run()));
   }
 
-  // 8. Requests that never became anything, and the alert watches on this
+  // 9. Requests that never became anything, and the alert watches on this
   //    person's mailbox.
   add('instant_requests', changes(await env.DB.prepare(
     `DELETE FROM instant_requests WHERE phone_e164 = ?`,
@@ -572,7 +622,7 @@ export async function eraseCustomerByToken(
     `DELETE FROM messages WHERE to_address = ?`,
   ).bind(phone).run()));
 
-  // 9. The dispute record. An open report, or one behind a live sanction,
+  // 10. The dispute record. An open report, or one behind a live sanction,
   //    keeps the number it needs to find the standing row. Everything settled
   //    loses both the number and whatever prose was written about the person.
   add('no_show_reports', changes(await env.DB.prepare(
@@ -580,7 +630,7 @@ export async function eraseCustomerByToken(
       WHERE phone_e164 = ? AND status <> 'open' AND ? = 0`,
   ).bind(now(), phone, retainStanding ? 1 : 0).run()));
 
-  // 10. Standing, and the suspensions that produced it.
+  // 11. Standing, and the suspensions that produced it.
   if (!retainStanding) {
     add('customer_standing', changes(await env.DB.prepare(
       `DELETE FROM customer_standing WHERE phone_e164 = ?`,

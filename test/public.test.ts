@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ALL_MIGRATIONS, makeEnv } from './d1';
 import type { Env } from '../src/types';
 import { claimSlot, slotById, slotsNear } from '../src/lib/public';
-import { newId, now } from '../src/lib/util';
+import { newId, now, sha256 } from '../src/lib/util';
 
 const MIGRATIONS = ALL_MIGRATIONS;
 
@@ -267,9 +267,13 @@ describe('claiming a slot', () => {
     expect(client.phone_e164).toBeNull();
     expect(client.address_line).toBe('15200 Ventura Blvd');
 
-    const claim = await env.DB.prepare(`SELECT phone_e164 FROM public_claims LIMIT 1`)
+    // And not on the claim either, since migration 0035: that table carries an
+    // operator_id, so the number on it was one `SELECT *` away from the
+    // business. What is left is the peppered digest erasure finds the row by.
+    const claim = await env.DB.prepare(`SELECT * FROM public_claims LIMIT 1`)
       .first<any>();
-    expect(claim.phone_e164).toBe('+18185550142');
+    expect(JSON.stringify(claim)).not.toContain('8185550142');
+    expect(claim.phone_hash).toBe(await sha256(`+18185550142:${env.SESSION_PEPPER}`));
 
     const appt = await env.DB.prepare(`SELECT * FROM appointments WHERE id=?`)
       .bind(appointment_id).first<any>();

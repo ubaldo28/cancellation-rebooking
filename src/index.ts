@@ -45,7 +45,7 @@ import {
   cancelByCustomer, cancelByOperator, feesOwed, listFees, listingBlock, markArrived,
   quoteRefund,
 } from './lib/bypass';
-import { maskClientRow, maskEmail, maskPhone, maskWithdrawnAddress } from './lib/redact';
+import { addressReleaseColumns, maskCustomerRow, maskEmail, maskPhone } from './lib/redact';
 import {
   assertNoCardData, assertPaymentRef, cardSafeDb, safeBrand, safeLast4,
   stripeWebhooksConfigured, verifyStripeSignature,
@@ -764,7 +764,8 @@ route('GET', '/api/clients', async ({ req, env, url }) => {
   const q = url.searchParams.get('q');
   const overdue = url.searchParams.get('overdue') === '1';
   const rows = await env.DB.prepare(
-    `SELECT * FROM clients
+    `SELECT clients.*, ${addressReleaseColumns('clients.id')}
+       FROM clients
       WHERE operator_id = ? AND is_active = 1
         AND (? IS NULL OR (first_name || ' ' || COALESCE(last_name,'')) LIKE ?)
         AND (? = 0 OR (next_due_at IS NOT NULL AND next_due_at <= ?))
@@ -773,9 +774,14 @@ route('GET', '/api/clients', async ({ req, env, url }) => {
   ).bind(op.id, q, q ? `%${q}%` : null, overdue ? 1 : 0, now()).all();
   // Masked on the way out for clients the PLATFORM introduced. An operator's
   // own imported list is untouched -- they typed those numbers in themselves.
+  //
+  // The address is on the same footing as the number and was not being treated
+  // that way here: a customer who booked and cancelled had their street line
+  // and coordinates withdrawn from the schedule and left sitting on this list.
+  // The two columns joined above are what let maskCustomerRow answer that, and
+  // without them it withholds the address rather than guessing.
   return json({
-    clients: (rows.results ?? []).map((r) =>
-      maskClientRow(r as Record<string, unknown>, (r as { acquired?: string }).acquired)),
+    clients: (rows.results ?? []).map((r) => maskCustomerRow(r as Record<string, unknown>)),
   });
 });
 
@@ -941,7 +947,8 @@ route('GET', '/api/leads', async ({ req, env, url }) => {
   const op = await requireOperator(req, env);
   const status = url.searchParams.get('status') ?? 'open';
   const rows = await env.DB.prepare(
-    `SELECT l.*, c.first_name, c.last_name, c.phone_e164, c.acquired
+    `SELECT l.*, c.first_name, c.last_name, c.phone_e164, c.acquired,
+            ${addressReleaseColumns('l.client_id')}
        FROM job_leads l JOIN clients c ON c.id = l.client_id
       WHERE l.operator_id = ? AND l.status = ?
       ORDER BY l.urgency DESC, l.created_at ASC LIMIT 500`,
@@ -950,9 +957,15 @@ route('GET', '/api/leads', async ({ req, env, url }) => {
   // query joins the same clients table by a different route and did not, which
   // is precisely the failure maskClientRow was written as a whitelist-by-
   // deletion to avoid: one query out of four that nobody updated.
+  //
+  // A lead carries its own copy of the address rather than the client's, and
+  // that copy needed withdrawing too: a cancelled booking left the street line
+  // on the leads list long after the schedule had stopped showing it. The
+  // release is asked about by client and not by lead because that is where the
+  // release lives -- a lead is the operator's note about a job, and the
+  // permission to know where the job is belongs to the booking underneath it.
   return json({
-    leads: (rows.results ?? []).map((r) =>
-      maskClientRow(r as Record<string, unknown>, (r as { acquired?: string }).acquired)),
+    leads: (rows.results ?? []).map((r) => maskCustomerRow(r as Record<string, unknown>)),
   });
 });
 
@@ -1098,15 +1111,13 @@ route('GET', '/api/appointments', async ({ req, env, url }) => {
   // And they get the address only while the booking is live. Cancelling
   // withdraws the release, and from that moment the row leaves here with no
   // street line and no coordinates on it.
+  //
+  // The release is read off this appointment's own order item rather than
+  // through addressReleaseColumns, which asks the question per client. Here
+  // there is a particular booking to ask about and its own row is the sharper
+  // answer; the columns are named the same, so maskCustomerRow reads either.
   return json({
-    appointments: (rows.results ?? []).map((r) => {
-      const row = r as Record<string, unknown>;
-      return maskWithdrawnAddress(
-        maskClientRow(row, (row as { acquired?: string }).acquired),
-        row.order_item_id as string | null,
-        row.address_released_at as number | null,
-      );
-    }),
+    appointments: (rows.results ?? []).map((r) => maskCustomerRow(r as Record<string, unknown>)),
   });
 });
 
@@ -1304,6 +1315,20 @@ route('POST', '/api/appointments/:id/cancel', async ({ req, env, params }) => {
     `UPDATE appointments SET status='cancelled', cancelled_at=?, cancelled_by=?, updated_at=?
       WHERE id=? AND operator_id=?`,
   ).bind(t, str(b.cancelled_by) ?? 'client', t, params.id, op.id).run();
+
+  // The release of the doorstep goes with the booking it was granted for.
+  //
+  // cancelByOperator and cancelByCustomer in bypass.ts both clear this column,
+  // and this route -- the one behind the Cancel button on the operator's own
+  // schedule -- did not, so cancelling a platform booking from the screen an
+  // operator actually uses left address_released_at standing and the street
+  // line served on for ever. Scoped by operator_id like the update above it:
+  // an appointment id from somebody else's book releases nothing here.
+  await env.DB.prepare(
+    `UPDATE order_items SET address_released_at = NULL
+      WHERE appointment_id = ? AND operator_id = ? AND address_released_at IS NOT NULL`,
+  ).bind(params.id, op.id).run();
+
   await touchCalendar(env, op.id);
 
   const result = await detectGaps(env, op, appt.starts_at, 1);
@@ -1586,7 +1611,7 @@ route('POST', '/api/service-areas', async ({ req, env }) => {
   const name = str(b.name);
   const postcode = str(b.postcode);
   if (!name) throw badRequest('Give the area a name people would recognise.');
-  if (!postcode) throw badRequest('A postcode or ZIP is needed to place it on the map.');
+  if (!postcode) throw badRequest('A postcode is needed to place it on the map.');
 
   // While this is being tested, service areas are California only. Checked
   // here because this is the one place an operator declares where they work.

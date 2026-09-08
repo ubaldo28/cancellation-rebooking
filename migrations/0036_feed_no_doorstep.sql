@@ -1,0 +1,42 @@
+-- The doorstep, out of the one place a cancellation could not reach it.
+--
+-- Migration 0022 released a customer's street address to the operator at the
+-- moment a booking existed and cleared order_items.address_released_at when it
+-- was cancelled, and maskCustomerRow now enforces that on every operator-facing
+-- read of a customer: the schedule, the client list and the leads list all
+-- withdraw the street line and the coordinates the moment the booking is gone,
+-- and withhold them outright when the query forgot to ask.
+--
+-- A notification is not a read. `notify()` writes a sentence at the instant the
+-- booking lands and stores it, and there is no query to hang a mask on: the
+-- "new booking" row said "Thu 12 Mar, 14:00-15:00 · $99 · 15200 Ventura Blvd"
+-- and went on saying it after the booking was cancelled, after the address had
+-- been withdrawn from every other screen, and after the retention sweep had
+-- cleared the address off the appointment, the order, the claim and the client.
+-- Somebody who booked and cancelled within the hour had handed a stranger their
+-- address for the ninety days RETENTION.NOTIFICATION_DAYS keeps a feed row.
+-- The Worker no longer writes it -- see the notify() calls in orders.ts,
+-- public.ts and online.ts, and the rule on NotifyInput in feed.ts. This is the
+-- rows that were written before it stopped.
+--
+-- WHY THE WHOLE BODY GOES AND NOT JUST THE ADDRESS. A stored body is prose. It
+-- was assembled by three different call sites in two shapes -- "when · money ·
+-- street" from a checkout and "At <street>" from an instant request -- and the
+-- only way to find the street half of one is to compare it against the row it
+-- came from. That comparison does not work on exactly the rows that need it
+-- most: an address swept off the appointment by sweepJobLocations, or emptied
+-- by an erasure, leaves a body still quoting a street line with nothing left to
+-- match it against. A scrub that cleans the easy rows and silently leaves the
+-- old ones is the failure mode this whole area keeps repeating, so the rule
+-- here is the same one maskCustomerRow uses: when the answer cannot be checked,
+-- the answer is no.
+--
+-- WHAT IS LOST, WHICH IS LITTLE. Only 'public_booking' is touched, because it
+-- is the only kind any call site ever put a location into -- chat excerpts,
+-- parts quotes and cancellations are left exactly as they are. What goes with
+-- the address is a start time and a price, both of which the row still carries
+-- in starts_at and both of which are on the booking the row links to. The
+-- title -- who booked what -- is untouched, so the feed still reads as the
+-- operator's day.
+UPDATE notifications SET body = NULL
+ WHERE kind = 'public_booking' AND body IS NOT NULL;

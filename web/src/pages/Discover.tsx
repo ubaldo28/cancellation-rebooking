@@ -400,7 +400,7 @@ export default function Discover() {
                 </span>
                 <input id="postcode" ref={postcodeRef} value={postcode}
                   onChange={(e) => setPostcode(e.target.value)}
-                  placeholder="Postcode or ZIP" autoComplete="postal-code"
+                  placeholder="Postcode" autoComplete="postal-code"
                   inputMode="text" />
                 <button className="finder-go" type="submit"
                   disabled={locating || !postcode.trim()}>

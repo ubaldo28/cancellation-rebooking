@@ -130,9 +130,9 @@ const PROBLEM: Record<string, string> = {
     + 'their day. Try an opening closer to you.',
   bad_phone: 'That mobile number does not look right. Include the area code.',
   no_address: 'At least one of these businesses comes to you, so they need a '
-    + 'street address or a ZIP.',
-  bad_address: 'We could not find that address. Check the street and the ZIP.',
-  no_name: 'Add the name this booking should be under.',
+    + 'street address or a postcode.',
+  bad_address: 'We could not find that address. Check the street and the postcode.',
+  no_name: 'Add the first name this booking should be under.',
   no_service: 'Tick at least one service for this opening.',
   service_not_in_slot: 'One of the services ticked is not offered in this '
     + 'particular opening.',
@@ -991,12 +991,25 @@ export default function Book() {
         {wizard && step === 'where' && (
           <form className="card book-card book-step" onSubmit={advance}>
             <div className="book-fields">
-              <label htmlFor="bk-name">
-                Your name
-                <input id="bk-name" name="name" value={name} required
-                  ref={nameField} autoComplete="given-name" enterKeyHint="next"
-                  onChange={(e) => setName(e.target.value)} />
-              </label>
+              {/* One box headed "Your name" got a full name from most people,
+                  and the surname went to the business beside the street
+                  address they are about to be given. Asking for the first name
+                  is the fix; the sentence under it is what stops it reading as
+                  an odd thing to be asked. The Worker keeps only the first
+                  word whatever is typed here — see firstNameOnly. */}
+              <div className="book-field">
+                <label htmlFor="bk-name">
+                  First name
+                  <input id="bk-name" name="name" value={name} required
+                    ref={nameField} autoComplete="given-name" enterKeyHint="next"
+                    aria-describedby="bk-name-hint"
+                    onChange={(e) => setName(e.target.value)} />
+                </label>
+                <p className="book-hint" id="bk-name-hint">
+                  First name only. The business gets this and nothing more —
+                  no surname, no number, no email address.
+                </p>
+              </div>
 
               <div className="book-field">
                 <label htmlFor="bk-phone">
@@ -1026,7 +1039,7 @@ export default function Book() {
               </div>
 
               <label htmlFor="bk-zip">
-                Postcode or ZIP
+                Postcode
                 <input id="bk-zip" name="postcode" value={zip}
                   autoComplete="postal-code" enterKeyHint="next"
                   onChange={(e) => setZip(e.target.value)} />

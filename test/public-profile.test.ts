@@ -184,10 +184,11 @@ describe('the public profile endpoint answers what the page destructures', () =>
       expect(r).toHaveProperty('details');
       expect(r).toHaveProperty('reply');
       expect(Array.isArray(r.photos)).toBe(true);
-      // "Debra D." -- the surname is cut at display time, and this endpoint is
-      // the display. A full surname beside a review of a home visit is more
-      // than anybody signing one expects to publish.
-      expect(r.author_name).toBe('Debra D.');
+      // The review is signed with the name the booking was made under, and
+      // the checkout now takes a first name only -- so there is no surname
+      // left for displayName to cut here. It signs "Debra" because "Debra" is
+      // the whole of what this customer was ever asked for.
+      expect(r.author_name).toBe('Debra');
     }
 
     // The chips read `m.word` and `m.n`.

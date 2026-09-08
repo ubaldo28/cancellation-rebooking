@@ -2,7 +2,7 @@ import type { Env } from '../types';
 import { hashOfferToken } from './auth';
 import { FEED_EXCERPT_CHARS, notify } from './feed';
 import { RateLimitedError } from './ratelimit';
-import { redactContact, redactionMessage } from './redact';
+import { firstNameOnly, redactContact, redactionMessage } from './redact';
 import { badRequest, conflict, newId, newToken, notFound, now } from './util';
 
 /**
@@ -152,8 +152,14 @@ export async function startThread(
   // "Rosa 818 555 0199" was a phone number handed over in the one box nothing
   // was reading. Every field a stranger types and the other side reads has to
   // be filtered, not only the ones called "message".
+  //
+  // And only the first word of the name, for the reason firstNameOnly sets
+  // out: this is the line the operator reads at the top of the conversation,
+  // and a stranger who typed their full name into a box labelled "your name"
+  // has handed over a surname nobody asked them for. Cut before the filter
+  // runs, so the filter sees the string that is actually going to be stored.
   const guestName = redactContact(
-    (input.guest_name ?? '').trim().slice(0, MAX_NAME_CHARS),
+    firstNameOnly(input.guest_name).slice(0, MAX_NAME_CHARS),
   ).body.trim();
   if (!guestName) throw badRequest('Tell them who you are first.', 'no_name');
 

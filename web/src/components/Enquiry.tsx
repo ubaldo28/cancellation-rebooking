@@ -61,7 +61,7 @@ export type EnquiryKind = 'message' | 'quote';
  * number of seconds and so cannot be improved on from out here.
  */
 const PROBLEM: Record<string, string> = {
-  no_name: 'Add the name this should come from, so they know who is writing.',
+  no_name: 'Add the first name this should come from, so they know who is writing.',
   no_request: 'Say what you would like done. They cannot price a blank.',
   empty_message: 'Write your message first.',
   message_too_long:
@@ -123,6 +123,7 @@ export default function Enquiry({ slug, businessName, kind, onClose }: {
 
   const ids = useId();
   const nameId = `${ids}-name`;
+  const nameHintId = `${ids}-name-hint`;
   const bodyId = `${ids}-body`;
   const noticeId = `${ids}-notice`;
   const countId = `${ids}-count`;
@@ -201,14 +202,21 @@ export default function Enquiry({ slug, businessName, kind, onClose }: {
               + 'time is held by writing.'}
         </p>
 
+        {/* "Your name" with "a first name is enough" under it was an
+            invitation, and most people typed both names anyway -- which handed
+            the business a surname it never needed. The field asks for the one
+            thing it wants, and the Worker keeps only the first word of
+            whatever arrives. See firstNameOnly. */}
         <label htmlFor={nameId}>
-          Your name
+          First name
           <input id={nameId} value={name} maxLength={MAX_NAME}
             onChange={(e) => setName(e.target.value)}
-            autoComplete="name" enterKeyHint="next" />
+            aria-describedby={nameHintId}
+            autoComplete="given-name" enterKeyHint="next" />
         </label>
-        <p className="field-note">
-          What they will see this come from. A first name is enough.
+        <p className="field-note" id={nameHintId}>
+          First name only. It is all they see this come from, and all they
+          ever get — there is no surname, number or email address behind it.
         </p>
 
         <label htmlFor={bodyId}>

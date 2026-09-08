@@ -58,6 +58,43 @@ export function todayIn(tz: string): string {
 }
 
 /**
+ * The calendar date an instant falls on in `tz`, as the yyyy-mm-dd a date
+ * input and the schedule's own day window both want.
+ *
+ * The counterpart of epochInZone, and it exists for the same reason: a job at
+ * eight in the evening in Los Angeles is already on tomorrow's date in UTC, so
+ * turning a start time into a day with the browser's own zone puts a link a
+ * day away from the booking it points at — on the one screen an operator reads
+ * to find out where they are meant to be.
+ */
+export function dateIn(epochSeconds: number, tz: string): string {
+  const at = new Date(epochSeconds * 1000);
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(at);
+  } catch {
+    return new Intl.DateTimeFormat('en-CA').format(at);
+  }
+}
+
+/**
+ * Whole days from one calendar date to another, either sign.
+ *
+ * In UTC for the reason addDays gives below: these are dates with no time of
+ * day on them, and counting the seconds between two of them in a zone with a
+ * clock change in it is a day and an hour, which rounds the wrong way twice a
+ * year.
+ */
+export function daysBetween(from: string, to: string): number {
+  const at = (iso: string) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1);
+  };
+  return Math.round((at(to) - at(from)) / 86_400_000);
+}
+
+/**
  * Calendar-date arithmetic, done in UTC on purpose. "Tomorrow" is the next date
  * on the wall calendar, and it stays that even on the day the clocks go
  * forward — adding 86400 seconds to a moment does not.

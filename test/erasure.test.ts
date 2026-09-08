@@ -121,12 +121,15 @@ async function seedCustomer(token = 'guest-token-rosa') {
      VALUES (?,?,?,?, 'filled',?,?)`,
   ).bind(gapId, OP, t - 7200, t - 3600, t, t).run();
 
+  // The claim carries the peppered digest of the number and no contact
+  // details at all -- migration 0035 took them off this table. Erasure has to
+  // find this row by that digest, which is what the assertions below check.
   await env.DB.prepare(
-    `INSERT INTO public_claims (id,operator_id,gap_id,client_id,appointment_id,first_name,
-       phone_e164,email,address_line,postcode,lat,lng,price_cents,status,created_at,updated_at)
-     VALUES (?,?,?,?,?, 'Rosa',?,?, '15200 Ventura Blvd','91403',34.151,-118.445,
+    `INSERT INTO public_claims (id,operator_id,gap_id,client_id,appointment_id,
+       phone_hash,address_line,postcode,lat,lng,price_cents,status,created_at,updated_at)
+     VALUES (?,?,?,?,?,?, '15200 Ventura Blvd','91403',34.151,-118.445,
        12500,'confirmed',?,?)`,
-  ).bind(newId(), OP, gapId, clientId, apptId, PHONE, EMAIL, t, t).run();
+  ).bind(newId(), OP, gapId, clientId, apptId, await peppered(PHONE), t, t).run();
 
   await env.DB.prepare(
     `INSERT INTO threads (id,operator_id,appointment_id,client_id,guest_name,
@@ -214,13 +217,14 @@ describe('a customer asking to be erased', () => {
     // scrub that only looked at address columns would leave behind.
     expect(appt?.notes).toBeNull();
 
-    const claim = await one<{ phone_e164: string | null; first_name: string; lat: number | null }>(
-      `SELECT phone_e164, first_name, lat FROM public_claims`);
+    const claim = await one<{ phone_hash: string | null; lat: number | null }>(
+      `SELECT phone_hash, lat FROM public_claims`);
     // Kept as a row because its unique index on gap_id is the double-booking
-    // guard, and emptied of everything that names anybody.
-    expect(claim?.phone_e164).toBe('');
+    // guard, and emptied of everything that leads back to anybody. There is no
+    // name and no number on this table to empty any more; the digest that
+    // found the row goes with the rest.
+    expect(claim?.phone_hash).toBeNull();
     expect(claim?.lat).toBeNull();
-    expect(claim?.first_name).toBe('Removed');
   });
 
   it('keeps the money, because a settled transaction is not one party\'s to delete', async () => {

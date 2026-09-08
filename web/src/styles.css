@@ -618,6 +618,11 @@ textarea { min-height: 90px; resize: vertical; }
   display: flex; align-items: center; gap: 6px;
   font-size: 13px; color: var(--muted); padding-top: 3px;
 }
+/* The row's way back to the booking, and now the only way to the address on
+   it. Left-aligned and no wider than its own words: a full-width button on
+   every row in a list of six reads as six things demanding to be done, and
+   this is the quiet way out of a row the operator may not need to open. */
+.feed-open { align-self: flex-start; margin-top: 6px; text-decoration: none; }
 
 /* --- postcode finder ----------------------------------------------------
    The claim on this page is that a van is already near you. Without somewhere

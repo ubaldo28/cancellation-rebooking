@@ -21,6 +21,9 @@
  * goal; treating it as a sealed wall would be the mistake.
  */
 
+import type { Env } from '../types';
+import { sha256 } from './util';
+
 export interface Redaction {
   /** The message as it will be stored — already cleaned. */
   body: string;
@@ -231,6 +234,41 @@ export function redactionMessage(r: Redaction): string | null {
 }
 
 /**
+ * A first name, out of whatever was typed into a box asking for one.
+ *
+ * The checkout asked for "Your name" in a single free-text box and stored the
+ * answer whole, so a customer who typed "Jane Smith" — which is what most
+ * people type when a form says "your name" — handed the business a surname.
+ * maskClientRow below deletes last_name and says why: a full name beside a
+ * street address is enough to find somebody's landline, their electoral roll
+ * entry and their employer. One box undid all of it, and the box was on the
+ * busiest form in the product.
+ *
+ * WHAT ENFORCEMENT CAN HONESTLY MEAN HERE. Nothing can look at free text and
+ * tell a first name from a surname: "Marie Claire" may be one person's given
+ * name and "Ana Maria" may be two. What is decidable is how much of it we
+ * asked for, and we asked for one name. So the first word is kept and the rest
+ * is never written down — the obvious case is stopped, and the case that is
+ * not obvious cannot be stored either way.
+ *
+ * Dropped rather than refused, for the reason redactContact gives above:
+ * bouncing "Jane Smith" back at somebody mid-checkout teaches them to try a
+ * spelling that gets through, and punishes the many people who typed their
+ * full name out of habit. The field's own help text is what tells them why
+ * only the first name is wanted; this is what makes that true regardless of
+ * which client, or which script, is filling the form in.
+ */
+export function firstNameOnly(raw: string | null | undefined): string {
+  // Split on any whitespace, so a name pasted with a newline or a tab in it is
+  // cut at the same place a space would cut it.
+  const first = (raw ?? '').trim().split(/\s+/)[0] ?? '';
+  // "Smith, Jane" leaves a trailing comma on the word that is kept. The comma
+  // is punctuation the person did not mean to be part of their name, and a
+  // stored "Smith," reads to the operator as a typo we made.
+  return first.replace(/[,;]+$/, '');
+}
+
+/**
  * The customer's phone number, as the operator is allowed to see it.
  *
  * Never the number. The operator has no reason to hold it: they are not
@@ -249,6 +287,29 @@ export function maskPhone(e164: string | null | undefined): string | null {
   if (digits.length < 4) return '••••';
   return `•••• ${digits.slice(-2)}`;
 }
+
+/**
+ * The customer's number, as `public_claims` is allowed to hold it.
+ *
+ * That table is scoped by operator_id and until migration 0035 it stored the
+ * number and the mailbox in full. Nothing read them — every query against it
+ * is an EXISTS or a COUNT — which made it harmless right up until the first
+ * `SELECT *` somebody writes for a dashboard, and then it is the whole promise
+ * gone in one query nobody would think twice about.
+ *
+ * Erasure is why a column is kept at all rather than the lot being dropped: it
+ * finds every claim one person ever made by their number, and an erasure that
+ * reaches one of somebody's three bookings has not erased them. A digest
+ * answers that lookup exactly as the number did — hash the number being erased
+ * and compare — while being nothing anybody can dial.
+ *
+ * Peppered with SESSION_PEPPER, the same way retention.ts hashes an erasure
+ * subject and auth.ts hashes a token, because an unpeppered hash of a phone
+ * number is not a secret: the whole space of valid numbers is small enough to
+ * enumerate on a laptop, so a stolen table would be a stolen contact list.
+ */
+export const claimPhoneHash = (env: Env, e164: string): Promise<string> =>
+  sha256(`${e164}:${env.SESSION_PEPPER}`);
 
 /** The same, for an email. The domain goes too — it is often the person's name. */
 export function maskEmail(email: string | null | undefined): string | null {
@@ -305,6 +366,73 @@ export function maskWithdrawnAddress<T extends Record<string, unknown>>(
   const out: Record<string, unknown> = { ...row };
   // The coordinates go with the street line. A latitude and longitude to five
   // decimal places is the address, written differently.
-  for (const k of ['address_line', 'lat', 'lng']) if (k in out) out[k] = null;
+  for (const k of ADDRESS_KEYS) if (k in out) out[k] = null;
   return out as T;
+}
+
+/** The three columns that are the doorstep, whatever table they arrive on. */
+const ADDRESS_KEYS = ['address_line', 'lat', 'lng'] as const;
+
+/**
+ * The two derived columns `maskCustomerRow` needs, for a query that joins
+ * clients by whatever alias it happens to use.
+ *
+ * `clientRef` is the client id expression in the caller's query — `a.client_id`
+ * on the schedule, `c.id` on the client list, `l.client_id` on the leads list.
+ * It is interpolated into SQL and must therefore be a literal written in this
+ * repository, never anything that reached us over the wire; every call site
+ * below passes a column name spelled out in the query beside it.
+ *
+ * A client may have several bookings, so the question is not "was this one
+ * cancelled" but "is there still any live booking this address was released
+ * for". MAX over the release timestamps answers exactly that: it is NULL when
+ * every item has been cancelled and non-NULL while one survives. The id is
+ * selected alongside it to tell "cancelled" apart from "no order item at all",
+ * which is an operator's own booking and no business of the release model.
+ */
+export const addressReleaseColumns = (clientRef: string): string =>
+  `(SELECT oi.id FROM order_items oi WHERE oi.client_id = ${clientRef} LIMIT 1)
+     AS order_item_id,
+   (SELECT MAX(oi.address_released_at) FROM order_items oi WHERE oi.client_id = ${clientRef})
+     AS address_released_at`;
+
+/**
+ * Everything an operator-facing row of a customer's details has to go through,
+ * in one call that cannot be half-made.
+ *
+ * The two masks above were correct and were applied in different places: the
+ * schedule ran both, the client list and the leads list ran only the first, and
+ * so a cancelled booking's street address and coordinates were withdrawn from
+ * `/api/appointments` and served in full by `/api/clients` and `/api/leads`.
+ * The comment on maskWithdrawnAddress said the problem was fixed. It was fixed
+ * once, at one call site, which is the same failure maskClientRow was written
+ * as a whitelist-by-deletion to avoid — and writing a second helper that also
+ * has to be remembered would only move it.
+ *
+ * So this takes ONE argument. There is no argument order to get wrong, no
+ * second call to leave out, and everything it needs it reads off the row.
+ *
+ * WHICH MAKES THE QUERY THE REMAINING WAY TO GET IT WRONG, and that is what
+ * the last branch is for. A row that carries a doorstep but not the release
+ * state is a query that forgot to ask whether the release still stands, and
+ * the honest answer to a question nobody asked is no: the address is withheld.
+ * Failing that way round turns a forgotten join into a visible blank on the
+ * operator's screen rather than a stranger's address on it, and the fix — the
+ * `addressReleaseColumns` fragment above — is named in this comment.
+ */
+export function maskCustomerRow<T extends Record<string, unknown>>(row: T): T {
+  const out = maskClientRow({ ...row }, row.acquired as string | null | undefined);
+  if (!ADDRESS_KEYS.some((k) => k in out && out[k] != null)) return out;
+
+  if (!('order_item_id' in out) || !('address_released_at' in out)) {
+    const blanked: Record<string, unknown> = { ...out };
+    for (const k of ADDRESS_KEYS) if (k in blanked) blanked[k] = null;
+    return blanked as T;
+  }
+
+  return maskWithdrawnAddress(
+    out,
+    out.order_item_id as string | null,
+    out.address_released_at as number | null,
+  );
 }

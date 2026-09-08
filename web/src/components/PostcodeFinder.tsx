@@ -53,7 +53,7 @@ export default function PostcodeFinder({
           <Icon name="pin" size={19} />
         </span>
         <input id={id} value={postcode} onChange={(e) => setPostcode(e.target.value)}
-          placeholder="Postcode or ZIP" autoComplete="postal-code" inputMode="text" />
+          placeholder="Postcode" autoComplete="postal-code" inputMode="text" />
         <button type="submit" disabled={locating || !postcode.trim()}>
           {locating ? 'Looking…' : 'Search'}
         </button>

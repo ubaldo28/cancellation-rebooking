@@ -5,6 +5,7 @@ import { notify } from './feed';
 import { isDemoOperator } from './demo';
 import { metroForPlace } from './metros';
 import { attachBooking, startThread, threadByToken } from './chat';
+import { claimPhoneHash, firstNameOnly } from './redact';
 import { displayName } from './reviews';
 import { customerStanding } from './standing';
 import { formatTimeRange } from './tz';
@@ -700,7 +701,14 @@ export async function claimSlot(env: Env, input: {
   // empty and a perfectly good mobile in the other one came back with "that
   // does not look like a valid mobile number", pointing at the one field the
   // person had filled in correctly. Each field now reports its own problem.
-  if (!input.first_name?.trim()) throw badRequest('We need a name for the booking.', 'no_name');
+  //
+  // The box is called first_name and the field asks for one, and neither of
+  // those stops "Jane Smith" arriving in it -- from a browser with an old page
+  // cached, or from anything at all posting this form, which is the whole
+  // point of the no-JavaScript path. Cutting it here is what makes the name on
+  // the operator's client row a first name in fact. See firstNameOnly.
+  const firstName = firstNameOnly(input.first_name);
+  if (!firstName) throw badRequest('We need a name for the booking.', 'no_name');
 
   const phone = toE164(input.phone, row.country);
   if (!phone) throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
@@ -763,6 +771,8 @@ export async function claimSlot(env: Env, input: {
   const apptId = newId();
   const claimId = newId();
   const endsAt = Math.min(row.starts_at + service.duration_seconds, row.ends_at);
+  // Awaited before the batch, which is assembled synchronously.
+  const phoneHash = await claimPhoneHash(env, phone);
 
   try {
     const res = await env.DB.batch([
@@ -780,7 +790,7 @@ export async function claimSlot(env: Env, input: {
            default_service_id, sms_consent, sms_consent_at, acquired,
            platform_introduced, created_at, updated_at)
          VALUES (?,?,?,NULL,NULL,?,?,?,?,?,?,?,0,NULL, 'public', 1, ?,?)`,
-      ).bind(clientId, row.operator_id, input.first_name.trim(),
+      ).bind(clientId, row.operator_id, firstName,
         input.address_line ?? null, postcode,
         at?.lat ?? null, at?.lng ?? null, at ? 'ok' : 'failed', at ? t : null,
         service.id, t, t),
@@ -794,14 +804,18 @@ export async function claimSlot(env: Env, input: {
         row.is_mobile, input.address_line ?? null, postcode,
         at?.lat ?? null, at?.lng ?? null, price, t, t),
 
+      // Without the name, the number or the mailbox on it -- see migration
+      // 0035 and the identical insert in orders.ts. This table is scoped by
+      // operator_id and nothing has ever read those columns; the digest is
+      // what lets erasure still find this row by the number that made it.
       env.DB.prepare(
         `INSERT INTO public_claims (id, operator_id, gap_id, service_id, client_id,
-           appointment_id, first_name, phone_e164, email, address_line, postcode,
+           appointment_id, phone_hash, address_line, postcode,
            lat, lng, detour_seconds, price_cents, deposit_cents, status,
            created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'confirmed', ?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'confirmed', ?,?)`,
       ).bind(claimId, row.operator_id, row.gap_id ?? input.gapId, service.id, clientId,
-        apptId, input.first_name.trim(), phone, input.email ?? null,
+        apptId, phoneHash,
         input.address_line ?? null, postcode, at?.lat ?? null, at?.lng ?? null,
         detour, price, row.deposit_cents, t, t),
 
@@ -836,13 +850,19 @@ export async function claimSlot(env: Env, input: {
   // After the batch, never inside it. The operator finding out is important;
   // it is not important enough to roll back a booking that already succeeded,
   // which is why notify swallows its own failures.
+  //
+  // The street line used to be the third thing in this body, and it was the
+  // one copy of the doorstep that a cancellation could not reach: the schedule
+  // withdraws it, the client list withdraws it, and the feed went on printing
+  // the sentence written the day it was booked. What is left is what stays
+  // true afterwards — who, what, when, how much — and appointment_id is the
+  // way back to the booking, where the address is read off a masked row.
   await notify(env, row.operator_id, {
     kind: 'public_booking',
-    title: `${input.first_name.trim()} booked ${service.name}`,
+    title: `${firstName} booked ${service.name}`,
     body: [
       formatTimeRange(row.starts_at, endsAt, row.timezone, locale),
       formatMoney(price, row.currency, locale),
-      input.address_line ?? postcode,
     ].filter(Boolean).join(' · '),
     appointment_id: apptId, claim_id: claimId, starts_at: row.starts_at,
   });
@@ -864,7 +884,7 @@ export async function claimSlot(env: Env, input: {
       gap_id: input.gapId,
       appointment_id: apptId,
       client_id: clientId,
-      guest_name: input.first_name.trim(),
+      guest_name: firstName,
       subject: service.name,
     });
     threadToken = started.token;

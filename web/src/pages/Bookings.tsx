@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, clockTime, shortDate, type Notification } from '../api';
 import { useOperator } from '../App';
 import OnlineSwitch from '../components/OnlineSwitch';
 import JobsPanel from '../components/JobsPanel';
 import { Empty, ErrorNote, Icon, Spinner } from '../components/ui';
 import { useDocumentTitle } from '../lib/title';
+import { dateIn } from '../lib/zone';
 
 /** What each kind is called, and whether it is good news. */
 const KINDS: Record<string, { label: string; tone: 'good' | 'alert' }> = {
@@ -130,9 +132,35 @@ function Row({ n, op }: { n: Notification; op: ReturnType<typeof useOperator> })
           </span>
         </div>
       )}
+
+      {/*
+        The way to the booking, which is where the address lives.
+
+        A feed row used to print the customer's street line, and it was the one
+        copy of it that cancelling the booking could not withdraw — every other
+        screen reads the address off a row and masks it, and this one is a
+        stored sentence with no query behind it. So the address came out and
+        this went in: the row says who, what, when and how much, and one tap
+        opens the day on the schedule, where the doorstep is read live and
+        disappears the moment the job does.
+
+        Named for where it goes rather than "View" or "Open": on a phone this
+        sits under six other rows saying much the same thing, and a screen
+        reader announcing seven identical links is no more use than none.
+      */}
+      {n.appointment_id && n.starts_at !== null && (
+        <Link className="btn quiet sm feed-open"
+          to={`/app/schedule?on=${dateIn(n.starts_at, tzOf(op))}`}>
+          Open it on the schedule
+        </Link>
+      )}
     </article>
   );
 }
+
+/** The operator's own zone, falling back to the phone's. Same rule as Schedule. */
+const tzOf = (op: ReturnType<typeof useOperator>): string =>
+  op?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 /**
  * How long ago the news arrived.

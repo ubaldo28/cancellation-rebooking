@@ -2,6 +2,7 @@ import type { Env } from '../types';
 import { hashOfferToken } from './auth';
 import { listingBlock } from './bypass';
 import { notify } from './feed';
+import { firstNameOnly, redactContact } from './redact';
 import { customerStanding } from './standing';
 import {
   badRequest, conflict, haversineMeters, newId, newToken, notFound, now, toE164,
@@ -364,6 +365,20 @@ export interface CreateInstantRequestInput {
 const trimTo = (v: unknown, max: number): string | null =>
   typeof v === 'string' ? (v.trim().slice(0, max) || null) : null;
 
+/**
+ * The customer's note, cut to length and stripped of contact details.
+ *
+ * Cleaned before the length cut would be wrong: a number sitting on the 300th
+ * character would survive as a fragment, and a fragment of a phone number
+ * across two sentences is still most of one. Null when nothing readable is
+ * left, so a note that was only a phone number does not become a row saying
+ * "[removed]".
+ */
+const redactedNote = (v: unknown): string | null => {
+  const raw = trimTo(v, MAX_NOTE_CHARS);
+  return raw == null ? null : (redactContact(raw).body.trim() || null);
+};
+
 const coord = (v: unknown): number | null => {
   if (v == null || v === '') return null;
   const n = Number(v);
@@ -407,7 +422,11 @@ export async function createInstantRequest(
       'not_online');
   }
 
-  const guestName = trimTo(input?.guest_name, MAX_NAME_CHARS);
+  // The first word of it only. This name is read out to a working operator and
+  // written onto the request row beside a street address, which is the pair
+  // redact.ts exists to keep apart. See firstNameOnly for why the first word is
+  // the honest limit of what a free-text box can be held to.
+  const guestName = trimTo(firstNameOnly(input?.guest_name), MAX_NAME_CHARS);
   if (!guestName) throw badRequest('We need a name to give them.', 'no_name');
 
   const phone = toE164(input?.phone ?? null, op.country);
@@ -483,7 +502,13 @@ export async function createInstantRequest(
     postcode: trimTo(input?.postcode, MAX_POSTCODE_CHARS),
     lat: coord(input?.lat),
     lng: coord(input?.lng),
-    note: trimTo(input?.note, MAX_NOTE_CHARS),
+    // Through the same filter as everything else a customer types at a
+    // business. This box is the one free-text field on the instant-request
+    // form, it is read by the operator and quoted verbatim into the feed row
+    // below, and it was the only one of the three going in unfiltered -- so
+    // "call me on ..." in a hurry-up note was a number handed over in the
+    // product whose whole promise is that no number is.
+    note: redactedNote(input?.note),
     status: 'pending',
     expires_at: t + REQUEST_TTL_SECONDS,
     decided_at: null,
@@ -511,11 +536,17 @@ export async function createInstantRequest(
   // worse. 'public_booking' is the existing kind for work arriving from the
   // public side -- the CHECK in migration 0021 has a fixed list, and inventing
   // a sixth kind here would fail the insert rather than show anybody anything.
+  //
+  // "At <street line>" was the fallback body, and it is the one copy of the
+  // doorstep this product could never take back: a request that expires in
+  // five minutes and is then swept away left its address sitting in a feed row
+  // for as long as the feed is kept. Where the job is belongs on the request,
+  // which the operator opens from this row and which stops answering once the
+  // request is gone. See NotifyInput in feed.ts.
   await notify(env, operatorId, {
     kind: 'public_booking',
     title: `${guestName} wants somebody now`,
-    body: request.note
-      ?? (request.address_line ? `At ${request.address_line}` : 'Tap to accept or decline.'),
+    body: request.note ?? 'Tap to accept or decline.',
     starts_at: request.starts_at,
   });
 

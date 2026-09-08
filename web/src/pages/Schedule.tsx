@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   api, clockTime, durationLabel, localeFor, money,
   type Appointment, type Gap,
@@ -7,13 +7,17 @@ import {
 import { useOperator } from '../App';
 import { ErrorNote, Icon, Spinner } from '../components/ui';
 import { useDocumentTitle } from '../lib/title';
-import { addDays, epochInZone, todayIn } from '../lib/zone';
+import { addDays, daysBetween, epochInZone, todayIn } from '../lib/zone';
 
 const DAY = 86400;
+
+/** A day this far from today is a mistyped link, not a schedule anybody keeps. */
+const MAX_DAYS_AWAY = 366;
 
 export default function Schedule() {
   useDocumentTitle('Schedule');
   const op = useOperator();
+  const [search] = useSearchParams();
   const [offset, setOffset] = useState(0);           // days from today
   const [appts, setAppts] = useState<Appointment[]>([]);
   const [gaps, setGaps] = useState<Gap[]>([]);
@@ -47,6 +51,30 @@ export default function Schedule() {
   const dateFor = useCallback((by: number) => addDays(todayIn(tz), by), [tz]);
   const dayStart = useCallback(
     () => epochInZone(dateFor(offset), '00:00', tz), [dateFor, offset, tz]);
+
+  /**
+   * `?on=YYYY-MM-DD` opens the schedule on that day rather than on today.
+   *
+   * This is what makes a feed row a way back to the booking it is about. A
+   * notification is a sentence written at the moment something happened and
+   * nothing can afterwards edit it, so the doorstep is no longer in one — the
+   * operator comes here to read it off the appointment, where a cancellation
+   * withdraws it. That trip has to be one tap or the address goes back in the
+   * notification the first time somebody complains.
+   *
+   * Run once, as the starting point rather than as a lock: the arrows must
+   * still work afterwards, and a link that snapped the page back to its own day
+   * every time they were pressed would be worse than no link.
+   */
+  useEffect(() => {
+    const on = search.get('on');
+    if (!on || !/^\d{4}-\d{2}-\d{2}$/.test(on)) return;
+    const away = daysBetween(todayIn(tz), on);
+    if (!Number.isFinite(away) || Math.abs(away) > MAX_DAYS_AWAY) return;
+    setOffset(away);
+    // Deliberately only on arrival. See above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);

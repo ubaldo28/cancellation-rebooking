@@ -820,7 +820,7 @@ function WatchForm({
         Where are you?
         <input id="wf-postcode" ref={postcodeRef} value={v.postcode}
           onChange={(e) => { set('postcode', e.target.value); setBadPostcode(false); }}
-          placeholder="Postcode or ZIP" autoComplete="postal-code" inputMode="text"
+          placeholder="Postcode" autoComplete="postal-code" inputMode="text"
           aria-invalid={badPostcode || undefined}
           aria-describedby={badPostcode ? 'wf-postcode-err' : 'wf-postcode-hint'} />
       </label>

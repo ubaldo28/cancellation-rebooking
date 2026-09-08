@@ -2,6 +2,7 @@ import type { Env } from '../types';
 import { threadByToken } from './chat';
 import { formatMoney, localeFor } from './countries';
 import { notify } from './feed';
+import { redactContact } from './redact';
 import { flag, holdStatement } from './settlement';
 import {
   hasOperatorCard, NEEDS_CARD_OPERATOR, NEEDS_LOCATION_OPERATOR,
@@ -178,6 +179,29 @@ export interface RefundDecision {
   cents: number;
   /** What to tell the customer BEFORE they confirm, in their words. */
   message: string;
+}
+
+/** The longest a "why are you cancelling" box has ever been allowed to be. */
+const MAX_REASON_CHARS = 300;
+
+/**
+ * Why somebody cancelled, as it is stored and shown to the other side.
+ *
+ * This box is the last thing either party types before the app stops being the
+ * place they talk. "Cancelling -- call me on ... and we'll sort a time direct"
+ * is the sentence, it is written by the person with the most reason to write
+ * it, and until now it went into cancel_reason and into the other side's feed
+ * row exactly as typed: the one free-text field left in the product that the
+ * chat filter did not read. Same filter, same reason as chat.ts and
+ * estimates.ts.
+ *
+ * Cleaned before the length cut, so a number sitting on the 300th character is
+ * not left as a readable fragment. Null when nothing survives, because a stored
+ * reason reading "[removed]" tells the other side less than no reason at all.
+ */
+function cancelReason(raw: string | null | undefined): string | null {
+  const text = (raw ?? '').trim().slice(0, MAX_REASON_CHARS);
+  return text ? (redactContact(text).body.trim() || null) : null;
 }
 
 /**
@@ -423,7 +447,7 @@ export async function cancelByOperator(
   if (!item) throw notFound('That booking is not yours.');
   if (item.cancelled_at) throw conflict('That booking is already cancelled.', 'already_cancelled');
 
-  const why = (reason ?? '').trim().slice(0, 300) || null;
+  const why = cancelReason(reason);
   const feeReason = feeFor(item, t);
   const relisted = item.gap_id != null && item.starts_at - t > RELISTABLE_SECONDS;
 
@@ -617,7 +641,7 @@ export async function cancelByCustomer(
 
   const refund = refundFor(item, t);
 
-  const why = (reason ?? '').trim().slice(0, 300) || null;
+  const why = cancelReason(reason);
   const relisted = item.gap_id != null && item.starts_at - t > RELISTABLE_SECONDS;
 
   // ---------------------------------------------------------------------
