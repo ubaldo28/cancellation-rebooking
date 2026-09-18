@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
-  api, durationLabel, sentence,
+  api, durationLabel, photoUrl, sentence,
   type MapArea, type PublicProfileResponse, type PublicSlot, type Review,
   type SimilarBusiness,
 } from '../api';
@@ -13,6 +13,9 @@ import PublicPage from '../components/PublicPage';
 import SlotCard from '../components/SlotCard';
 import { DAY_NAMES } from '../components/WorkingHours';
 import '../styles-profile.css';
+import { useNoIndex } from '../lib/noindex';
+import { absoluteUrl } from '../lib/origin';
+import { jsonLd, tradeHref } from '../lib/seo';
 import { useDocumentTitle } from '../lib/title';
 import { distinctGaps } from '../lib/slots';
 
@@ -46,6 +49,55 @@ import { distinctGaps } from '../lib/slots';
  * looking at it: their credentials section is a background check and nothing
  * else, and "I travel to my customers" is a plain line under Services offered
  * rather than a compliance question.
+ *
+ * ---------------------------------------------------------------------------
+ * WHERE THIS PAGE DEPARTS FROM THE REFERENCE, AND WHY EVERY DEPARTURE IS THE
+ * SAME DEPARTURE.
+ *
+ * The reference is a marketplace with a decade of completed jobs behind it.
+ * Almost every module in the list above is, underneath, a claim that platform
+ * is entitled to make and this one is not: a green shield beside a name, a
+ * "Top Pro" ribbon, "responds in about 20 minutes", "licence verified", a
+ * guarantee with a figure attached. Copying the shape of those modules without
+ * the machinery behind them is not a design decision, it is a forgery — the
+ * reader cannot tell a badge that was earned from a badge that was drawn, and
+ * the whole point of the badge is that they should not have to.
+ *
+ * So the rule this file is now built around, and which every block below obeys:
+ *
+ *   NOTHING IS RENDERED AS AN ENDORSEMENT BY ROUNDTHEWAY. There are no badges
+ *   on this page. No verification mark, no background-check shield, no
+ *   licence-verified tick, no top-rated ribbon. Nobody here checks any of those
+ *   things, and a mark that says otherwise is a lie told at scanning speed.
+ *
+ *   A NUMBER IS PRINTED ONLY IF THE PAYLOAD CARRIES IT. Hire counts, response
+ *   times, ratings and review counts are read off `data` or they are absent.
+ *   None of them is estimated, rounded up from something adjacent, or
+ *   substituted for by a friendly word.
+ *
+ *   A FACT THE BUSINESS TOLD US IS LABELLED AS A FACT THE BUSINESS TOLD US, IN
+ *   WORDS, BESIDE IT. Years in the trade, employees, a background check, a
+ *   licence, insurance: every one of these is typed into a form by the person
+ *   it flatters. That is worth showing — it is genuinely what the customer
+ *   wants to know — and it is worth showing honestly, which means "they say"
+ *   rather than a tick that reads as "we checked".
+ *
+ * WHAT REPLACES THE MODULES THAT HAD TO GO. The reference's trust furniture
+ * answers "is this person safe" with a badge. On a site of solo mobile traders
+ * who drive to a stranger's kerb, the questions that actually decide the job
+ * are answerable from real rows and are more useful than any badge would have
+ * been:
+ *
+ *   Where they work                     — which way they travel, the
+ *                                         neighbourhoods they have listed, and
+ *                                         plainly what is NOT on that list
+ *   Openings this week                  — their own free hours, by day
+ *   Before they arrive                  — what a mobile trade needs at the kerb
+ *                                         (parking, water, power, access), put
+ *                                         as questions to ask them, because the
+ *                                         site holds no answers to them
+ *
+ * See the comment above each of those for what it refuses to say and why.
  */
 
 const SORTS = [
@@ -61,6 +113,60 @@ const WORK_LOCATION: Record<string, string[]> = {
   they_travel: ['My customers travel to me'],
   both: ['My customers travel to me', 'I travel to my customers'],
 };
+
+/**
+ * The same three values again, as a sentence rather than a tick.
+ *
+ * The tick list above is the reference's wording and it stays where it is,
+ * under Services offered, because it is how an operator answered the question
+ * in their own settings. But "I travel to my customers" under a heading is a
+ * fragment of a form, and the thing a customer is actually deciding — do they
+ * come to my drive, or do I take the car to them — deserves to be said in the
+ * second person somewhere they will read it.
+ *
+ * Written from the customer's side, therefore, not the operator's: the person
+ * reading this is not the one who filled the form in.
+ */
+const TRAVEL_PROSE: Record<string, string> = {
+  i_travel: 'They drive to you. The work happens wherever you are — your drive, '
+    + 'your kerb, your car park — and there is nowhere for you to bring anything to.',
+  they_travel: 'You go to them. This business does not drive out to customers, '
+    + 'so the job happens at a place they will arrange with you.',
+  both: 'Either way round. They will drive out to you, and they also take work '
+    + 'at a place of their own — agree which one before the day.',
+};
+
+/**
+ * WHAT A MOBILE TRADE NEEDS FROM THE KERB, PUT AS QUESTIONS.
+ *
+ * The reference has a requirements module here, filled in by the pro. This
+ * site has no such column: `services` carries the operator's working notes and
+ * the public profile query deliberately does not select them, and nothing
+ * anywhere records whether a particular business needs an outside tap or a
+ * 13-amp socket. So this block cannot answer any of these, and it does not try.
+ *
+ * It asks them instead, which is not a fudge — it is the single most useful
+ * thing this page can do about it. Every one of these is a real reason a mobile
+ * job gets abandoned on the day: the detailer arrives to permit-only parking,
+ * the pressure washer finds a capped tap, the mechanic cannot get a bay wide
+ * enough to open a door. The customer is the only person who knows the answer
+ * and the operator is the only person who knows which ones matter for their
+ * trade, so the honest move is to put the questions between them before
+ * somebody loses an afternoon.
+ *
+ * NOTHING HERE IS PHRASED AS A REQUIREMENT OF THIS BUSINESS. "They need an
+ * outside tap" would be inventing a fact about a person from their trade
+ * name — which is exactly the class of thing the rest of this file refuses.
+ */
+const ON_SITE_QUESTIONS = [
+  'Where do they need to park, and for how long? Permit bays, gated drives and '
+    + 'narrow kerbs are worth mentioning before the day rather than on it.',
+  'Do they need water from your outside tap, or do they carry their own?',
+  'Do they need mains power, or does everything run off the van?',
+  'How do they get to the work — a gate code, a lift, a flight of stairs, a dog '
+    + 'in the garden?',
+  'Does somebody need to be in, and for the whole job or only to let them in?',
+];
 
 /** How many of a business's openings are laid out before asking for more. */
 const OPEN_PAGE = 6;
@@ -160,6 +266,47 @@ function zoneLabel(timezone: string): string {
   }
 }
 
+/**
+ * WHICH DAY AN OPENING FALLS ON — AND WHOSE DAY IT IS.
+ *
+ * The business's, not the reader's, for exactly the reason `wallClock` gives
+ * above: an 18:00 opening in Los Angeles is a Thursday evening there whatever
+ * clock the person reading this is on, and a reader in Berlin who is shown it
+ * grouped under Friday has been told something false about when the van turns
+ * up. `starts_at` is a real instant, so unlike the working-hours numbers it can
+ * and must be projected — into the operator's zone.
+ *
+ * Two functions rather than one because they want different things: the key is
+ * sortable and never shown, the heading is shown and never compared. Deriving
+ * the heading from the key would mean parsing a date back out of a string that
+ * only exists to be an identity.
+ */
+function dayKey(startsAt: number, timezone: string): string {
+  try {
+    // en-CA gives YYYY-MM-DD, which sorts lexically in the same order it sorts
+    // chronologically. Nothing else about the locale is used or shown.
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(startsAt * 1000));
+  } catch {
+    // A zone this browser has never heard of. Falling back to one bucket for
+    // everything is right: an ungrouped list is still a true list, whereas
+    // grouping by the reader's own midnight would silently move appointments
+    // between days.
+    return 'all';
+  }
+}
+
+function dayHeading(startsAt: number, timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone, weekday: 'long', month: 'short', day: 'numeric',
+    }).format(new Date(startsAt * 1000));
+  } catch {
+    return 'Open hours';
+  }
+}
+
 export default function PublicProfile() {
   const { slug } = useParams<{ slug: string }>();
   const [data, setData] = useState<PublicProfileResponse | null>(null);
@@ -207,6 +354,16 @@ export default function PublicProfile() {
   useDocumentTitle(data?.operator.business_name ?? null);
 
   /**
+   * A slug with no business behind it is answered with the SPA shell and a
+   * 200 — see `toSpa` in src/index.ts — so without this every mistyped or
+   * retired profile URL is an indexable page apologising for itself. The
+   * failure branch is in here deliberately: a profile this page could not
+   * fetch has nothing worth indexing on it either, and the tag comes straight
+   * back off the moment a retry succeeds.
+   */
+  useNoIndex(!loading && !data);
+
+  /**
    * THE PHONE BAR APPEARS ONLY ONCE THE ACTION HAS SCROLLED AWAY.
    *
    * Pinning it from the top would put two copies of the same button on the
@@ -241,7 +398,7 @@ export default function PublicProfile() {
    */
   const share = useCallback(async () => {
     const url = window.location.href;
-    const title = data?.operator.business_name ?? 'Slotfill';
+    const title = data?.operator.business_name ?? 'Round The Way';
     if (typeof navigator !== 'undefined' && navigator.share) {
       try {
         await navigator.share({ title, url });
@@ -364,6 +521,32 @@ export default function PublicProfile() {
   }, [mine]);
 
   /**
+   * The visible openings, cut into the days they fall on.
+   *
+   * The reference's availability module is a row of days, and it is right to
+   * be: "can they come Saturday" is one question and "can they come at 9" is a
+   * different, later one, and a flat list of eighteen cards makes the reader do
+   * the first by eye. `mine` is already soonest-first, so consecutive grouping
+   * is enough and no second sort is needed.
+   *
+   * Grouped AFTER the limit rather than before it, so that "show 6 more" adds
+   * six appointments — not six days, which on a business with one free hour a
+   * day would quietly be six times as many.
+   */
+  const openDays = useMemo(() => {
+    const tz = data?.operator.timezone;
+    if (!mine || !tz) return [];
+    const groups: Array<{ key: string; heading: string; slots: PublicSlot[] }> = [];
+    for (const s of mine.slice(0, openLimit)) {
+      const key = dayKey(s.starts_at, tz);
+      const last = groups[groups.length - 1];
+      if (last && last.key === key) last.slots.push(s);
+      else groups.push({ key, heading: dayHeading(s.starts_at, tz), slots: [s] });
+    }
+    return groups;
+  }, [mine, openLimit, data]);
+
+  /**
    * The week, one entry per weekday, Monday first.
    *
    * Monday rather than Sunday: the rows are indexed 0 = Sunday because that is
@@ -436,7 +619,7 @@ export default function PublicProfile() {
     );
   }
 
-  const { operator: o, photos, rating, mentions, faqs, areas, services } = data;
+  const { operator: o, photos, rating, mentions, faqs, areas, services, metro } = data;
   const long = (o.bio ?? '').length > 420;
   const bio = long && !expanded ? `${o.bio!.slice(0, 420)}…` : o.bio;
 
@@ -454,7 +637,9 @@ export default function PublicProfile() {
   const sections = [
     ...(bio ? [{ id: 'pro-about', label: 'About' }] : []),
     { id: 'pro-services', label: 'Services' },
+    { id: 'pro-where', label: 'Where they work' },
     ...(photos.length > 0 ? [{ id: 'pro-photos', label: 'Photos' }] : []),
+    { id: 'pro-onsite', label: 'Before they arrive' },
     { id: 'pro-reviews', label: 'Reviews' },
     { id: 'pro-credentials', label: 'Credentials' },
   ];
@@ -468,7 +653,7 @@ export default function PublicProfile() {
    * a business with nothing free: the first falls back to the trade, the second
    * says so and then falls back to the trade.
    */
-  const tradeTo = o.trade ? `/s/${encodeURIComponent(o.trade)}` : '/';
+  const tradeTo = o.trade ? tradeHref(o.trade) : '/';
   const tradeLabel = o.trade
     ? `See what is open in ${o.trade}`
     : 'See what is open near you';
@@ -486,13 +671,120 @@ export default function PublicProfile() {
           Somebody who arrived here from a search engine and decided this is
           not their business needs a way sideways to the others doing the
           same work, and the crumb is where every marketplace puts it.
-          Crumbs prepends Slotfill itself, which is why it is not here. */}
+          Crumbs prepends Round The Way itself, which is why it is not here. */}
       <Crumbs items={[
         ...(o.trade
-          ? [{ label: sentence(o.trade), to: `/s/${encodeURIComponent(o.trade)}` }]
+          ? [{ label: sentence(o.trade), to: tradeHref(o.trade) }]
           : []),
         { label: o.business_name },
       ]} />
+
+      {/*
+        THE BUSINESS, AS STRUCTURED DATA, AND WHY IT HAS TO BE EMITTED HERE.
+
+        The Worker renders this same URL and puts its own copy of this node
+        inside #root, which is where `createRoot().render()` in main.tsx throws
+        it away the instant this bundle executes — deliberately, so that a
+        rendering crawler is never shown two of everything. Read the comment
+        over `intoShell` in src/lib/seo.ts for the bargain that is, and the one
+        in main.tsx for what this app owes in return: every route the Worker
+        renders into has to re-state the structured data it just deleted.
+
+        This page did not, and it is the page where that costs the most. A
+        profile is the only thing on the site that is a business with a score
+        attached, so the LocalBusiness entity and the AggregateRating — the
+        stars in a search result, which are the whole rich-result opportunity
+        here — existed in the first response and were gone a few hundred
+        milliseconds later. The breadcrumb above survived only because Crumbs
+        emits its own.
+
+        WHAT THIS NODE WAS, AND WHY NONE OF IT COULD EVER HAVE FIRED. It was
+        typed `['Product','LocalBusiness']` with a name, a URL and a list of
+        areas — no `address`, no `image`, no `@id`. Google requires `address`
+        on a LocalBusiness and `image` on a Product before either can produce a
+        rich result, so this was a node that satisfied neither of the two types
+        it claimed while carrying an aggregateRating for the benefit of
+        nothing. The stars this page exists to win were never available to it.
+        The Worker has stopped emitting that shape; a rendering crawler sees
+        THIS copy, so this is the one that had to change.
+
+        It is the same shape as the Worker's `businessLd` in src/lib/seo.ts
+        now, node for node — read that function before editing this one:
+
+        - ONE LocalBusiness. Product is gone. This is a business somebody
+          books, not a thing somebody buys, and claiming both types while
+          satisfying neither was the whole defect.
+        - `@id`, the profile URL, which is what lets the offers on every /near
+          page reference this same business rather than each minting an
+          anonymous copy of it.
+        - `address`, a locality and region off the metro this business's own
+          service areas put it in — sent down in the payload as `metro`, so
+          there is no second request to make. NEVER A STREET LINE: these
+          businesses work out of a vehicle, have no premises, and have never
+          given this product an address for one. Inventing a `streetAddress` to
+          satisfy a validator would be filing a fact about somebody's business
+          that nobody here knows.
+        - `image`, their own avatar or one of their own work photographs, and
+          nothing at all when they have neither — never a stock photograph,
+          which costs the rich result and is the only honest answer.
+        - A RATING ONLY WHERE A REVIEW ROW EXISTS. No placeholder, no "5.0 (0)",
+          no rounding a rating out of nothing. A business with no reviews is new
+          rather than badly rated, and marking up a score we do not have is the
+          one thing this codebase refuses everywhere else.
+        - NOTHING AT ALL FOR A SAMPLE BUSINESS. The seeded profiles carry seeded
+          reviews. Labelling them on the page is enough for a reader; submitting
+          them to a search engine as a real business with a real score is
+          fabricated inventory, which is a different and worse thing. The Worker
+          drops the node and asks for noindex on the same condition.
+      */}
+      {!o.is_sample && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: jsonLd((() => {
+              const url = absoluteUrl(`/p/${encodeURIComponent(slug ?? '')}`);
+              // Their own face or their own work, in the Worker's order of
+              // preference. Neither means no `image` key at all.
+              const imageKey = o.avatar_key ?? photos[0]?.r2_key ?? null;
+              return {
+                '@context': 'https://schema.org',
+                '@type': 'LocalBusiness',
+                '@id': url,
+                name: o.business_name,
+                url,
+                address: {
+                  '@type': 'PostalAddress',
+                  addressLocality: metro.name,
+                  addressRegion: metro.state,
+                  addressCountry: o.country || metro.country,
+                },
+                // The neighbourhoods this business has actually listed, which
+                // is the same list "Where they work" prints below, qualified by
+                // the state so each one is a place rather than a bare word. No
+                // radius: a circle drawn round a van would be a claim about
+                // coverage nobody here has made.
+                areaServed: areas.map((a) => ({
+                  '@type': 'Place', name: `${a}, ${metro.state}`,
+                })),
+                ...(imageKey ? { image: absoluteUrl(photoUrl(imageKey)) } : {}),
+                ...(o.tagline ? { description: o.tagline } : {}),
+                ...(o.trade ? { category: sentence(o.trade) } : {}),
+                ...(rating.count > 0 && rating.average != null
+                  ? {
+                    aggregateRating: {
+                      '@type': 'AggregateRating',
+                      ratingValue: rating.average,
+                      reviewCount: rating.count,
+                      bestRating: 5,
+                      worstRating: 1,
+                    },
+                  }
+                  : {}),
+              };
+            })()),
+          }}
+        />
+      )}
 
       {/*
         THE PAGE IS STILL ONE COLUMN. IT IS A SECOND COLUMN ONLY WHERE THERE IS
@@ -538,6 +830,35 @@ export default function PublicProfile() {
             <div className="pro-score"><span className="faint">New — no reviews yet</span></div>
           )}
           {o.tagline && <p className="pro-tagline">{o.tagline}</p>}
+
+          {/*
+            THE TWO FACTS THAT DECIDE WHETHER TO READ ANY FURTHER, BESIDE THE
+            NAME RATHER THAN FOUR SCREENS BELOW IT.
+
+            What they do, and whether they come anywhere near you. The reference
+            puts a trade and a city here and it is the right instinct: a person
+            who has landed on a locksmith while looking for a mobile mechanic,
+            or on a business that only works the far side of the county, wants
+            to know inside one second and not after the reviews.
+
+            Both come straight off the payload, and each is drawn only if it is
+            there — `trade` is nullable and a business that has set no service
+            area has an empty list. Three names and a count, rather than all of
+            them, because this is a line and not the section: the full list is
+            one click down and this says so.
+          */}
+          {(o.trade || areas.length > 0) && (
+            <p className="pro-head-facts">
+              {o.trade && <span className="pro-head-trade">{sentence(o.trade)}</span>}
+              {areas.length > 0 && (
+                <span>
+                  Works {areas.slice(0, 3).join(', ')}
+                  {areas.length > 3 && ` and ${areas.length - 3} more`}
+                  {' '}<a href="#pro-where">where they go</a>
+                </span>
+              )}
+            </p>
+          )}
 
           {/*
             Sharing a business is how most of these pages are actually found:
@@ -629,12 +950,42 @@ export default function PublicProfile() {
               Hours {o.business_name} has free, at the prices they listed.
               {' '}{PAY_TODAY_SHORT}
             </p>
-            <div className="slot-grid">
-              {mine.slice(0, openLimit).map((s) => (
-                <SlotCard key={s.gap_id} slot={s}
-                  area={areaName.get(s.area_slug) ?? null} />
-              ))}
-            </div>
+            {/*
+              ONE HEADING PER DAY, RATHER THAN ONE LIST OF EVERYTHING.
+
+              The day is the unit a person books in — they are free on Saturday
+              or they are not — and an ungrouped run of cards makes them read
+              every "when" line to find that out. The dates are printed on the
+              business's own clock and the note under the block says so, for the
+              same reason the business-hours block says it.
+
+              A <h3> under the <h2> above, so somebody moving by headings gets
+              the days as children of "N appointments open" rather than as seven
+              more siblings of everything else on the page.
+            */}
+            {openDays.map((d) => (
+              <div className="pro-day" key={d.key}>
+                <h3 className="pro-day-h">{d.heading}</h3>
+                <div className="slot-grid">
+                  {/* `onTheirPage` matters for exactly one kind of card: a
+                      sample listing, whose action is a link to the business's
+                      own page — which is this page. See SlotCard for why that
+                      card has no action rather than a link back to where the
+                      reader already is. A real listing is unaffected and still
+                      says Book. */}
+                  {d.slots.map((s) => (
+                    <SlotCard key={s.gap_id} slot={s} onTheirPage
+                      area={areaName.get(s.area_slug) ?? null} />
+                  ))}
+                </div>
+              </div>
+            ))}
+            <p className="pro-plain pro-svc-note">
+              Days and times are {o.business_name}'s own ({zoneLabel(o.timezone)}).
+              These are the hours they have actually listed as free — not an
+              estimate of when they might be, and not a promise that anything
+              else in the week is available.
+            </p>
             {mine.length > openLimit && (
               <div className="more">
                 <button className="btn quiet" type="button"
@@ -645,7 +996,7 @@ export default function PublicProfile() {
             )}
             {o.trade && (
               <p className="pro-cta-else">
-                <Link to={`/s/${encodeURIComponent(o.trade)}`}>
+                <Link to={tradeHref(o.trade)}>
                   Compare with everyone else doing {o.trade}
                 </Link>
               </p>
@@ -709,39 +1060,77 @@ export default function PublicProfile() {
         <div className="pro-cols">
           <div>
             <h2>Overview</h2>
-            {/* Icon rows, not a table. Each one is a single fact somebody
-                scans for, and an icon makes it findable without reading. */}
-            <ul className="pro-list">
-              {o.hired_count > 0 && (
-                <li><Icon name="tick" size={17} /> Hired {o.hired_count} times</li>
-              )}
-              {o.background_checked_at && (
-                <li><Icon name="tick" size={17} /> Background checked</li>
-              )}
-              <li>
-                <Icon name="tick" size={17} />
-                {o.employees === 1 ? 'Solo operator' : `${o.employees} employees`}
-              </li>
-              {o.years_in_business != null && (
-                <li><Icon name="tick" size={17} /> {o.years_in_business} years in business</li>
-              )}
-              {o.years_experience != null && (
-                <li><Icon name="tick" size={17} /> {o.years_experience} years in the trade</li>
-              )}
-            </ul>
+            {/*
+              THE OVERVIEW IS NOW TWO LISTS, BECAUSE IT WAS TWO KINDS OF FACT
+              PRETENDING TO BE ONE.
 
-            {areas.length > 0 && (
+              It used to be a single column of green ticks: hired N times,
+              background checked, solo operator, N years in business. Four ticks
+              in a row read as four things somebody confirmed — that is the
+              entire visual argument a tick makes — and only the first of them
+              is counted by anything. The rest are typed into a settings form by
+              the person they describe, and one of them, the background check,
+              was a platform endorsement this site has no right to make at all.
+
+              So: the counted fact keeps its tick, under a heading that says who
+              counted it. The self-reported facts are a plain list under a
+              heading that says, in words, whose claim they are. Neither is
+              hidden — a customer genuinely wants to know that somebody has been
+              at this eleven years — and neither is dressed as the other.
+
+              "Background checked" is gone from here entirely. It survives, once,
+              in the Credentials section at the bottom, where there is room to
+              say what it is and is not. A tick in a scan list has no room to say
+              anything.
+            */}
+            {o.hired_count > 0 && (
               <>
-                <h3 className="pro-sub">Serves</h3>
-                <p className="pro-plain">{areas.join(', ')}</p>
+                <h3 className="pro-sub">Counted by Round The Way</h3>
+                <ul className="pro-list">
+                  <li>
+                    <Icon name="tick" size={17} />
+                    {' '}Hired {o.hired_count}{' '}
+                    {o.hired_count === 1 ? 'time' : 'times'} through this site
+                  </li>
+                </ul>
               </>
             )}
+
+            {/*
+              Unconditional, because `employees` always has a value — every
+              business is at least one person — so this heading never appears
+              over an empty list. The two year figures are nullable and each
+              draws only when it is there.
+            */}
+            <h3 className="pro-sub">What {o.business_name} says about themselves</h3>
+            <ul className="pro-said">
+              <li>{o.employees === 1 ? 'Solo operator' : `${o.employees} employees`}</li>
+              {o.years_in_business != null && (
+                <li>{o.years_in_business}{' '}
+                  {o.years_in_business === 1 ? 'year' : 'years'} in business</li>
+              )}
+              {o.years_experience != null && (
+                <li>{o.years_experience}{' '}
+                  {o.years_experience === 1 ? 'year' : 'years'} in the trade</li>
+              )}
+            </ul>
+            <p className="pro-plain pro-svc-note">
+              Self-reported. {o.business_name} entered these themselves and
+              Round The Way has not checked any of them.
+            </p>
 
             {o.payment_methods && (
               <>
                 <h3 className="pro-sub">Payment methods</h3>
+                {/* Also self-reported, and worth saying so for a different
+                    reason from the years above: this one the reader is going to
+                    act on at the kerb with a wallet in their hand. "They say
+                    they take cash" and "they take cash" are the same sentence
+                    right up until somebody turns up with only cash. */}
                 <p className="pro-plain">
-                  This business accepts payments via {o.payment_methods}.
+                  {o.business_name} says they take {o.payment_methods}. Worth
+                  confirming with them before the day — this is their own
+                  description and nobody here has tested it.
                 </p>
               </>
             )}
@@ -825,6 +1214,68 @@ export default function PublicProfile() {
       </section>
 
       {/*
+        WHERE THEY GO, AND — THE HALF EVERY DIRECTORY LEAVES OUT — WHERE THEY
+        DO NOT.
+
+        This is the module that replaces the reference's trust furniture, and it
+        earns the place because on a site of vans it is the question. A badge
+        tells a customer that somebody, somewhere, once checked a name against a
+        database. This tells them whether the person can physically reach their
+        street, which is the thing that actually decides the booking.
+
+        The three parts, and why each is here:
+
+          THE DIRECTION, IN A SENTENCE. `work_location` is one of three enum
+          values and the tick list above prints the operator's own answer to
+          their own form. This prints what that answer means for the reader.
+
+          THE PATCH, IN FULL. `areas` is every active service area the business
+          has drawn, by name — not a metro, not a radius, not "Los Angeles and
+          surrounding areas". The full list rather than the head of it, because
+          this is the section the line beside their name points at.
+
+          WHAT IS NOT ON THE LIST. Said out loud, and this is the whole point of
+          the block. A neighbourhood missing from a service area list is not a
+          neighbourhood the business refuses — it is one they have not said
+          anything about, and those are different, and a reader looking for
+          their own street in a list has no way to tell which they have found.
+          Every directory silently lets the reader assume the generous reading.
+          A business that has drawn no areas at all gets the same treatment: an
+          empty list is "they have not said", never "they go everywhere".
+      */}
+      <section className="pro-block" id="pro-where" tabIndex={-1}>
+        <h2>Where {o.business_name} works</h2>
+        <p className="pro-plain">
+          {TRAVEL_PROSE[o.work_location] ?? TRAVEL_PROSE.i_travel!}
+        </p>
+
+        {areas.length > 0 ? (
+          <>
+            <h3 className="pro-sub">
+              {areas.length === 1
+                ? 'The area they have listed'
+                : `The ${areas.length} areas they have listed`}
+            </h3>
+            <p className="pro-plain">{areas.join(', ')}</p>
+            <p className="pro-plain pro-svc-note">
+              These are the neighbourhoods {o.business_name} has drawn on their
+              own map, so it is where their openings appear. It is not a limit
+              anyone enforces and it is not a refusal of anywhere else: a street
+              that is not on this list is somewhere they have simply not said
+              either way. If yours is not here, ask them before you book.
+            </p>
+          </>
+        ) : (
+          <p className="pro-plain pro-svc-note">
+            {o.business_name} has not listed any neighbourhoods yet, so there is
+            nothing here to tell you how far they will drive. Ask them where they
+            go before you book — the message button above reaches them without an
+            account.
+          </p>
+        )}
+      </section>
+
+      {/*
         BUSINESS HOURS, in the business's own time.
 
         Only when they have said. An operator who has never set hours sends an
@@ -894,6 +1345,48 @@ export default function PublicProfile() {
           </div>
         </section>
       )}
+
+      {/*
+        WHAT A VAN NEEDS AT THE KERB — AS QUESTIONS, BECAUSE THE SITE HOLDS NO
+        ANSWERS.
+
+        See ON_SITE_QUESTIONS above for why this is five questions rather than
+        five facts: there is no column anywhere in this product recording
+        whether a business needs an outside tap, and writing one in from the
+        trade name would be inventing a fact about a person.
+
+        It is nonetheless the most useful block on the page for this particular
+        product, which is why it is here rather than left out. Everything on a
+        fixed-premises marketplace happens at the pro's address, where the pro
+        has already solved parking and water and power. Every job here happens
+        at a stranger's kerb, where nobody has solved any of it, and the failure
+        mode is not a bad review — it is a van that drives an hour and turns
+        round. Putting the questions in front of the customer before they book
+        is the cheapest fix available to a page.
+
+        Unconditional. Unlike every other block here it depends on no row, so
+        there is no state in which it is empty or misleading; it is the same
+        five questions for a locksmith and a dog groomer because they are the
+        five things a kerb either has or has not got.
+      */}
+      <section className="pro-block" id="pro-onsite" tabIndex={-1}>
+        <h2>Before they arrive</h2>
+        <p className="pro-plain">
+          {o.business_name} works out of a vehicle, so the job happens wherever
+          you are and whatever is there is what they have to work with. These
+          are worth settling in a message first — none of them is on this page
+          because Round The Way does not ask businesses to record them, so the
+          only person who can answer is {o.business_name}, and the only person
+          who knows your kerb is you.
+        </p>
+        <ul className="pro-ask-list">
+          {ON_SITE_QUESTIONS.map((qn) => <li key={qn}>{qn}</li>)}
+        </ul>
+        <p className="pro-plain pro-svc-note">
+          Ask any of these with the message button above. It costs nothing and
+          does not book anything.
+        </p>
+      </section>
 
       <section className="pro-block" id="pro-reviews" tabIndex={-1}>
         <h2>Reviews</h2>
@@ -988,7 +1481,7 @@ export default function PublicProfile() {
                           a review can be trusted, because nothing else can
                           leave one. */}
                       <span className="pro-verified">
-                        <Icon name="tick" size={13} /> Booked on Slotfill
+                        <Icon name="tick" size={13} /> Booked on Round The Way
                       </span>
                     </div>
 
@@ -1057,7 +1550,13 @@ export default function PublicProfile() {
         {o.background_checked_at ? (
           <>
             <div className="pro-cred">
-              <strong>Background check</strong>
+              {/* The label carries the qualification, rather than leaving it to
+                  the paragraph underneath. A reader scanning headings takes
+                  "Background check" as a heading this site is standing behind,
+                  and by the time they reach the small print they have already
+                  decided. Two words in the label cost nothing and cannot be
+                  scrolled past. */}
+              <strong>Background check — self-reported</strong>
               <span>{o.background_check_name}</span>
               {o.background_check_provider && (
                 <span className="faint">Checked by {o.background_check_provider}</span>
@@ -1074,16 +1573,51 @@ export default function PublicProfile() {
             */}
             <p className="pro-plain pro-svc-note">
               This is what {o.business_name} has recorded about themselves.
-              Slotfill does not run the check and does not verify it — see{' '}
+              Round The Way does not run the check and does not verify it — see{' '}
               <Link to="/covered">what is covered</Link>.
             </p>
           </>
         ) : (
           <p className="muted" style={{ margin: 0 }}>
-            This business has not recorded a background check. Slotfill does not
+            This business has not recorded a background check. Round The Way does not
             run one either way — see <Link to="/covered">what is covered</Link>.
           </p>
         )}
+
+        {/*
+          THE ABSENCE THAT MATTERS MOST, WRITTEN DOWN RATHER THAN LEFT BLANK.
+
+          The reference has a licences module here, with a number and a state
+          board behind it. This site has no licence column at all — nothing in
+          the profile payload carries one, nothing collects one, and no part of
+          this product has ever checked a trade licence, a certificate of
+          insurance or a bond.
+
+          The tempting thing is to render nothing, on the grounds that we are
+          not claiming anything. That is wrong, and it is wrong in the reader's
+          direction: this is the section of a profile a customer opens
+          specifically to find out about licensing, and a section that goes
+          quiet at that exact point is read as "nothing to report" rather than
+          as "we do not know". So the absence is stated in the same size type as
+          everything else, and it points at the one place that can actually
+          answer — the issuing board's own register, which is public and free.
+
+          This paragraph is unconditional, and is deliberately outside the
+          background-check branch above: it is just as true of a business that
+          has recorded a check as of one that has not, and a reader who sees a
+          check recorded is if anything more likely to assume the licence was
+          seen too.
+        */}
+        <h3 className="pro-sub">Licences and insurance</h3>
+        <p className="pro-plain pro-svc-note">
+          Round The Way holds nothing about either. We do not collect licence
+          numbers, we do not see certificates of insurance, and we verify
+          neither — for this business or any other. Where California requires a
+          licence for this trade it is between {o.business_name} and the issuing
+          board, and that board's public register is the place to check it. Ask
+          them directly for a licence number and an insurer, and check what you
+          are told. See <Link to="/covered">what is covered</Link>.
+        </p>
       </section>
 
       {faqs.length > 0 && (

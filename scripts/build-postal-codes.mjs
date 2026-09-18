@@ -7,8 +7,8 @@
  *
  * Writes seed/postal_codes.sql, then — the database name is the one bound as
  * DB in wrangler.toml, not the npm package name:
- *   npx wrangler d1 execute cancellation-rebooking --local  --file=./seed/postal_codes.sql
- *   ./scripts/cf.sh  d1 execute cancellation-rebooking --remote --file=./seed/postal_codes.sql
+ *   npx wrangler d1 execute roundtheway --local  --file=./seed/postal_codes.sql
+ *   ./scripts/cf.sh  d1 execute roundtheway --remote --file=./seed/postal_codes.sql
  *
  * Source: https://download.geonames.org/export/zip/  (CC BY 4.0)
  * ATTRIBUTION IS REQUIRED — see migrations/0002_postal_codes.sql.
@@ -115,4 +115,4 @@ out.write('COMMIT;\n');
 out.end();
 
 process.stderr.write(`\nWrote ${total.toLocaleString()} rows to ${outPath}\n`);
-process.stderr.write('Load with: wrangler d1 execute gapfiller --remote --file=./seed/postal_codes.sql\n');
+process.stderr.write('Load with: wrangler d1 execute roundtheway --remote --file=./seed/postal_codes.sql\n');

@@ -9,6 +9,16 @@ import { ErrorNote, Icon, Spinner } from '../components/ui';
 import { useDocumentTitle } from '../lib/title';
 import { addDays, daysBetween, epochInZone, todayIn } from '../lib/zone';
 
+/**
+ * A day in seconds.
+ *
+ * THIS IS ITS OWN COPY ON PURPOSE. The Worker's DAY lives in src/lib/util.ts,
+ * where retention.ts and standing.ts now share one declaration between them —
+ * but web/ is compiled by its own tsconfig, which sees web/src alone, and a
+ * browser bundle cannot import a Worker module. Reaching across would not
+ * build. It is also the one fact in this list that needs no pin: 86400 is what
+ * a day is, not a decision somebody could change on one side.
+ */
 const DAY = 86400;
 
 /** A day this far from today is a mistyped link, not a schedule anybody keeps. */

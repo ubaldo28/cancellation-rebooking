@@ -3,9 +3,84 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0d1117" />
-    <title>Slotfill — book the van that's already coming</title>
-    <meta name="description" content="Mobile detailers, bin cleaners and pressure washers post the hours a cancellation left open. Book one near you, cheaper, because the van is already on your street." />
+    <meta name="theme-color" content="#0A1929" />
+    <title>Round The Way — trades that come to you</title>
+    <meta name="description" content="Mobile detailers, bin cleaners, pressure washers and other solo trades post the appointments a cancellation left open. Find one working near you and book it online." />
+
+    <!--
+      WHAT A SHARED LINK LOOKS LIKE.
+
+      This file had no og: tags at all, so anything the link was pasted into —
+      iMessage, WhatsApp, Slack — fell back to the title element alone and drew
+      no picture. The title then was a lowercase sentence fragment, so a link
+      to the front door of the business arrived looking like a stray phrase
+      next to a generic globe.
+
+      The image is a real file rather than the SVG favicon: no link unfurler
+      renders SVG, and several refuse anything without explicit dimensions, so
+      both are stated. It is regenerated from tools/og-card.html — the source
+      lives in the repo so this is never a mystery binary nobody can reproduce.
+
+      WHICH PAGES THESE TAGS ACTUALLY REACH, WHICH IS NOT THE FRONT PAGE.
+
+      This file is not only the front page — it is the SPA shell, and
+      `intoShell` in src/lib/seo.ts splices server-rendered page shapes into
+      it, appending the Worker's own head tags at the end of this head. It used
+      to strip exactly two things from what is written here, the title element
+      and the first description meta, so every og: and twitter: tag in this
+      file survived into a page it did not describe and `headTags` added a
+      second set underneath. Unfurlers take the FIRST of a repeated property —
+      this file's — so a link to a trade page, a cost guide or a business
+      profile pasted into iMessage, WhatsApp or Slack drew the front door of
+      the site instead.
+
+      `intoShell` strips them now: every og: property meta and every twitter:
+      name meta comes out of this head before the Worker's are appended, the
+      same way the title already did, so a page the Worker renders carries
+      exactly one of each and every one of them is the Worker's.
+
+      AND `/` IS ONE OF THE PAGES THE WORKER RENDERS. It has been since the
+      front door got a route of its own and an entry in WORKER_PATHS: the
+      assets binding no longer answers it, `homePage` in src/lib/seo.ts does,
+      through this shell. So the strip runs on the front page too, and these
+      tags never appear on the one address they were written to describe.
+
+      What they do reach is every route the app draws ITSELF, which is every
+      route the Worker does not render: /about, /help, /safety, /terms,
+      /privacy, /pros, /covered, /join and the rest. So the head below has to
+      be true of the SITE and not of the front door — which is what it now
+      says. A sentence about what is open, or about booking a cancelled
+      appointment, is the front page's sentence; on the terms of service it is
+      a card describing somewhere else.
+
+      og:url IS GONE, AND ITS ABSENCE IS THE POINT. It was
+      https://roundtheway.app/, and og:url is not a decoration — it is the
+      canonical address of the thing being shared, so every one of those app
+      routes declared itself to be the home page. A share of /help was filed
+      against `/`, and a crawler reading og:url as a canonicalisation hint was
+      being told nine pages are one. There is no static value that is right
+      here, because this head is served at nine different addresses; the
+      protocol's own fallback, the URL that was actually fetched, is correct at
+      all of them. The front page keeps a real og:url either way: the Worker
+      writes its own from APP_URL.
+
+      NOTHING IN THIS COMMENT MAY SPELL A CLOSING HEAD TAG. Vite, injecting the
+      bundle at build time, and `intoShell`, appending the Worker's head, both
+      insert at the first one in the text — and one inside a comment is the
+      first one. That happened here exactly once, and the result was a site
+      serving a perfectly valid page with no JavaScript on it at all.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Round The Way" />
+    <meta property="og:title" content="Round The Way — mobile trades that come to you" />
+    <meta property="og:description" content="Round The Way lists the appointments local mobile businesses have free this week, at the price each one set. Detailers, bin cleaners, pressure washers and other solo trades, booked online without a phone call." />
+    <meta property="og:image" content="https://roundtheway.app/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Round The Way — trades that come to you" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Round The Way — mobile trades that come to you" />
+    <meta name="twitter:description" content="Round The Way lists the appointments local mobile businesses have free this week, at the price each one set. Detailers, bin cleaners, pressure washers and other solo trades, booked online without a phone call." />
 
     <!--
       Installable on purpose. On iOS 16.4+ web push only works once the site
@@ -16,38 +91,80 @@
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="Slotfill" />
+    <meta name="apple-mobile-web-app-title" content="Round The Way" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 
     <!--
-      No preconnect to the two font hosts, deliberately.
+      NOTHING IN THIS HEAD IS FETCHED FROM ANYBODY ELSE, AND THAT IS NEW.
 
-      Chromium checks rel="preconnect" against connect-src, so the pair that
-      used to sit here raised a violation on every single page load: the
-      stylesheet host is allowed by style-src and the font files by font-src,
-      and neither is in connect-src.
+      Two things used to sit here, and between them they were the whole of this
+      site's third-party surface on a page load:
 
-      The fix belongs here rather than in the policy. connect-src is the
-      directive that decides where injected script may send data, and widening
-      it to two Google hosts to save a handshake on a webfont spends the thing
-      the policy exists for on a latency hint. The hint was worth little in any
-      case: the stylesheet link below opens the googleapis connection itself
-      while the head is being parsed, which is exactly when the preconnect
-      would have.
+        1. a Google Fonts stylesheet — fonts.googleapis.com, which then pulled
+           the woff2 files themselves from fonts.gstatic.com; and
+        2. MapLibre GL's stylesheet and script, from unpkg.com, version-pinned
+           to 5.24.0 and checked on arrival with Subresource Integrity.
+
+      THE PINNING AND THE SRI HASHES WERE NOT WRONG. They were a careful answer
+      to a question that should not have been asked. A pinned URL plus an
+      integrity= hash does genuinely stop a compromised CDN, a hijacked package
+      or an intercepted response from executing with our own bundle's
+      privileges, and the long note that used to live here explaining how to
+      recompute the pair on an upgrade was honest work. What none of it could
+      fix is the part that had nothing to do with tampering: the request
+      happened at all. Because these tags were in the SPA SHELL — this file is
+      not the front page, it is the document every app-drawn route is served
+      from — every visitor's IP address and User-Agent reached Google and unpkg
+      on every route. The front page, a cost guide, the terms of service, the
+      guest booking page a customer opens on their driveway. Most of those pages
+      have no map on them and never did.
+
+      That is an unconsented transfer of personal data to two third parties in
+      GDPR markets, made on behalf of a visitor who asked for a page about bin
+      cleaning, and it is an open legal question this product has no reason to
+      be holding. It was also two extra DNS lookups and two extra TLS handshakes
+      in front of first paint, which cost the most on precisely the six routes
+      the Worker renders in full — pages whose entire content is already sitting
+      in the first response, waiting behind a handshake with somebody else.
+
+      SO BOTH ARE SELF-HOSTED NOW, AND THE FIXES ARE DIFFERENT SHAPES.
+
+      THE FONTS are real files in web/public/fonts, served from this origin, and
+      the @font-face rules that name them are at the top of web/src/styles.css
+      with the same fallback stacks and the same font-display: swap the Google
+      stylesheet was asking for. Only the weights the CSS actually uses were
+      taken — Inter 400/500/600/700/800, IBM Plex Mono 500/600, Saira Stencil
+      One 400 — because that request URL was a list of weights, not a family, and
+      self-hosting a whole family to replace it would ship bytes nobody renders.
+      They are OFL-licensed; the licence text sits beside them in that folder
+      and THIRD-PARTY-NOTICES.md says which is which.
+
+      MAPLIBRE is an ordinary dependency: `maplibre-gl` in web/package.json,
+      pinned to the same exact 5.24.0 the unpkg URL named. It is NOT loaded
+      here, deliberately — it is loaded by a dynamic import in
+      web/src/lib/map.ts, the first time a component that actually draws a map
+      is mounted, so it ships as a chunk of its own and the pages with no map on
+      them fetch none of it. That is the real prize and it is bigger than the
+      privacy fix: the old defer= tag was a careful way of making 800 kB of map
+      library not block the parser on pages that did not want it, and not
+      requesting it at all is better than deferring it well.
+
+      WHAT REPLACED SRI. Nothing, and nothing needed to. Subresource Integrity
+      exists to check bytes that came from a host we do not control; these bytes
+      are built into our own bundle by Vite, served by our own Worker under our
+      own CSP, and there is no third party left in the path to distrust.
+      src/lib/headers.ts no longer names unpkg.com, fonts.googleapis.com or
+      fonts.gstatic.com in any directive — script-src, style-src and font-src
+      are 'self' plus the payment and bot-check hosts that are genuinely
+      somebody else's — and test/two-trees.test.ts fails if a tag in this file
+      and that policy ever drift apart again.
+
+      NOTHING IN THIS COMMENT MAY SPELL A CLOSING HEAD TAG. Vite, injecting the
+      bundle at build time, and `intoShell`, appending the Worker's head, both
+      insert at the first one in the text — and one inside a comment is the
+      first one. That happened here exactly once, and the result was a site
+      serving a perfectly valid page with no JavaScript on it at all.
     -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
-
-    <!--
-      MapLibre GL JS, loaded from a CDN rather than bundled.
-
-      Pinned to a major version because this is a public map on a live site and
-      a silent breaking change is worse than a missed patch. OpenFreeMap serves
-      the tiles: real OpenStreetMap data, no API key, no request limit, and
-      commercial use is allowed. MapLibre renders the required attribution by
-      itself, which is why it is not written into the page.
-    -->
-    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" />
-    <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
   </head>
   <body>
     <div id="root"></div>

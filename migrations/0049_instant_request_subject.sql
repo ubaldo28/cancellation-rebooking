@@ -1,0 +1,52 @@
+-- ---------------------------------------------------------------------------
+-- 0049 — the one table erasure still finds people by their phone number
+-- ---------------------------------------------------------------------------
+--
+-- Migration 0038 moved a customer's identity off their mobile number and onto
+-- the mailbox they prove with a code, and it gave the reason: nothing texts a
+-- number any more, so nobody proves one, so a number on a form is whatever
+-- somebody typed. Every table that had to find a person was moved with it —
+-- orders.login_email, no_show_reports.login_email, customer_standing's primary
+-- key — and instant_requests was missed.
+--
+-- WHAT THAT COSTS, AND IT CUTS BOTH WAYS. The erasure in lib/retention.ts
+-- reaches these rows with `DELETE FROM instant_requests WHERE phone_e164 IN
+-- (the numbers this person gave)`, and an instant request is the sharpest row
+-- in the product: a first name, a phone number, a street line, five-decimal-
+-- place coordinates and a note the customer typed about their own house, for a
+-- job that in most cases never happened.
+--
+--   TOO LITTLE  the numbers that WHERE clause is built from are read off the
+--               customer's orders and their account. A person whose account
+--               carries no number, or whose requests were made under a number
+--               that never reached an order, has requests this cannot see.
+--   TOO MUCH    a number is not unique to a person. Two people sharing a
+--               household mobile are one value in that IN clause, so erasing
+--               one of them deletes the other's requests — an erasure that
+--               erases somebody who did not ask is not a smaller version of
+--               the promise, it is a different and worse failure.
+--
+-- So the request gets the same subject every other table has. The route
+-- already has it: POST /api/public/online/requests runs checkoutAccount before
+-- createInstantRequest and passes `login_email` in, because an accepted
+-- request becomes a real appointment and therefore needs an account like any
+-- other booking. It was being used for the standing check and then thrown
+-- away.
+--
+-- NULLABLE, AND NOT BACKFILLED, which is deliberate and is the same shape as
+-- 0038's own ALTER on orders. There is nothing on an existing row that says
+-- which mailbox it belonged to — the number on it is exactly the thing that
+-- cannot be trusted to say so — and inventing a link from the number would
+-- reintroduce the bug this migration exists to remove. The erasure therefore
+-- keeps the old key for old rows and uses this one for everything written from
+-- now on: see step 9 in lib/retention.ts, which is explicit about the split.
+-- Those rows age out under RETENTION.INSTANT_REQUEST_DEAD_DAYS (7) and
+-- INSTANT_REQUEST_ACCEPTED_DAYS (30), so the legacy arm has a short life.
+ALTER TABLE instant_requests ADD COLUMN login_email TEXT;
+
+-- The erasure filters on this column and nothing else in this table leads with
+-- it — the indexes from 0029 are on (operator_id, status, expires_at) and on
+-- token_hash. One row per right-now request is not a large table, but an
+-- erasure is a request a person is waiting on, and a scan is the wrong thing
+-- to make them wait for.
+CREATE INDEX idx_instant_requests_login_email ON instant_requests (login_email);

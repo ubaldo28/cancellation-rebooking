@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type PublicSlot, type Trade, type TradeCategory } from '../api';
 import Crumbs from '../components/Crumbs';
 import PublicPage from '../components/PublicPage';
 import SlotCard from '../components/SlotCard';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-search.css';
+import { tradeHref } from '../lib/seo';
 import { useDocumentTitle } from '../lib/title';
 
 /**
@@ -42,6 +43,43 @@ import { useDocumentTitle } from '../lib/title';
  * THE RULE THIS PAGE INHERITS FROM THE FRONT PAGE: no number on it is written
  * down. Every count here — results, appointments, what is open in a trade — is
  * counted from rows fetched a moment ago and rendered underneath.
+ *
+ * WHAT THE REFERENCE MARKETPLACE PUTS ON THIS PAGE, AND WHICH OF IT IS HONEST
+ * HERE. Its results page is, top to bottom: the query still editable in place,
+ * a row of filters, a count with a sort control beside it, the cards, and more
+ * at the foot. Three of those five were missing here and two of them were
+ * missing for a reason.
+ *
+ *  · The query, still editable. Added, but only on the two screens where
+ *    there is nothing else to press — nothing matched, and nothing typed. On a
+ *    page that DID find something the site header is already carrying a search
+ *    box two inches higher, and a second box under it is two controls fighting
+ *    over one job with no way for a reader to know which one they are in.
+ *  · A count with a sort beside it. Added. See `sortMode`.
+ *  · Filters. Deliberately still absent, and the reason has changed. It used
+ *    to be that ranking had already done the narrowing; the real reason now is
+ *    that a filter row is a promise about the size of the corpus. A rating
+ *    filter, a price band and an availability window are worth the space when
+ *    they cut two hundred results to twenty. Against the handful of open hours
+ *    this site has on a given afternoon they cut a short list to an empty one,
+ *    which is the single worst thing this page can do to somebody.
+ *
+ * WHICH BRINGS US TO THE THING THIS PAGE IS ACTUALLY FOR TODAY. Nothing has
+ * launched. Payment is off, there is no roster of businesses, and the ordinary
+ * outcome of a search here is a list of trades with no hours free underneath
+ * them — or nothing at all. So the empty states are not an afterthought
+ * bolted to the bottom of the file; they are the main screen, and they are
+ * built to give the same two real answers every time:
+ *
+ *   1. WIDEN IT. Their own words, back in a box, plus each single word of a
+ *      multi-word query offered as a shorter search. Those suggestions are
+ *      derived from what was typed and from nothing else — there is no
+ *      "did you mean", because nothing here computes a nearest match and a
+ *      guess dressed as one is worse than an honest miss.
+ *   2. WAIT TO BE TOLD. A standing alert at /a, which is the only mechanism on
+ *      this site that answers "there is nothing today" with anything better
+ *      than "come back tomorrow". Where a trade did match, the link carries
+ *      that trade so the alert arrives half filled in.
  */
 
 /**
@@ -225,6 +263,38 @@ interface TradeHit {
 
 interface SlotHit { slot: PublicSlot; score: number; hits: number }
 
+/**
+ * How the open appointments are ordered, which the reference marketplace calls
+ * a sort and puts beside its result count.
+ *
+ * The note this file used to carry said there would never be one, on the
+ * argument that the two-tier ranking had already decided the order and a
+ * second control reordering it would be two things fighting with the tier
+ * order losing silently. Half of that is still right and it is the half that
+ * shaped this: the tiers ARE the answer to "which of these best matches what I
+ * typed", so they stay as `match`, and `match` is what the page opens on.
+ *
+ * The other half was wrong about what somebody wants from a search on this
+ * particular site. A person searching a list of hours that are free THIS WEEK
+ * is very often not asking which row is most relevant — they are asking which
+ * one is soonest, or which one is cheapest, and there is no arrangement of
+ * relevance tiers that answers either. Both are computed from fields already
+ * on the row, so neither is a claim: `starts_at` and `price_cents`.
+ *
+ * "Losing silently" is the part that had to be designed away rather than
+ * argued away. Picking anything but `match` abandons the tiers completely —
+ * a flat list, one order, no hidden grouping — and the page says so in a line
+ * under the control while it is doing it. A reader can always tell which of
+ * the two arrangements they are looking at.
+ */
+type SortMode = 'match' | 'soon' | 'price';
+
+const SORTS: { value: SortMode; label: string }[] = [
+  { value: 'match', label: 'Best match' },
+  { value: 'soon', label: 'Soonest first' },
+  { value: 'price', label: 'Lowest price' },
+];
+
 export default function Search() {
   const [params] = useSearchParams();
   const q = (params.get('q') ?? '').trim();
@@ -237,6 +307,7 @@ export default function Search() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [limit, setLimit] = useState(PAGE);
+  const [sort, setSort] = useState<SortMode>('match');
 
   /**
    * Both requests together, and both required.
@@ -281,7 +352,14 @@ export default function Search() {
 
   // A new query is a new list. Without this, searching again keeps whatever
   // page depth the previous result set had been expanded to.
-  useEffect(() => { setLimit(PAGE); }, [q]);
+  //
+  // The sort goes back to `match` with it, which is the less obvious half. A
+  // sort is an answer to one question — "of the things that matched THAT, show
+  // me the cheapest" — and carrying it into a different question silently
+  // re-answers the new one. Somebody who searched "car wash", sorted by price,
+  // then searched "locksmith" has not asked for the cheapest locksmith; they
+  // have asked for locksmiths.
+  useEffect(() => { setLimit(PAGE); setSort('match'); }, [q]);
 
   const terms = useMemo(() => {
     const all = wordsOf(q);
@@ -395,8 +473,62 @@ export default function Search() {
     return tradeHitWords > directHits ? [...byTrade, ...direct] : [...direct, ...byTrade];
   }, [slots, terms, matchedSlugs, tradeHits]);
 
+  /**
+   * The same rows, in whichever order was asked for.
+   *
+   * `match` hands back `slotHits` untouched — the tiers, exactly as they were
+   * computed above. The other two flatten the list and sort the whole of it,
+   * which is the point: a person who asked for the cheapest wants the cheapest
+   * of everything that matched, not the cheapest of tier one followed by the
+   * cheapest of tier two, which would look like a broken sort.
+   *
+   * Both tie-break on time, so two identically priced hours come out in the
+   * order somebody would actually take them.
+   */
+  const ordered = useMemo<PublicSlot[]>(() => {
+    if (sort === 'soon') {
+      return [...slotHits].sort((a, b) => a.starts_at - b.starts_at);
+    }
+    if (sort === 'price') {
+      return [...slotHits].sort(
+        (a, b) => a.price_cents - b.price_cents || a.starts_at - b.starts_at);
+    }
+    return slotHits;
+  }, [slotHits, sort]);
+
+  /**
+   * Shorter searches, made only out of the words they typed.
+   *
+   * The one thing a person can do about a miss on a site this small is ask for
+   * less, and the words to ask for less with are already in their query: three
+   * words that matched nothing together may each match something alone. So a
+   * multi-word query offers each of its own words back as a one-word search.
+   *
+   * Stop words are already gone by the time this runs — `terms` dropped them —
+   * so nobody is offered "search for just near". The list is capped at four
+   * because this is a row of chips on an empty screen, not a second results
+   * page, and `Set` is there because "cleaning cleaning service" would
+   * otherwise offer the same chip twice.
+   */
+  const widenTo = useMemo<string[]>(
+    () => (terms.length < 2 ? [] : [...new Set(terms)].slice(0, 4)),
+    [terms]);
+
   const total = tradeHits.length + slotHits.length;
-  const visible = slotHits.slice(0, limit);
+  const visible = ordered.slice(0, limit);
+
+  /**
+   * The trade to hand the alert page when the visitor gives up on today.
+   *
+   * Only when exactly one trade matched. Two trades matched means we do not
+   * know which one they meant, and prefilling a watch with a guess is how
+   * somebody ends up subscribed to alerts about work they never asked for —
+   * an alert being wrong is much more expensive than an alert being empty,
+   * because it arrives on their phone at some unrelated hour weeks later.
+   */
+  const soleTrade = tradeHits.length === 1 ? tradeHits[0] : undefined;
+  const alertHref = soleTrade
+    ? `/a?trade=${encodeURIComponent(soleTrade.trade.slug)}` : '/a';
 
   /**
    * The shell is rendered around the loading and error states rather than
@@ -420,14 +552,15 @@ export default function Search() {
          * no query to quote back — just the two doors this page can open.
          */
         <section className="sr-blank">
-          <h1>Search Slotfill</h1>
+          <h1>Search Round The Way</h1>
           <p className="sr-blank-p">
-            Type what you need doing into the box at the top of the page — a
-            trade, a service or the name of a business. Or start from the
-            categories.
+            Type what you need doing — a trade, a service, or the name of a
+            business. This searches every trade Round The Way covers, and every
+            hour that is free right now.
           </p>
+          <RefineBox initial="" label="What do you need done?" cta="Search" />
           <div className="sr-blank-do">
-            <Link className="btn" to="/">Browse every category</Link>
+            <Link className="btn quiet" to="/">Browse every category</Link>
             <Link className="btn quiet" to="/a">Get told when something opens</Link>
           </div>
         </section>
@@ -479,7 +612,7 @@ export default function Search() {
               <ul className="sr-trades">
                 {tradeHits.map((t) => (
                   <li key={t.trade.slug}>
-                    <Link className="sr-trade" to={`/s/${encodeURIComponent(t.trade.slug)}`}>
+                    <Link className="sr-trade" to={tradeHref(t.trade.slug)}>
                       <span className="sr-trade-text">
                         <span className="sr-trade-name">{t.trade.label}</span>
                         <span className="sr-trade-where">
@@ -488,7 +621,7 @@ export default function Search() {
                       </span>
                       {/*
                         Counted from the slots fetched a moment ago, so a
-                        trade Slotfill covers but nobody has an hour free in
+                        trade Round The Way covers but nobody has an hour free in
                         lands here at zero. That says so in words rather than
                         showing a nought, because a nought in the position a
                         number normally means "open now" reads as a broken
@@ -506,9 +639,103 @@ export default function Search() {
             </section>
           )}
 
+          {/*
+            MATCHED, AND NOTHING FREE. The state this whole product spends most
+            of its days in, and the one the page used to have no words for: the
+            catalogue answered, the list of trades came out, and underneath it
+            simply nothing — no heading, no sentence, no explanation of why a
+            page that had just said "3 results" was showing three links and no
+            hours. Someone reading that concludes the site is broken, which is
+            worse than what is actually true and much less useful.
+
+            What is actually true is a sentence long, and it is the sentence
+            that makes the alert make sense: these trades exist here, nobody in
+            them has an hour free this minute, and the only thing that changes
+            that is being told when one appears.
+          */}
+          {tradeHits.length > 0 && slotHits.length === 0 && (
+            <section className="sr-sec" aria-labelledby="sr-shut">
+              <h2 id="sr-shut" className="sr-h2">Open appointments</h2>
+              <div className="sr-door">
+                <h3>Nothing is free right now in {soleTrade
+                  ? soleTrade.trade.label
+                  : `${tradeHits.length === 2 ? 'either' : 'any'} of these`}</h3>
+                <p>
+                  Every appointment on this site is an hour a business has
+                  actually lost to a cancellation, so what is here changes
+                  through the day and there is nothing in{' '}
+                  {soleTrade ? 'it' : 'them'} at this moment. An
+                  alert is the only thing that answers this properly — it is
+                  sent within minutes of the hour opening up, which is the
+                  window in which it is still going.
+                </p>
+                <Link className="btn" to={alertHref}>
+                  Tell me when one opens
+                </Link>
+              </div>
+            </section>
+          )}
+
           {slotHits.length > 0 && (
             <section className="sr-sec" aria-labelledby="sr-slots">
               <h2 id="sr-slots" className="sr-h2">Open appointments</h2>
+
+              {/*
+                The count and the sort on one line, which is where the
+                reference marketplace puts them and is the right place for a
+                reason worth writing down: the sort is a statement about the
+                list it sits on top of, and a control floating above an
+                unlabelled grid does not say which list it governs. There are
+                two lists on this page.
+
+                The count is `slotHits.length` and not `visible.length` — it
+                counts what matched, not what has been drawn yet, which is what
+                makes "Show more" underneath legible rather than alarming.
+              */}
+              <div className="sr-tools">
+                <p className="sr-count">
+                  {slotHits.length} open{' '}
+                  {slotHits.length === 1 ? 'appointment' : 'appointments'}
+                </p>
+                <label className="sr-sort">
+                  <span>Sort</span>
+                  <select value={sort} onChange={(e) => {
+                    setSort(e.target.value as SortMode);
+                    // A reorder is a new list and the depth goes back with it.
+                    // Without this, choosing "Lowest price" on a list already
+                    // expanded twice reshuffles seventy-two cards under the
+                    // reader's scroll position and nothing appears to change
+                    // at the top.
+                    setLimit(PAGE);
+                  }}>
+                    {SORTS.map((s) => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {/*
+                Said only while it is true, and said as plainly as it can be:
+                the grouping the page normally applies is off. See SortMode.
+
+                ALWAYS IN THE DOCUMENT and empty until there is something to
+                say, the same arrangement the code field's status line uses. A
+                live region that is added to the page at the same moment it
+                gets its text is frequently not announced at all — the browser
+                has nothing to notice a change against — and this line exists
+                precisely for the reader who cannot see that the cards have
+                rearranged themselves. `:empty` collapses it so the silent
+                case opens no gap.
+              */}
+              <p className="sr-sorted" aria-live="polite">
+                {sort === 'match' ? '' : (
+                  `One flat list, ${sort === 'soon' ? 'earliest first' : 'cheapest first'}.`
+                  + ` How closely each one matches “${q}” is not being used to`
+                  + ' order them.'
+                )}
+              </p>
+
               {/*
                 The same card component the front page and the trade page
                 render, which is what this block used to say in a comment and
@@ -536,38 +763,155 @@ export default function Search() {
                   </button>
                 </div>
               )}
+
+              {/* At the foot of a list somebody has just read to the end of,
+                  which is a different moment from the empty state and wants a
+                  much quieter version of the same offer. They found things;
+                  none of them were right, or none were at the right hour. */}
+              <p className="sr-quiet">
+                None of these at a time that suits?{' '}
+                <Link to={alertHref}>Set an alert</Link> and you will hear when
+                another opens near you.
+              </p>
             </section>
           )}
 
           {total === 0 && (
             /*
-              Nothing was found and the page says nothing was found.
+              THE MOST IMPORTANT SCREEN ON THIS PAGE, and on most days the
+              most-read one. Nothing has launched; a search that finds nothing
+              is the ordinary outcome, not the edge case, so this is designed
+              rather than left as the absence of a result.
+
               There is no "did you mean" here because nothing on this page
-              computed a nearest match, and a guess dressed as one is a
-              worse answer than an honest miss. What it does instead is
-              explain what was actually searched — a person who knows the
-              site only holds a few dozen trades stops retyping synonyms —
-              and offer the two things that are genuinely useful next: the
-              whole catalogue, and being told when something appears.
+              computed a nearest match, and a guess dressed as one is a worse
+              answer than an honest miss. What it does instead, in order:
+
+                · Says plainly that nothing matched, and quotes back what was
+                  searched so it can be checked for a typo by eye.
+                · Explains what was actually searched. Somebody who learns the
+                  site holds a few dozen trades and that all of them were
+                  checked stops retyping synonyms at it.
+                · Widens. Their words back in a box, and — for a query of more
+                  than one word — each of those words on its own. Nothing in
+                  that row is invented; every chip is a word they typed.
+                · Offers the alert, described in terms of what it does rather
+                  than named as a feature, because nobody has come here wanting
+                  a "standing alert".
+
+              The two doors are drawn as panels rather than as a pair of
+              buttons under a paragraph. They are not the same kind of thing —
+              one is an act you complete now, the other is a thing you set up
+              and walk away from — and a row of equal buttons says they are.
             */
             <section className="sr-none">
               <p className="sr-none-p">
                 Nothing in the catalogue and nothing open right now matches{' '}
-                <strong>{q}</strong>. Slotfill covers a few dozen trades and
-                this searches every one of them by name, whether or not
-                anybody is free in it — so a miss here usually means the job
-                is filed under a word we do not use for it.
+                <strong>{q}</strong>. Round The Way covers a few dozen trades and
+                this searches every one of them by name, whether or not anybody
+                is free in it — so a miss here usually means the job is filed
+                under a word we do not use for it.
               </p>
-              <div className="sr-none-do">
-                <Link className="btn" to="/">Browse every category</Link>
-                <Link className="btn quiet" to="/a">
-                  Tell me when something opens
-                </Link>
+
+              <div className="sr-doors">
+                <div className="sr-door">
+                  <h2>Try it wider</h2>
+                  <p>
+                    Fewer words, or the plainest word for the job. “Cleaning”
+                    finds more than “end of tenancy deep clean”.
+                  </p>
+                  <RefineBox initial={q} label="Search again" cta="Search" />
+                  {widenTo.length > 0 && (
+                    <>
+                      <p className="sr-widen-lede">
+                        Or search for one word of that on its own:
+                      </p>
+                      <div className="sug">
+                        {widenTo.map((w) => (
+                          <Link key={w} className="sug-chip"
+                            to={`/search?q=${encodeURIComponent(w)}`}>
+                            {w}
+                          </Link>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="sr-door">
+                  <h2>Or wait to be told</h2>
+                  <p>
+                    Everything on this site is an hour a business lost to a
+                    cancellation, so it comes and goes through the day. Say
+                    where you are and what you want done, and you will hear
+                    when something near you opens up — usually within minutes
+                    of it happening.
+                  </p>
+                  <Link className="btn" to="/a">Set up an alert</Link>
+                  <p className="sr-door-note">
+                    No account, and no phone number asked for.
+                  </p>
+                </div>
               </div>
+
+              <p className="sr-quiet">
+                Not sure what to call it?{' '}
+                <Link to="/">Browse every category</Link> — the catalogue is
+                short enough to read.
+              </p>
             </section>
           )}
         </>
       )}
     </PublicPage>
+  );
+}
+
+/**
+ * The query, back in a box, on the two screens where there is nothing else to
+ * press.
+ *
+ * WHY THIS IS NOT DRAWN ON A PAGE THAT FOUND SOMETHING. The site header
+ * carries a search box on every page of the site, and on a results page it is
+ * a few inches above this one. Two boxes doing the same job, one of which
+ * clears itself and one of which does not, is a control a person has to
+ * experiment with to understand. On the two screens below there is no result
+ * list for the header box to sit above, the reader has scrolled past it, and
+ * the whole task in front of them is "type something else" — which is the one
+ * case where repeating a control is worth its cost.
+ *
+ * WHY IT PRE-FILLS WITH THE FAILED QUERY. Widening means taking a word out,
+ * and a word cannot be taken out of an empty box. An empty box asks somebody
+ * to retype the thing that just failed before they can edit it, which is
+ * exactly the friction that makes people leave instead.
+ *
+ * It navigates rather than submitting to the server. This is the same route
+ * the component is already mounted on, so `navigate` re-runs the search
+ * without a page load — and the effect over `q` above is what makes that
+ * work.
+ */
+function RefineBox({ initial, label, cta }: {
+  initial: string; label: string; cta: string;
+}) {
+  const navigate = useNavigate();
+  const [text, setText] = useState(initial);
+
+  return (
+    <form className="sr-refine" onSubmit={(e) => {
+      e.preventDefault();
+      const next = text.trim();
+      // An empty box is not a search. Submitting one would replace a page
+      // that at least explains itself with the browse prompt, which reads as
+      // the site having thrown their query away.
+      if (next) navigate(`/search?q=${encodeURIComponent(next)}`);
+    }}>
+      <label className="grow">
+        <span className="sr-only">{label}</span>
+        <input value={text} onChange={(e) => setText(e.target.value)}
+          type="search" enterKeyHint="search" autoComplete="off"
+          placeholder="Trade, service or business name" />
+      </label>
+      <button className="btn" type="submit" disabled={!text.trim()}>{cta}</button>
+    </form>
   );
 }

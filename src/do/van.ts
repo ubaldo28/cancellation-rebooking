@@ -89,6 +89,24 @@ const MAX_CLOCK_SKEW_SECONDS = 60;
 const SNAPSHOT_KEY = 'snapshot';
 
 /**
+ * How long a snapshot may sit in durable storage after the last fix in it.
+ *
+ * STALE_AFTER_SECONDS, which is ten minutes, and it is that number rather than
+ * a number of its own because past it the snapshot has no reader left: read()
+ * refuses any fix older than STALE_AFTER_SECONDS, so a snapshot older than that
+ * cannot answer a single question this product asks. What it can still do is
+ * exist -- up to twenty full-precision fixes spanning roughly fifty minutes of
+ * a named self-employed person's movements, sitting in storage indefinitely
+ * after they stopped driving, which is a route history whatever the comment
+ * above calls it. The privacy page said flatly that the live position is held
+ * in memory rather than written down as a trail; forgetVan was the only thing
+ * that ever deleted one, and it runs only when an account closes.
+ *
+ * So the alarm that already exists to flush the state is also what ends it.
+ */
+const SNAPSHOT_TTL_SECONDS = STALE_AFTER_SECONDS;
+
+/**
  * The position without the operator id.
  *
  * The object IS the operator -- it is addressed by idFromName(operator_id) --
@@ -252,15 +270,39 @@ export class VanTracker extends DurableObject<Env> {
   }
 
   /**
-   * The final flush after the van goes quiet.
+   * The final flush after the van goes quiet -- and then the forgetting.
    *
    * If there is unsaved state the van was still moving recently: write it and
-   * arm the next alarm. If there is not, the van has stopped and this object
-   * stops costing anything -- no re-arm, no further writes, and eviction is
-   * then free because the snapshot is already current.
+   * arm the next alarm.
+   *
+   * If there is not, the van has stopped, and this is where the snapshot ends
+   * rather than where it was left alone. It used to simply return: no re-arm,
+   * no further writes, and a position and trail sitting in durable storage for
+   * as long as the object existed. Nothing read them past
+   * SNAPSHOT_TTL_SECONDS and nothing deleted them either, so "we do not keep a
+   * trail" was true of what anyone could see and false of what was on disk.
+   *
+   * The wait is measured from the fix itself, not from the alarm, so a van that
+   * went quiet four minutes ago is given the rest of its ten minutes -- a
+   * customer watching it approach must not lose the dot early because the
+   * flush interval and the staleness window are different numbers.
    */
   override async alarm(): Promise<void> {
-    if (this.dirty) await this.flush(now());
+    const t = now();
+    if (this.dirty) { await this.flush(t); return; }
+
+    const held = this.position;
+    const age = held ? t - held.recorded_at : SNAPSHOT_TTL_SECONDS;
+    if (age >= SNAPSHOT_TTL_SECONDS) {
+      // Memory, storage and alarm together. Nothing is left behind that says
+      // this van was ever here.
+      await this.clear();
+      return;
+    }
+
+    // Still inside the window somebody could legitimately read. Come back when
+    // it closes, and only then -- one small alarm write per quiet van, once.
+    await this.ctx.storage.setAlarm(Date.now() + (SNAPSHOT_TTL_SECONDS - age) * 1000);
   }
 
   /** One put and one alarm, together, because both are storage writes. */

@@ -264,10 +264,33 @@ export default function Enquiry({ slug, businessName, kind, onClose }: {
           </button>
         </div>
 
+        {/*
+          "SO THAT PAGE IS THE ONLY WAY BACK" WAS TRUE FOR SOME SENDERS AND NOT
+          OTHERS, and this is where the difference actually gets decided.
+
+          A question asked from a profile page has no booking, no order and no
+          client row behind it — that is what makes it a question — so there is
+          nothing that could ever join it to a person afterwards. The Worker
+          therefore captures the account at the one moment it can: if the
+          sender happens to be signed in when they press this, the conversation
+          goes onto their account and is listed at /account for good. If they
+          are not, nothing is recorded about who they are and nothing later can
+          work it out, so the page's address really is the only way back.
+          Guessing whose it was would mean showing somebody else's messages to
+          whoever guessed closest. See openEnquiry in src/index.ts.
+
+          Both halves are said here rather than one, and rather than asking the
+          Worker who is reading. The reader knows whether they are signed in;
+          finding out on this side would cost a request on a public page for
+          the sake of choosing between two sentences, and the useCustomer hook
+          fetches on mount every time this sheet is opened.
+        */}
         <p className="field-note">
-          Sending this opens a private conversation page and takes you
-          straight to it. Asking a question needs no account, so that page is
-          the only way back — bookmark it when you land on it.
+          Sending this opens a private conversation page and takes you straight
+          to it. Asking a question needs no account: if you are not signed in,
+          that page's address is the only way back to it, so bookmark it when
+          you land. If you are signed in, it is also listed under your
+          conversations at your account, and you will not need the link.
         </p>
       </form>
     </Sheet>

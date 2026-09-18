@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   api, ApiError, type Country, type PartsPolicy, type Service, type ServiceArea,
@@ -30,6 +30,39 @@ import { useDocumentTitle } from '../lib/title';
  * have not finished. That is worked out by reading the account — areas,
  * services, hours — because the browser they come back on is often not the
  * one they started on.
+ *
+ * WHAT THE ORDER IS FOR, WHICH IS THE ONE THING THIS FILE HAD BACKWARDS.
+ *
+ * The reference marketplace's pro funnel opens by asking what work you do. Not
+ * an email address, not a business name — the trade, out of a list, before it
+ * knows a single thing about who you are. Then where. The account comes after.
+ * It reads as courtesy and it is not: the trade is the one question a
+ * tradesperson can answer without deciding anything, it costs nothing to get
+ * wrong, and answering it turns an advert into a page that is visibly about
+ * them. The email address is the moment it stops being browsing, and everything
+ * that can be moved in front of that moment should be.
+ *
+ * This page asked for the email address first, and asked the trade on screen
+ * two — behind the sign-in link, the mailbox, and the round trip. So the
+ * cheapest question in the whole flow was on the far side of the most
+ * expensive one. The trade now sits above the account form on screen one, is
+ * kept in this browser while the sign-in email is fetched, and is applied to
+ * the account on screen two, where the field remains editable and is the
+ * account's own value the moment there is one.
+ *
+ * WHAT WAS ALSO CUT, on the same argument that a sign-up is a queue of
+ * questions and every one of them is a chance to leave. Country is not asked
+ * at all while the list holds a single country, and the time zone — which the
+ * browser reports correctly for almost everybody — is behind a fold with its
+ * guess on show. That takes the visible account form from four fields to two.
+ *
+ * WHAT IS DELIBERATELY NOT COPIED FROM THAT FUNNEL. Its hero says it will send
+ * you customers; its social band counts pros and their earnings. There are no
+ * businesses on this site yet and no work has ever been sent through it, so
+ * every one of those sentences would be a fabrication, and the sort that a
+ * self-employed person finds out about on their own time. The modules below
+ * carry mechanism instead — what happens after you finish, and what this does
+ * not do — which is the same shape of reassurance made out of true things.
  */
 
 /**
@@ -350,6 +383,35 @@ const STEPS = [
   'Your first jobs',
 ];
 
+/**
+ * The trade, kept in this browser between screen one and the sign-in email.
+ *
+ * Screen one now asks what you do BEFORE it asks who you are, and there is no
+ * account to write that answer to yet — so it has nowhere to live but here
+ * until one exists. It is applied on screen two, which is the first screen
+ * with an account behind it, and cleared the moment it has been saved.
+ *
+ * Losing it is a normal outcome and not a failure worth guarding against: the
+ * sign-in link is often opened on a different device from the one the form was
+ * filled in on, and this is a browser key. When it is gone, screen two asks
+ * the question again exactly as it always did. That is the whole reason the
+ * trade field survives on screen two rather than being replaced by a summary
+ * of an answer that may not have made the journey.
+ *
+ * Everything is wrapped, because storage throws rather than returning null in
+ * a private window, and a sign-up must not fail over a convenience.
+ */
+const TRADE_KEY = 'roundtheway.join.trade';
+const readTrade = (): string => {
+  try { return window.localStorage.getItem(TRADE_KEY) ?? ''; } catch { return ''; }
+};
+const writeTrade = (slug: string) => {
+  try { window.localStorage.setItem(TRADE_KEY, slug); } catch { /* private mode */ }
+};
+const clearTrade = () => {
+  try { window.localStorage.removeItem(TRADE_KEY); } catch { /* private mode */ }
+};
+
 /** A day nobody has answered for yet: closed, and the hours a van usually runs. */
 const vanDay = (): DayHours => ({ on: false, start: '08:00', end: '18:00' });
 
@@ -359,6 +421,31 @@ function defaultHours(): Record<number, DayHours> {
   for (let d = 0; d < 7; d++) map[d] = { ...vanDay(), on: d >= 1 && d <= 6 };
   return map;
 }
+
+/**
+ * The two explanatory lists on screen one.
+ *
+ * Written here as a style object rather than as a class, because this page
+ * owns no stylesheet: it is dressed entirely by styles.css, which has no rule
+ * for a list in a card. A class name here would be a name for something
+ * nothing defines, and the next person to read the markup would go looking
+ * for it.
+ *
+ * The browser's own markers are kept — a disc and a numeral — rather than
+ * being replaced with a drawn one. A custom counter is worth the code where
+ * the number is doing work a reader has to follow; here the ordered list is
+ * four screens in order and the unordered one is four facts in no order, and
+ * the default markers already say exactly that difference.
+ */
+const LIST: CSSProperties = {
+  margin: 0,
+  paddingLeft: 20,
+  display: 'grid',
+  gap: 9,
+  fontSize: 14,
+  lineHeight: 1.55,
+  color: 'var(--ink-3)',
+};
 
 const message = (e: unknown, fallback: string) =>
   e instanceof ApiError || e instanceof Error ? e.message : fallback;
@@ -494,7 +581,11 @@ export default function Join() {
     if (isDemo) { setStep((st) => (st === null || st > 0 ? 0 : st)); return; }
 
     if (!operator) { setStep((s) => (s === null ? 0 : s)); return; }
-    setTrade((t) => t || operator.trade || '');
+    // The account's own answer beats the browser's, always. The stash is only
+    // ever a stand-in for an account that has not been told yet, so an
+    // operator who set their trade months ago must not have it quietly
+    // replaced by whatever was typed on a sign-up form nobody finished.
+    setTrade((t) => t || operator.trade || readTrade());
     if (step === null || step === 0) void resume();
   }, [sessionLoading, operator, isDemo, step, resume]);
 
@@ -509,9 +600,30 @@ export default function Join() {
     return () => { live = false; };
   }, [step]);
 
-  async function signUp(e: React.FormEvent) {
-    e.preventDefault();
+  /**
+   * Seed screen one from whatever this browser was told last time.
+   *
+   * Only on screen one, and only into an empty field. Somebody who has already
+   * picked something on this visit is not having it swapped for a stale answer
+   * from a previous one, and no other screen reads the stash at all — by
+   * screen two there is an account, and the account is the authority.
+   */
+  useEffect(() => {
+    if (step === 0) setTrade((t) => t || readTrade());
+  }, [step]);
+
+  /**
+   * Ask for the sign-in link. Split out of the form handler so the "check your
+   * email" screen can ask for another one without sending somebody back to a
+   * form they have already filled in — see the note beside that button.
+   */
+  async function sendLink() {
     setBusy(true); setError(null); setDevLink(null);
+    // Stashed before the request and not after it. The person is about to
+    // leave for their mailbox, and on a phone that often means this tab is
+    // gone; a write that waited for a response would lose the answer on
+    // exactly the journey it exists to survive.
+    writeTrade(trade.trim());
     try {
       const res = await api.requestSignIn({
         email: email.trim(),
@@ -523,9 +635,18 @@ export default function Join() {
       setSentTo(email.trim());
     } catch (e) {
       setError(message(e, 'Could not send the link.'));
+      // Back to the form, where the error is drawn beside the field that
+      // caused it. A resend that failed must never leave somebody looking at a
+      // screen that says a mail is on its way.
+      setSentTo(null);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function signUp(e: React.FormEvent) {
+    e.preventDefault();
+    await sendLink();
   }
 
   async function next() {
@@ -537,6 +658,11 @@ export default function Join() {
           await api.updateSettings({ trade: trade.trim() });
           await refresh();
         }
+        // The account now holds it, so the browser copy has done its job and
+        // is a stale answer waiting to be applied to somebody else's sign-up
+        // on a shared machine. Cleared on the way past rather than left to
+        // expire, because nothing here would ever expire it.
+        clearTrade();
         setStep(2);
       } else if (step === 2) {
         if (services.length === 0) { setError('Add at least one service.'); return; }
@@ -600,7 +726,29 @@ export default function Join() {
               <button className="btn block" onClick={() => { void refresh(); }}>
                 I have clicked the link
               </button>
-              <button className="btn quiet block" onClick={() => setSentTo(null)}>
+
+              {/*
+                The same dead end the sign-in page has, and the same three
+                answers in the same order — spam, then a fresh link, then a
+                different address. A sign-up that stalls here is a business
+                lost for the sake of a sentence about a promotions tab, and
+                "use a different email" was the only thing on offer: the
+                remedy for a mail that has not arrived should not be to throw
+                away the address it was sent to.
+              */}
+              <div className="rule" />
+              <p className="faint" style={{ margin: 0 }}>
+                Not there? Look in spam or promotions — a first email from a
+                site you have never used lands there often.
+              </p>
+              <button className="btn quiet block" disabled={busy}
+                onClick={() => { void sendLink(); }}>
+                {busy ? 'Sending…' : 'Send it again'}
+              </button>
+              <p className="faint" style={{ margin: 0 }}>
+                A new link kills the one before it, so open the newest email.
+              </p>
+              <button className="btn ghost block" onClick={() => setSentTo(null)}>
                 Use a different email
               </button>
             </div>
@@ -614,15 +762,41 @@ export default function Join() {
       <Shell crumbs>
         <div className="wiz">
           <div className="wiz-head">
-            <span className="wiz-count">Step 1 of 5 · Your account</span>
+            <span className="wiz-count">Step 1 of 5 · What you do</span>
             <WizBar at={0} />
           </div>
 
           <h1 className="wiz-q">Put your van on the map.</h1>
           <p className="wiz-sub">
-            Three fields now, four short screens after. You can stop at any
-            point and finish later.
+            Two fields now, four short screens after. You can stop at any point
+            and finish later — nothing is published until you say so.
           </p>
+
+          {/*
+            THE FIRST QUESTION, AND THE CHEAPEST ONE. See the note at the top
+            of this file: this is the answer a tradesperson can give without
+            deciding anything, and it is what turns the rest of the sign-up
+            from a form into a page about their own work — the starter jobs on
+            screen three are chosen by it.
+
+            It is not required to go on. A trade that is not in the catalogue
+            can be typed, and somebody who skips it entirely is asked again on
+            screen two, where the field still is. Blocking the email field
+            behind this would trade the whole benefit of asking early for a
+            wall in front of somebody who does not see their trade listed.
+          */}
+          <div className="card stack">
+            <label>
+              What do you do?
+              <input value={trade} onChange={(e) => setTrade(e.target.value)}
+                placeholder="mobile car wash and detailing" />
+              <span className="faint">
+                Pick one below, or type it. It decides which jobs we offer to
+                fill in for you later, and you can change it at any time.
+              </span>
+            </label>
+            <TradePicker value={trade} onPick={setTrade} />
+          </div>
 
           <form className="card stack" onSubmit={signUp}>
             {error && <div className="error">{error}</div>}
@@ -641,37 +815,192 @@ export default function Join() {
               <span className="faint">This is the name customers see.</span>
             </label>
 
-            <label>
-              Country
-              <select value={country} onChange={(e) => {
-                setCountry(e.target.value);
-                const c = countries.find((x) => x.iso2 === e.target.value);
-                if (c && !c.multi_timezone) setTimezone(c.default_timezone);
-              }}>
-                {countries.map((c) => <option key={c.iso2} value={c.iso2}>{c.name}</option>)}
-              </select>
-            </label>
+            {/*
+              Country and time zone, out of the path.
 
-            {selected?.multi_timezone && (
-              <label>
-                Time zone
-                <input value={timezone} onChange={(e) => setTimezone(e.target.value)}
-                  placeholder="America/Phoenix" />
-                <span className="faint">
-                  {selected.name} spans several time zones, so this one matters.
-                </span>
-              </label>
+              The country list is one row long — the United States — and a
+              select with a single option is a control that cannot be operated:
+              it takes a tap, offers nothing to choose, and leaves somebody
+              wondering what they were meant to do with it. It is not drawn at
+              all until there is a second country, and the value is sent
+              either way.
+
+              The time zone is guessed from the browser and is right for very
+              nearly everybody, but it is not something to guess SILENTLY: it
+              decides which hours of which day this business is ever offered a
+              cancelled slot in, so getting it wrong is a business that quietly
+              never hears from anybody. The guess is therefore on show in the
+              summary, where it can be read without opening anything, and one
+              press away from being changed.
+            */}
+            {(countries.length > 1 || selected?.multi_timezone) && (
+              <details style={{
+                borderTop: '1px solid var(--line)',
+                borderBottom: '1px solid var(--line)',
+                padding: '4px 0',
+              }}>
+                <summary style={{
+                  cursor: 'pointer', padding: '10px 2px', fontSize: 13.5,
+                  fontWeight: 600, color: 'var(--ink-2)',
+                }}>
+                  Time zone: {timezone || 'from your browser'}
+                </summary>
+                <div className="stack" style={{ paddingTop: 10 }}>
+                  {countries.length > 1 && (
+                    <label>
+                      Country
+                      <select value={country} onChange={(e) => {
+                        setCountry(e.target.value);
+                        const c = countries.find((x) => x.iso2 === e.target.value);
+                        if (c && !c.multi_timezone) setTimezone(c.default_timezone);
+                      }}>
+                        {countries.map((c) => (
+                          <option key={c.iso2} value={c.iso2}>{c.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+
+                  {selected?.multi_timezone && (
+                    <label>
+                      Time zone
+                      <input value={timezone} onChange={(e) => setTimezone(e.target.value)}
+                        placeholder="America/Phoenix" />
+                      <span className="faint">
+                        {selected.name} spans several time zones, so this one
+                        matters — it is the clock every free hour of yours is
+                        worked out against.
+                      </span>
+                    </label>
+                  )}
+                </div>
+              </details>
             )}
 
             <button className="btn block" type="submit"
               disabled={busy || !email.trim() || !business.trim()}>
               {busy ? 'Sending…' : 'Email me a link'}
             </button>
+
+            {/*
+              Beside the button, which is where consent is actually given.
+              What it does NOT say is anything about how much work this will
+              bring: there is no figure to quote and no comfortable way to
+              imply one. What it DOES say is the rate, because this is the
+              moment somebody commits and a fee a business finds out about
+              later is a fee they were misled about. The same number is set
+              out in full in the block below and on /pros.
+            */}
+            <p className="faint" style={{ margin: 0 }}>
+              Signing up is free and nothing is published until you finish.
+              When a booking is paid for, Round The Way keeps 15% of the job —
+              never more than $150 from one business in one day — out of your
+              share, and never adds anything to what the customer pays. By
+              continuing you agree to the{' '}
+              <Link to="/terms">terms</Link> and the{' '}
+              <Link to="/privacy">privacy notice</Link>.
+            </p>
           </form>
 
           <p className="faint" style={{ textAlign: 'center' }}>
             Already have an account? <Link to="/signin">Sign in</Link>
           </p>
+
+          {/*
+            WHAT THE REST OF THE SIGN-UP IS, below the fold.
+
+            The reference funnel puts a three-step "how it works" band here and
+            it earns its place for a reason that has nothing to do with
+            persuasion: somebody being asked for an email address wants to know
+            what they are getting into before they hand one over, and "four
+            more screens" is not an answer to that. This is the answer — the
+            four screens named, in order, with what each one wants.
+
+            Written as a list of what is ASKED rather than of what is promised.
+            Every line is a screen in this file and can be checked against it.
+          */}
+          <section className="card stack">
+            <span className="eyebrow">After the link, four screens</span>
+            <ol style={LIST}>
+              <li>
+                <strong>Where you work.</strong> The neighbourhoods or towns you
+                cover. Nothing outside them is ever offered to you.
+              </li>
+              <li>
+                <strong>What you charge.</strong> A job, how long it takes and
+                what it costs. The duration is the part that matters — it
+                decides which cancelled hours your work fits into.
+              </li>
+              <li>
+                <strong>When you work.</strong> Your days and hours. Nothing is
+                ever offered to you on a day off.
+              </li>
+              <li>
+                <strong>The jobs you already have.</strong> Two or three is
+                enough. The app reads the space between them and tells you
+                which gaps are worth filling.
+              </li>
+            </ol>
+            <p className="faint" style={{ margin: 0 }}>
+              Then your page is published. Your openings go up once you have
+              connected a bank account to be paid into. You can stop after any
+              of these screens and pick up where you left off.
+            </p>
+          </section>
+
+          {/*
+            THE HONEST HALF, and the one the reference funnel has no equivalent
+            of. It is here rather than buried in the terms because these are the
+            things a self-employed person would be angry to discover afterwards,
+            and a page that lets them find out later is trading on their not
+            asking. /pros makes the same argument at length; this is the short
+            version, sitting where the decision is made.
+
+            THE FEE GOES FIRST AND STAYS FIRST. This block once said no money
+            moved through Round The Way and that nothing took a cut of a job.
+            Both were false: the rate is 15%, it is in src/lib/fees.ts and it is
+            deducted at settlement. A disclosure block that omits the price is
+            worse than no disclosure block, because it is read as one.
+          */}
+          <section className="card stack">
+            <span className="eyebrow">Before you sign up</span>
+            <ul style={LIST}>
+              <li>
+                <strong>Round The Way keeps 15% of the job</strong>, never more
+                than $150 from one business in one day. It comes out of your
+                share and is never added to what the customer pays. It applies
+                to every booking: there is no free tier, no repeat-customer
+                discount and no exemption.
+              </li>
+              <li>
+                The customer pays Round The Way by card when they book. We hold
+                that payment until the job is done, then send your share to
+                your own bank account. Connect one before you list — without it
+                there is nowhere to send your share, so your openings do not go
+                up. The payment provider takes those details directly and we
+                never see them.
+              </li>
+              <li>
+                Cancelling a job late costs you what it would cost a customer
+                cancelling at the same moment: nothing more than 48 hours out, a
+                quarter of the job inside 48 hours, three quarters inside 12
+                hours, and the whole job once you have said you arrived.
+              </li>
+              <li>
+                Nobody here has been background checked, licence checked or
+                insured by us, and that includes you. Nothing on this site
+                vouches for anybody.
+              </li>
+              <li>
+                We cannot tell you how much work this will bring. Anybody who
+                gives you a number for that is guessing.
+              </li>
+              <li>
+                Your customers stay yours. Nothing here stands between you and
+                somebody who wants to book you again.
+              </li>
+            </ul>
+          </section>
         </div>
       </Shell>
     );
@@ -687,7 +1016,10 @@ export default function Join() {
           <h1 className="wiz-q">You are live.</h1>
           <p className="wiz-sub">
             From now on, when a job cancels the app works out what fits the hole
-            and who is nearby, and gives you the message to send.
+            and who is nearby, and gives you the message to send. Connect a bank
+            account in the app before your openings go up: the customer pays
+            Round The Way when they book, and your share is sent to that
+            account after the job.
           </p>
 
           <div className="card stack">
@@ -728,17 +1060,32 @@ export default function Join() {
 
         {step === 1 && (
           <>
-            <h1 className="wiz-q">What do you do, and where?</h1>
+            <h1 className="wiz-q">Where do you work?</h1>
             <p className="wiz-sub">
               Areas decide who gets offered a cancelled slot. Someone outside
               them is never asked, however keen they are.
             </p>
 
+            {/*
+              The trade is asked on screen one now, so for most people arriving
+              here it is already answered and this is a chance to correct it.
+              It stays a full field with the whole picker under it rather than
+              becoming a read-only summary, because the two ways of getting
+              here with nothing in it are both ordinary: opening the sign-in
+              link on a different device from the one the form was filled in
+              on, and an operator who signed up months ago coming back to
+              finish. Neither of those people has an answer to summarise.
+            */}
             <div className="card stack">
               <label>
                 Your trade
                 <input value={trade} onChange={(e) => setTrade(e.target.value)}
                   placeholder="mobile car wash and detailing" />
+                <span className="faint">
+                  {trade.trim()
+                    ? 'From the last screen. Change it here if it is not right.'
+                    : 'Pick one below, or type it.'}
+                </span>
               </label>
               <TradePicker value={trade} onPick={setTrade} />
             </div>

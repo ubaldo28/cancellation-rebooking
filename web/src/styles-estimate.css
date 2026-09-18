@@ -1,0 +1,108 @@
+/* ==========================================================================
+   The customer's price quotes, on their own conversation page.
+
+   Owned by Estimates.tsx, which imports it — the same arrangement as
+   PartsQuotes and styles-parts.css, and for the same reason: this card is
+   mounted by one page and it must not be that page's job to remember a
+   stylesheet.
+
+   MOST OF THE LOOK IS BORROWED AND THAT IS DELIBERATE. The quote body, the
+   oversized amount, the two buttons and the history rows are `.quote`,
+   `.quote-amount`, `.quote-actions` and `.quote-past` out of styles-parts.css,
+   which Estimates.tsx also imports. A price quote and a parts quote are the
+   same object to the person reading them — a number somebody has sent you,
+   with a yes and a no under it — and they sit inches apart in the same column
+   on the same screen. Two treatments would read as two different kinds of
+   thing and invite somebody to answer one more carefully than the other.
+
+   What is below is only what this card has and that one does not: a booking
+   that is made and not paid for.
+
+   Every selector is doubled up with a class from styles.css where one exists
+   (.card.estimates-card), for the reason styles-book.css states at its head:
+   main.tsx imports App before styles.css, so a component stylesheet lands
+   FIRST in the bundle and a single bare class would lose every tie to the
+   sheet it is extending.
+   ========================================================================== */
+
+.card.estimates-card { display: grid; gap: 12px; }
+
+/* --------------------------------------------------------------------------
+ * The booking that is made and not paid for
+ *
+ * The loudest box on the card, and the only one on this page drawn in the
+ * alert colours. That is not decoration: an accepted quote with no payment
+ * behind it is somebody's morning held on a promise, it is the one state here
+ * that gets worse the longer it is left, and it is the exact state this whole
+ * card was built to stop existing. A customer scrolling past a conversation
+ * has to have their eye caught by it.
+ *
+ * Not `.error` red, because nothing has gone wrong and nobody has been
+ * refused — the amber is the site's existing treatment for "this is not what
+ * it looks like", which is precisely what a booking that appears confirmed and
+ * has not been paid for is.
+ * ----------------------------------------------------------------------- */
+.estimate-pay {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--alert-line);
+  border-radius: 12px;
+  background: var(--alert-soft);
+}
+
+.estimate-pay > h3 {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* The lead and the "nothing is lost if you close this page" line. Bumped off
+   .faint's 12px because both are sentences somebody has to actually read
+   before they type a card number, not captions under something else. */
+.estimate-pay > p.faint {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+/* --------------------------------------------------------------------------
+ * The booking that is paid for
+ *
+ * Plain, bordered, and quiet. It is a receipt: there is nothing to do on it
+ * and nothing to decide, and a settled payment dressed in any colour at all
+ * reads as a notice about the payment rather than as the payment.
+ * ----------------------------------------------------------------------- */
+.estimate-settled {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* --------------------------------------------------------------------------
+ * The half-second before the pay route has answered
+ *
+ * Drawn as a plain line rather than as a box, because it is not a state
+ * anybody is in — it is the page admitting it does not know yet. Giving it a
+ * border would make a box appear and then be replaced by a different box,
+ * which is the layout jump this line exists to avoid.
+ * ----------------------------------------------------------------------- */
+.estimate-checking { margin: 0; font-size: 13px; line-height: 1.5; }
+
+/* --------------------------------------------------------------------------
+ * A question with no price on it yet
+ *
+ * Dashed rather than solid, and with no amount in it, because there is no
+ * amount: the customer has asked and the business has not answered. The
+ * dashed edge is the same signal `.pay-seam` uses in styles.css — a space
+ * something is going to occupy, drawn so that nobody mistakes it for the
+ * thing itself.
+ * ----------------------------------------------------------------------- */
+.quote.estimate-asked {
+  border-style: dashed;
+  border-color: var(--line);
+}

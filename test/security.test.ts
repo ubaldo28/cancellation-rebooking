@@ -86,17 +86,60 @@ describe('security headers are on everything, not on the API alone', () => {
       .toBe('strict-origin-when-cross-origin');
   });
 
-  it('hands unknown app paths to the SPA but never an unknown API path', async () => {
-    expect((await call('GET', '/some/deep/react/route')).status).toBe(200);
+  /**
+   * THE 200 IN HERE WAS THE DEFECT, not the guarantee.
+   *
+   * `/some/deep/react/route` is not a route the React app has. It was answered
+   * with the SPA shell and a 200, which is what Google calls a soft 404: a
+   * successful response for an address that does not exist. The namespace is
+   * unbounded — `<Route path="/:metro">` in App.tsx matches any single segment
+   * — so the site offered an unlimited supply of them, each judged a thin
+   * duplicate of the rest.
+   *
+   * The DOCUMENT is unchanged, and that half is still the guarantee: an
+   * unknown page gets the app, which draws its own not-found page, rather than
+   * a JSON error a visitor cannot act on. Only the status line moved. An
+   * address the app really has still answers 200, which is what stops this
+   * being a fix that 404s the site.
+   */
+  it('hands unknown app paths to the SPA with a 404, but never an unknown API path',
+    async () => {
+      const missingPage = await call('GET', '/some/deep/react/route');
+      expect(missingPage.status).toBe(404);
+      expect(missingPage.headers.get('content-type')).toContain('text/html');
+      expect(await missingPage.text()).toContain('id="root"');
 
-    const missing = await call('GET', '/api/does-not-exist');
-    expect(missing.status).toBe(404);
-    expect(missing.headers.get('content-type')).toContain('application/json');
-  });
+      // A real React route keeps its 200.
+      //
+      // /account/messages/:id IS IN HERE FOR THE TWO-TREE REASON, not for the
+      // sake of a longer list. The route lives in web/src/App.tsx and the
+      // pattern that lets its shell keep a 200 lives in SPA_PATHS in
+      // src/index.ts, and the two deploy separately — so the failure is a real
+      // page, behind a sign-in, answering 404 to the one person entitled to
+      // read it, with nothing in either tree looking wrong on its own. The
+      // customer whose conversation it is would be told their conversation
+      // does not exist.
+      for (const path of [
+        '/about', '/help', '/account', '/account/messages/some-thread-id',
+        '/a', '/c/some-token', '/app/jobs',
+      ]) {
+        expect((await call('GET', path)).status, path).toBe(200);
+      }
+      // And the prefix is not a blanket: a misspelling under /account is still
+      // an address the site does not have, which is what SPA_PATHS insists on
+      // one segment for. A bare prefix here would be an unbounded supply of
+      // soft 404s under a path nobody can even see.
+      expect((await call('GET', '/account/mesages/x')).status).toBe(404);
+      expect((await call('GET', '/account/messages')).status).toBe(404);
+
+      const missing = await call('GET', '/api/does-not-exist');
+      expect(missing.status).toBe(404);
+      expect(missing.headers.get('content-type')).toContain('application/json');
+    });
 });
 
 describe('the policy allows what the app actually loads', () => {
-  it('allows the map, the font CDN and the maplibre CDN in the right directives',
+  it('allows the tile host, and no CDN for the library or the fonts',
     async () => {
       const csp = (await call('GET', '/health')).headers.get('content-security-policy')!;
       const directive = (name: string) =>
@@ -108,9 +151,21 @@ describe('the policy allows what the app actually loads', () => {
       expect(directive('img-src')).toContain('https://tiles.openfreemap.org');
       // MapLibre decodes tiles in a worker it builds from a blob URL.
       expect(directive('worker-src')).toContain('blob:');
-      expect(directive('script-src')).toContain('https://unpkg.com');
-      expect(directive('style-src')).toContain('https://fonts.googleapis.com');
-      expect(directive('font-src')).toContain('https://fonts.gstatic.com');
+
+      // THE THREE LINES THAT WERE HERE ASSERTED THE OPPOSITE OF THESE, and
+      // they were right at the time: script-src named a pinned MapLibre file
+      // on unpkg.com, style-src named fonts.googleapis.com and font-src named
+      // fonts.gstatic.com, because web/index.html loaded all three out of the
+      // SPA shell — on every route, including the majority that draw no map.
+      // MapLibre is a bundled dependency now and the woff2 files are in
+      // web/public/fonts, so all three are same-origin and covered by 'self'.
+      // Asserted as absences rather than deleted: a permitted host nothing
+      // uses is where the next accidental third-party request goes, and this
+      // is the test that would have caught the first one.
+      expect(directive('script-src')).not.toContain('unpkg.com');
+      expect(directive('style-src')).not.toContain('fonts.googleapis.com');
+      expect(directive('font-src')).not.toContain('fonts.gstatic.com');
+      expect(directive('font-src')).toBe(`font-src 'self'`);
     });
 
   it('never allows inline or eval-ed script, whatever the styles need', async () => {

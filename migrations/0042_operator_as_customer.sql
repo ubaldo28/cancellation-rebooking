@@ -1,0 +1,65 @@
+-- ---------------------------------------------------------------------------
+-- 0042 — a business, standing on the other side of the counter
+-- ---------------------------------------------------------------------------
+--
+-- Every migration from 0037 onwards is written on the fact that a business and
+-- a customer are two different people: different table, different cookie,
+-- different session, different digest. That is still true and nothing here
+-- weakens it. What this column adds is a rope between two rows that stay two
+-- rows, for the one case the product has always had and never had anywhere to
+-- record: the mechanic whose own van needs washing.
+--
+-- IT IS CREATED FROM THE BUSINESS SIDE ONLY, and that direction is the whole
+-- design rather than a limitation of the schema. A business already proved its
+-- email address to sign in, so letting it open the customer side is a second
+-- door onto a proof it has already given. The reverse is not the same act at
+-- all: becoming a business means a trade, a vehicle, a bank account and a place
+-- in search results, and it is a sign-up somebody does deliberately, not a
+-- toggle on an account they happen to be holding. So there is no path that
+-- writes this column from a customer session, and there should never be one.
+--
+-- WHAT IT MAKES POSSIBLE, which is the reason it exists at all and not merely a
+-- nicety:
+--
+--   A business cannot book its own openings. Without this column the checkout
+--   has no way to tell that the customer paying for an opening is the business
+--   selling it, so a mechanic could fill their own quiet afternoon with their
+--   own booking — money in a circle, a lead fee against themselves, and a slot
+--   that a real customer can no longer have.
+--
+--   A suspension carries across. The no-show ladder in 0023 suspends a business
+--   by operators.suspended_until and a customer by customer_standing, keyed on
+--   two identities that nothing joined until now. A suspended business that
+--   opened the customer side would simply keep transacting here under the other
+--   identity, which would make the customer side the escape hatch from every
+--   sanction this product issues. lib/standing.ts reads across this column so
+--   that a sanction lands on the person rather than on one of their two rows.
+--
+-- NOTHING IS MERGED, and that is deliberate. The two rows keep their own
+-- bookings, their own card, their own standing row and their own session; this
+-- says they are the same person, not that they are the same account.
+
+-- The business this customer account belongs to, when a business has opened the
+-- customer side. NULL for everybody who signed up as a customer, which is
+-- almost every row in this table and always will be.
+ALTER TABLE customer_accounts ADD COLUMN operator_id TEXT;
+
+-- One business per customer account, and one customer account per business.
+--
+-- The same NULLABLE-plus-unique pattern as stripe_customer_id in 0041 and
+-- login_email in 0038: SQLite treats NULLs in a unique index as distinct, so
+-- every ordinary customer sits here at once while a real operator id belongs to
+-- exactly one row.
+--
+-- THIS IS THE HALF OF THE GUARANTEE THAT SURVIVES A RACE, and the failure it
+-- prevents is the one nobody would notice. Two requests arriving together — a
+-- double-tapped button, the same business open in two tabs — can both read a
+-- customer account with no business on it; customerSideOf makes its UPDATE
+-- conditional on this column still being NULL so the loser changes nothing and
+-- re-reads the winner's row. Without the index under that, a bug that wrote the
+-- column twice would give one business two customer identities, and the second
+-- one would be a clean record: not suspended when the business is suspended,
+-- and free to book the openings the business itself is selling. The index turns
+-- that into a write that fails loudly instead of a quiet second self.
+CREATE UNIQUE INDEX idx_customer_accounts_operator
+  ON customer_accounts (operator_id);

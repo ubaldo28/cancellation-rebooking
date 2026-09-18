@@ -1,0 +1,318 @@
+/*
+ * The cost pages, and only the parts of them that are new.
+ *
+ * /cost and /cost/<trade> were built on styles-index.css and styles-trade.css
+ * respectively, and everything they already had stays there: the price bar,
+ * the driver cards, the service table, the tiles, the rows on the index. This
+ * stylesheet holds the modules added when the two pages were brought up to the
+ * shape of the reference marketplace's price pages -- the short answer at the
+ * top, the per-place price table, the trade's own cost factors, the do-it-
+ * yourself comparison, the saving list, and the standing call to action.
+ *
+ * WHY A THIRD STYLESHEET RATHER THAN GROWING THE OTHER TWO. The new modules
+ * appear on BOTH cost pages, and the two pages load different base sheets --
+ * CostGuide takes styles-trade.css, CostIndex takes styles-index.css. Putting
+ * the shared modules in either one would mean one page pulling in a whole
+ * sheet written for the other page's layout to reach four rules. So they live
+ * here, both pages import this, and neither inherits the other's furniture.
+ *
+ * Everything below is prefixed .cg- so it cannot collide with .tr- or .ix-,
+ * which are loaded on these same routes and share a document. Colours are the
+ * shared tokens from styles.css and no others: these pages must not look like
+ * a different product from the trade page they link back to.
+ */
+
+/* --------------------------------------------------------------------------
+ * The short answer
+ *
+ * The reference marketplace opens a price page with a handful of highlight
+ * bullets before any prose, and it is the right instinct -- somebody who typed
+ * "what does X cost" is not going to read four screens to find out. Ours holds
+ * only counted figures and statements of fact about where they came from, so
+ * it can be scanned in the three seconds it will actually be given.
+ *
+ * Boxed and tinted rather than a bare list, because it has to read as the
+ * summary of the page rather than as the page's first paragraph.
+ * ----------------------------------------------------------------------- */
+.cg-key {
+  margin: 22px 0 0;
+  padding: 16px 18px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  border-radius: var(--r-md);
+}
+
+.cg-key h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+
+.cg-key ul { margin: 0; padding: 0 0 0 18px; }
+
+.cg-key li {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.cg-key li + li { margin-top: 7px; }
+
+/* Figures inside the summary are the whole reason it exists, so they carry
+   tabular numerals -- a column of prices that jitters as the digits change is
+   a column a reader stops comparing. */
+.cg-key b { font-variant-numeric: tabular-nums; }
+
+/* --------------------------------------------------------------------------
+ * Prices by place
+ *
+ * Their junk removal guide carries a table of twenty-one cities against a
+ * price range each, which is the single most-copied module on a cost page and
+ * for good reason: "what does it cost" almost always means "what does it cost
+ * HERE". Ours has two places in it rather than twenty-one, and every row is
+ * counted off the listings rather than modelled from a national figure, so a
+ * place with too little listed shows that instead of a range.
+ * ----------------------------------------------------------------------- */
+.cg-metro-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+.cg-metro {
+  width: 100%;
+  min-width: 460px;
+  border-collapse: collapse;
+  margin-top: 4px;
+}
+
+.cg-metro th,
+.cg-metro td {
+  padding: 11px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  font-size: 14.5px;
+  vertical-align: top;
+}
+
+.cg-metro thead th {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.cg-metro tbody th { font-weight: 600; color: var(--ink); }
+
+.cg-metro td.cg-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cg-metro td.cg-num b { font-weight: 700; }
+
+/* A place with fewer than ENOUGH listings gets words in the price column, not
+   a number. It is set in the muted ink so that scanning the column top to
+   bottom cannot mistake it for a figure. */
+.cg-metro td.cg-thin {
+  text-align: right;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+.cg-metro-n { font-size: 13px; color: var(--muted); }
+
+/* --------------------------------------------------------------------------
+ * What the trade itself charges for
+ *
+ * The cost-factor list: the one module on a price page that is knowledge about
+ * the work rather than a claim about the platform. It is set as a definition
+ * list because that is what it is -- a named factor and what it does to the
+ * bill -- and a numbered or bulleted list would lose the pairing.
+ * ----------------------------------------------------------------------- */
+.cg-factors { margin: 4px 0 0; }
+
+/* Each factor is a <dt>/<dd> pair inside its own <div>, which is what HTML
+   allows for grouping the two -- so the spacing between factors goes on the
+   wrapper. It cannot go on the dt: inside a wrapper every dt is its own
+   parent's first child, so a :first-child rule meant to unset the leading
+   margin on the first factor would silently unset it on all of them. */
+.cg-factors > div + div { margin-top: 18px; }
+
+.cg-factors dt {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.cg-factors dd {
+  margin: 6px 0 0;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* --------------------------------------------------------------------------
+ * Doing it yourself
+ *
+ * Two columns that have to be read against each other, so they are a grid that
+ * collapses to one column rather than two floated boxes: on a phone the
+ * "yourself" case must end before the "book someone" case begins, or the
+ * comparison reads as one continuous argument.
+ * ----------------------------------------------------------------------- */
+.cg-diy {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  margin-top: 4px;
+}
+
+.cg-diy > div {
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.cg-diy h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.cg-diy p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* --------------------------------------------------------------------------
+ * Where the price can come down
+ * ----------------------------------------------------------------------- */
+.cg-save { margin: 4px 0 0; padding: 0 0 0 20px; }
+
+.cg-save li {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.cg-save li + li { margin-top: 9px; }
+
+.cg-save li b { color: var(--ink-2); }
+
+/* --------------------------------------------------------------------------
+ * The standing call to action
+ *
+ * Theirs is a "get a free estimate" button dropped between the cost breakdown
+ * and the questions, and again at the foot. Ours cannot say "free estimate":
+ * there is no quote request on a public page, and inventing one would be a
+ * button that lies about what it does. What it offers instead is the two
+ * things that genuinely exist -- the listings themselves, and the alert for
+ * when one appears -- so the band is real even on a trade with nothing in it.
+ * ----------------------------------------------------------------------- */
+.cg-cta {
+  margin-top: 36px;
+  padding: 22px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-lg);
+  background: var(--accent-soft);
+}
+
+.cg-cta h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.cg-cta p {
+  margin: 8px 0 0;
+  max-width: 60ch;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.cg-cta-do {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* --------------------------------------------------------------------------
+ * The index page's category grouping
+ *
+ * Their price index groups guides under headings a person recognises rather
+ * than listing every guide in one column. Ours already sorts by how much is
+ * behind the figures, which is the more honest primary cut and stays first --
+ * this is the second way in, for somebody who knows the kind of thing they
+ * want rather than the trade's exact name.
+ * ----------------------------------------------------------------------- */
+.cg-cats { display: grid; gap: 22px; margin-top: 4px; }
+
+.cg-cat > h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.cg-cat-n {
+  margin: 0 0 9px;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cg-cat ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The <li> is the flex item and the link fills it. `display: contents` on the
+   item would lay out identically and is how this was first written, but it
+   drops the list item from the accessibility tree in several shipping
+   browsers -- which turns a list of forty guides into forty loose links for
+   anybody navigating by list. */
+.cg-cat li { display: flex; }
+
+.cg-cat a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 14px;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.cg-cat a:hover { border-color: var(--line-strong); color: var(--accent-ink); }
+
+.cg-cat a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The count rides inside the chip. Muted, because the trade's name is what is
+   being scanned for and the number is only the tie-breaker. */
+.cg-cat-price {
+  font-size: 12.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

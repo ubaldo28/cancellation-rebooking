@@ -1,0 +1,113 @@
+-- ---------------------------------------------------------------------------
+-- 0045 — two indexes that were already covered by a wider one
+-- ---------------------------------------------------------------------------
+--
+-- Both of these are a STRICT COLUMN PREFIX of another index on the same table.
+-- SQLite can answer any lookup a prefix index serves from the wider index —
+-- the leading columns are in the same order, so the seek is the same seek — so
+-- neither of these has ever changed a query plan. What they do is cost: every
+-- INSERT, UPDATE and DELETE on the table writes a second B-tree, and the pages
+-- of that B-tree sit in the same cache as the ones that are being read.
+--
+-- NEITHER ENFORCES ANYTHING. Both are plain CREATE INDEX, not UNIQUE and not
+-- a constraint, so dropping them cannot change what the database accepts or
+-- what any query returns. That is the whole reason this is a safe migration to
+-- write and the reason it is written as two drops and nothing else.
+--
+-- WHAT WAS CHECKED BEFORE DROPPING, because "it looks redundant" is how an
+-- index that was load-bearing gets removed. Every query in src/ that touches
+-- either table was run through EXPLAIN QUERY PLAN against the full schema,
+-- once with these indexes and once without. Every plan is identical apart from
+-- the name of the index chosen, and no plan turns into a SCAN. The detail is
+-- under each drop.
+
+-- ---------------------------------------------------------------------------
+-- 1. postal_codes — the expensive one
+-- ---------------------------------------------------------------------------
+--
+-- idx_postal_country was CREATE INDEX idx_postal_country ON postal_codes
+-- (country_code), added in 0002 beside the table.
+--
+-- THIS IS THE ONE THAT IS WORTH A MIGRATION ON ITS OWN. 0002 calls this table
+-- roughly 1.7 million rows for GB alone, and a single-column index on a
+-- country code is close to the worst shape a large table can carry: the column
+-- has a handful of distinct values across millions of rows, so every entry for
+-- a country is one long run that no query ever wants to walk. It is also the
+-- index that is written 1.7 million times during a seed load.
+--
+-- IT IS COVERED TWICE OVER.
+--
+--   PRIMARY KEY (country_code, postal_code) — the table is WITHOUT ROWID, so
+--     this IS the table, stored in that order. A lookup by country_code alone
+--     is a prefix seek on it.
+--   idx_postal_prefix (country_code, substr(postal_code, 1, 4)) — the partial
+--     -code lookup 0002 explains, which has country_code leading as well.
+--
+-- WHAT THE WORKER ACTUALLY ASKS THIS TABLE. lib/geo.ts does an exact
+-- (country_code, postal_code) lookup, then walks shorter prefixes as further
+-- exact lookups, then one `country_code = ? AND postal_code LIKE ?`; lib/demo.ts
+-- deletes by (country_code, postal_code); index.ts reads a place_name by
+-- postal_code with NO country at all. The first four take the primary key both
+-- with and without this index. The last one is a SCAN either way, because an
+-- index on country_code cannot help a query that does not name a country —
+-- which is the clearest possible statement of what this index was not doing.
+DROP INDEX IF EXISTS idx_postal_country;
+
+-- ---------------------------------------------------------------------------
+-- 2. job_leads
+-- ---------------------------------------------------------------------------
+--
+-- idx_leads_operator was CREATE INDEX idx_leads_operator ON job_leads
+-- (operator_id, status), and idx_leads_fillable ON job_leads (operator_id,
+-- status, parts_ready, urgency) was created on the very next line of 0001.
+-- The first two columns are the same two columns in the same order, so the
+-- second index answers everything the first one did.
+--
+-- Every reader of this table names an operator and a status: GET /api/leads
+-- (operator_id = ? AND status = ?), the candidate query in lib/rank.ts
+-- (operator_id = ? AND status = 'open' plus the readiness columns, which is
+-- what idx_leads_fillable was shaped for in the first place), and the two
+-- status writes in lib/offers.ts. With idx_leads_operator present SQLite picks
+-- it for the first of those and idx_leads_fillable for the rest; with it gone
+-- the first falls onto idx_leads_fillable with the same
+-- `(operator_id=? AND status=?)` seek. Nothing else changes, including the
+-- temp B-tree that query's ORDER BY needs, which neither index ever removed.
+--
+-- Much smaller stakes than the one above — this table holds an operator's own
+-- leads — but it is the same mistake and it is a write on every lead insert
+-- and every status change.
+DROP INDEX IF EXISTS idx_leads_operator;
+
+-- ---------------------------------------------------------------------------
+-- WHAT IS DELIBERATELY NOT DROPPED HERE
+-- ---------------------------------------------------------------------------
+--
+-- idx_order_items_untransferred ON order_items (order_id) WHERE transfer_id IS
+-- NULL, from 0040, was looked at in the same pass and is STAYING — but it is
+-- not in the same position as the two above and a later reader should know
+-- exactly where it stands.
+--
+-- It is not a prefix of anything. It is PARTIAL, which is a different kind of
+-- object: it holds only the lines not yet paid out — 0040's "work queue" —
+-- which is a small minority of the table in steady state.
+--
+-- WHAT IT IS NOT IS USED. settleDueWork in lib/checkout.ts, the sweep 0043
+-- rewrote, is the query this index was written for, and EXPLAIN QUERY PLAN
+-- picks idx_order_items_transfer for it instead — the UNIQUE index on
+-- transfer_id, whose NULL entries sit together as one run and are exactly this
+-- same set of rows. That is with and without ANALYZE, on an empty database and
+-- on five thousand orders with one line in twenty unsettled. The other path
+-- that reads unpaid lines, settleOrder, does not ask the database at all: it
+-- loads an order's lines by order_id and filters transfer_id in TypeScript, so
+-- a partial index on `WHERE transfer_id IS NULL` cannot apply to it. And 0043
+-- added idx_order_items_payout_due (ends_at) WHERE transfer_id IS NULL AND
+-- cancelled_at IS NULL specifically for the rewritten sweep, which covers the
+-- same ground with the column the sweep actually orders by.
+--
+-- SO WHY KEEP IT. Because "the planner does not choose it today" is not the
+-- same fact as "no query needs it", the table is small enough that an unused
+-- index costs little, and the thing on the other side of the decision is the
+-- sweep that moves money to businesses. Removing it is a judgement about the
+-- payout path that belongs to whoever owns that path, taken deliberately,
+-- ideally with the two other index candidates above settled first — not folded
+-- into a tidy-up on the way past.

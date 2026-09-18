@@ -1,6 +1,7 @@
 import type { Env } from '../types';
-import { threadByToken } from './chat';
+import { threadByToken, type ThreadRef } from './chat';
 import { CAMERA_IMAGE_TYPES, cleanImageUpload } from './images';
+import { getPhoto, putPhoto } from './photostore';
 import { flag } from './settlement';
 import { badRequest, newId, notFound, now } from './util';
 
@@ -30,11 +31,41 @@ export type Side = 'operator' | 'customer';
 
 export const STAGES: readonly Stage[] = ['before', 'during', 'after'] as const;
 
-/** Enough to show a job from a few angles; not a photo library. */
-const MAX_PER_ITEM = 24;
+/**
+ * Six photographs on a booking. It was twenty-four until 13 September 2026.
+ *
+ * This counts EVERYTHING on the job: both sides and all three stages. Twenty-
+ * four was written as "enough to show a job from a few angles", which is a
+ * sentence about composition, and nothing was counting what it cost. At the
+ * old six-mebibyte ceiling one booking could take 144 MB — a seventh of the
+ * entire gigabyte this account gets, on one driveway.
+ *
+ * Six is one photograph per side per stage: before, during and after, from the
+ * business and from the customer. That is the shape of the evidence rather
+ * than a number picked to be small, which matters because this is what a
+ * dispute is decided on. If it turns out to be too tight, the thing to do is
+ * raise it deliberately after looking at a real argument between two people,
+ * not to drift it upward because somebody wanted one more angle.
+ */
+const MAX_PER_ITEM = 6;
 
-/** Phone cameras produce large files; the client resizes before sending. */
-export const MAX_BYTES = 6 * 1024 * 1024;
+/**
+ * 2 MB, down from 6 MiB. Nobody sending a photograph through the app notices.
+ *
+ * THE OLD NUMBER DESCRIBED THE CAMERA, NOT THE UPLOAD. JobProof.tsx shrinks
+ * every shot before it is sent — 1600px on the long edge at quality 0.82 — and
+ * its own comment says that turns a 9 MB file into roughly 300 KB. So six
+ * mebibytes was twenty times the size of anything the app has ever actually
+ * posted. What it really set was the worst case for a caller that is NOT the
+ * app: six photographs at 6 MiB rather than at 2 MB, out of a gigabyte
+ * everybody shares.
+ *
+ * Six times the headroom a shrunk photograph needs is still there, so no real
+ * upload can hit this. Comfortably under the 25 MiB ceiling Workers KV puts on
+ * a single value — and it is the 1 GB the whole account gets, not this number,
+ * that is the real constraint. See the top of ./photostore.ts.
+ */
+export const MAX_BYTES = 2_000_000;
 
 /**
  * HEIC is on this list and not on the public profile's, because this is a
@@ -51,6 +82,16 @@ export interface JobPhoto {
   operator_id: string;
   uploaded_by: Side;
   stage: Stage;
+  /**
+   * Where the photograph itself lives: the key of this picture in the photo
+   * store, which is a Workers KV namespace and has never been an R2 bucket in
+   * production. The column is named `r2_key` in migration 0025_proof.sql and
+   * is deliberately not being renamed — the full reasoning is at the top of
+   * ./photostore.ts, but the short version is that renaming a NOT NULL column
+   * read by name in six modules and in the public JSON payload, on a live
+   * deployment taking real payments, is not a trade worth taking to fix a
+   * name. Read it as "photo-store key" and do not go looking for a bucket.
+   */
   r2_key: string;
   content_type: string | null;
   bytes: number | null;
@@ -78,7 +119,7 @@ export const isStage = (v: unknown): v is Stage =>
  */
 async function scope(
   env: Env,
-  who: { operator_id?: string; token?: string },
+  who: { operator_id?: string; token?: ThreadRef },
   orderItemId: string,
 ): Promise<{ side: Side; operator_id: string; cancelled_at: number | null }> {
   if (who.operator_id) {
@@ -116,12 +157,13 @@ export interface UploadInput {
 /**
  * Stores one photo against a booking.
  *
- * The object goes into R2 first and the row second, and the object is deleted
- * if the row is refused -- the row is the record of truth, and an orphaned
- * object is storage nobody can reach and everybody pays for.
+ * The bytes go into the photo store first and the row second, and the stored
+ * value is deleted if the row is refused -- the row is the record of truth,
+ * and an orphaned value is storage nobody can reach that is still eating the
+ * account's 1 GB of Workers KV.
  */
 export async function addJobPhoto(
-  env: Env, who: { operator_id?: string; token?: string }, input: UploadInput,
+  env: Env, who: { operator_id?: string; token?: ThreadRef }, input: UploadInput,
 ): Promise<JobPhoto> {
   if (!env.PHOTOS) {
     throw badRequest('Photo storage is not switched on yet.', 'no_storage');
@@ -132,7 +174,7 @@ export async function addJobPhoto(
   // Sized, identified by its own bytes, and stripped of where it was taken --
   // all before anything is stored. It used to be sized, and then trusted about
   // its type on the strength of a header the uploader typed, and then streamed
-  // into the bucket exactly as it arrived, GPS and all. These are photographs
+  // into the store exactly as it arrived, GPS and all. These are photographs
   // of the inside of somebody's house, and the customer can later publish one
   // of them on a public review; the coordinates cannot be allowed to be
   // sitting in the file when they do. See images.ts, which is honest about
@@ -150,15 +192,18 @@ export async function addJobPhoto(
     throw badRequest('That booking already has plenty of photos.', 'too_many');
   }
 
+  // Write-once: newId() is unique per upload and nothing ever puts to a key
+  // that already exists.
   const key = `j/${operator_id}/${input.order_item_id}/${newId()}`;
-  await env.PHOTOS.put(key, bytes, {
-    httpMetadata: {
-      // The sniffed type, not the declared one. What is stored and what is
-      // served back have to be the same thing the bytes actually are.
-      contentType,
-      cacheControl: 'private, max-age=3600',
-    },
-  });
+  // The sniffed type, not the declared one. What is stored and what is served
+  // back have to be the same thing the bytes actually are.
+  //
+  // It travels in KV's metadata blob rather than in anything HTTP-shaped,
+  // because KV has no httpMetadata: there is one opaque metadata slot per key
+  // and putPhoto owns its shape. The cacheControl that used to sit beside this
+  // is gone with it and is not missed -- readJobPhoto below has always set its
+  // own `private, max-age=3600` by hand, so the stored copy was never read.
+  await putPhoto(env.PHOTOS, key, bytes, contentType);
 
   const photo: JobPhoto = {
     id: newId(),
@@ -169,7 +214,7 @@ export async function addJobPhoto(
     r2_key: key,
     content_type: contentType,
     // What was stored, not what arrived. The stripped file is smaller than the
-    // one the phone sent, and the row has to describe the object it points at.
+    // one the phone sent, and the row has to describe the bytes it points at.
     bytes: bytes.length,
     width: input.width ?? null,
     height: input.height ?? null,
@@ -205,7 +250,7 @@ export async function addJobPhoto(
 
 /** Every photo on one booking, oldest first, once the caller is allowed them. */
 export async function listJobPhotos(
-  env: Env, who: { operator_id?: string; token?: string }, orderItemId: string,
+  env: Env, who: { operator_id?: string; token?: ThreadRef }, orderItemId: string,
 ): Promise<JobPhoto[]> {
   await scope(env, who, orderItemId);
   const rows = await env.DB.prepare(
@@ -223,7 +268,7 @@ export async function listJobPhotos(
  * stranger's house. Every read is authorised, every time.
  */
 export async function readJobPhoto(
-  env: Env, who: { operator_id?: string; token?: string }, photoId: string,
+  env: Env, who: { operator_id?: string; token?: ThreadRef }, photoId: string,
 ): Promise<Response> {
   if (!env.PHOTOS) throw notFound('No such photo.');
 
@@ -234,11 +279,16 @@ export async function readJobPhoto(
 
   await scope(env, who, photo.order_item_id);
 
-  const object = await env.PHOTOS.get(photo.r2_key);
-  if (!object) throw notFound('No such photo.');
+  // Null here means the same thing it meant when this was R2: no such key.
+  const stored = await getPhoto(env.PHOTOS, photo.r2_key);
+  if (!stored) throw notFound('No such photo.');
 
-  return new Response(object.body, {
+  return new Response(stored.body, {
     headers: {
+      // The row's content_type and not the copy in the store's metadata. They
+      // are the same sniffed value, written from one cleanImageUpload result,
+      // and this function already holds the row. Neither is what the uploader
+      // declared -- see images.ts.
       'content-type': photo.content_type ?? 'image/jpeg',
       // Private, and never shared: the URL is only meaningful to somebody who
       // already holds the session or the link that authorised it.
@@ -252,11 +302,11 @@ export async function readJobPhoto(
  *
  * Neither side can delete the other's: a photograph that could be removed by
  * the person it is evidence against is not evidence. The row goes before the
- * object, so a failure leaves an object nobody references rather than a row
+ * stored bytes, so a failure leaves a key nobody references rather than a row
  * pointing at nothing.
  */
 export async function deleteJobPhoto(
-  env: Env, who: { operator_id?: string; token?: string }, photoId: string,
+  env: Env, who: { operator_id?: string; token?: ThreadRef }, photoId: string,
 ): Promise<void> {
   const photo = await env.DB.prepare(
     `SELECT ${FIELDS} FROM job_photos WHERE id = ?`,
@@ -274,7 +324,7 @@ export async function deleteJobPhoto(
 
 /** What each side has put up, for the "before / during / after" strip. */
 export async function proofSummary(
-  env: Env, who: { operator_id?: string; token?: string }, orderItemId: string,
+  env: Env, who: { operator_id?: string; token?: ThreadRef }, orderItemId: string,
 ) {
   const photos = await listJobPhotos(env, who, orderItemId);
   const by = (stage: Stage) => photos.filter((p) => p.stage === stage);

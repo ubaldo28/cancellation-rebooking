@@ -3,7 +3,7 @@ import { ALL_MIGRATIONS, makeEnv } from './d1';
 import type { Env } from '../src/types';
 import {
   addPhoto, deletePhoto, ensureProfileSlug, getPublicProfile, listPhotos,
-  reorderPhotos, slugify,
+  MAX_PHOTO_BYTES, MAX_PHOTOS, reorderPhotos, slugify,
 } from '../src/lib/profile';
 import { now } from '../src/lib/util';
 
@@ -231,10 +231,22 @@ describe('work photos', () => {
     expect(await listPhotos(env, 'op2')).toHaveLength(1);
   });
 
-  it('stops at twelve photos', async () => {
-    for (let i = 0; i < 12; i++) await addPhoto(env, 'op1', photo());
-    await expect(addPhoto(env, 'op1', photo())).rejects.toThrow(/12 photos|Remove one/i);
-    expect(await listPhotos(env, 'op1')).toHaveLength(12);
+  // READS THE CAP RATHER THAN SPELLING IT. This test said "twelve" three times
+  // over — in its name, in the loop and in the message it matched — so the day
+  // the number moved it failed as a puzzle about the word twelve rather than as
+  // the sentence "the cap changed". The cap is a storage budget now (a shared
+  // 1 GB of Workers KV, see MAX_PHOTOS) and is expected to move again, so what
+  // this test is for is the BEHAVIOUR: the nth photo is taken, the n+1th is
+  // refused, and the refusal is the operator's own and not everybody's.
+  //
+  // The value itself is pinned separately, in test/two-trees.test.ts, together
+  // with the browser's copy of it. That is the test that fails loudly if the
+  // number changes; this one carries on being true at whatever it is.
+  it('stops at the photo cap', async () => {
+    for (let i = 0; i < MAX_PHOTOS; i++) await addPhoto(env, 'op1', photo());
+    await expect(addPhoto(env, 'op1', photo()))
+      .rejects.toThrow(new RegExp(`${MAX_PHOTOS} photos|Remove one`, 'i'));
+    expect(await listPhotos(env, 'op1')).toHaveLength(MAX_PHOTOS);
     // The limit is per operator, not global.
     await expect(addPhoto(env, 'op2', photo())).resolves.toBeTruthy();
   });
@@ -251,10 +263,15 @@ describe('work photos', () => {
     expect(await listPhotos(env, 'op1')).toHaveLength(2);
   });
 
-  it('refuses a photo over 5 MB', async () => {
-    await expect(addPhoto(env, 'op1', photo({ bytes: 5_000_001 })))
-      .rejects.toThrow(/5 MB/i);
-    await expect(addPhoto(env, 'op1', photo({ bytes: 5_000_000 })))
+  // Reads the cap rather than spelling it, for the same reason the count test
+  // above does: this is a storage budget on a shared, un-topped-up gigabyte and
+  // it is expected to move again. What the test is for is the behaviour at the
+  // boundary — exactly on the limit is accepted, one byte over is refused, and
+  // the refusal says a size rather than something generic.
+  it('refuses a photo over the size cap, and takes one exactly on it', async () => {
+    await expect(addPhoto(env, 'op1', photo({ bytes: MAX_PHOTO_BYTES + 1 })))
+      .rejects.toThrow(/\d+ MB/i);
+    await expect(addPhoto(env, 'op1', photo({ bytes: MAX_PHOTO_BYTES })))
       .resolves.toBeTruthy();
     expect(await listPhotos(env, 'op1')).toHaveLength(1);
   });

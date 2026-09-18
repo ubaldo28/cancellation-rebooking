@@ -54,13 +54,17 @@ async function addOperator(id: string, name: string, opts: {
 } = {}) {
   const n = t();
   await env.DB.prepare(
+    // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+    // must have somewhere to be paid before its work can be sold, so slotsNear
+    // leaves an opening for an operator without it off the public list. Drop it
+    // and every listing in this file disappears.
     `INSERT INTO operators (id,email,business_name,trade,timezone,country,currency,language,
        location_mode,fill_model,sms_mode,max_detour_seconds,min_gap_seconds,buffer_seconds,
        offer_ttl_seconds,offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,
        discount_percent,plan,accept_public_bookings,deposit_cents,avatar_key,
-       profile_slug,is_published,created_at,updated_at)
+       profile_slug,is_published,created_at,updated_at,stripe_payouts_enabled)
      VALUES (?,?,?, 'mobile car wash and detailing','America/Los_Angeles','US','USD','en',
-       'mobile','both','device',900,3600,900,5400,3,3600,604800,0,'active',1,1000,?,?,?,?,?)`,
+       'mobile','both','device',900,3600,900,5400,3,3600,604800,0,'active',1,1000,?,?,?,?,?,1)`,
   ).bind(id, `${id}@x.com`, name, opts.avatarKey ?? null,
     opts.slug ?? null, opts.slug ? 1 : 0, n, n).run();
 
@@ -400,23 +404,29 @@ describe('the cost guide’s FAQ markup', () => {
     ]);
     // The account answer, which this page did not carry at all until the model
     // was corrected. Every page in this module was written on "no account is
-    // ever required, here or later", which was never true: an account is
-    // needed to book, a card will be too once payment is switched on, and what
-    // is actually true is only that neither is asked for before somebody has
-    // decided to buy something. Both halves have to be in the same answer or
-    // it is a half-truth with better manners.
+    // ever required, here or later", which was never true: an account and a
+    // card are both needed to book, and what is actually true is only that
+    // neither is asked for before somebody has decided to buy something. Both
+    // halves have to be in the same answer or it is a half-truth with better
+    // manners.
     expect(faq.mainEntity[0].acceptedAnswer.text).toBe(ACCOUNT_TODAY_SHORT);
-    expect(ACCOUNT_TODAY_SHORT).toContain('Booking needs an account');
-    expect(ACCOUNT_TODAY_SHORT).toContain('not yet');
-    // The payment seam is not built, so the answer says so first and calls the
-    // rest a design. It used to say "You pay for the labour when you book,
-    // here on the site", which was a claim about money the Worker has never
-    // been able to move -- and it was the version a crawler indexed, because
-    // the React page rendering this same URL had already been corrected.
+    expect(ACCOUNT_TODAY_SHORT).toContain('Booking needs an account and a card');
+    // NOT "yet", NOT "not built", NOT "once payment is switched on". This
+    // assertion is here because the opposite one used to be: for months the
+    // suite actively enforced the sentence "a card is needed as well once
+    // paying on the site is switched on, which it is not yet" -- and went on
+    // enforcing it after Stripe went live, so the test that existed to keep
+    // the two trees honest was holding a false claim in place on both of them.
+    // A test can pin a fact; it must never pin a state that has changed.
+    for (const stale of ['not yet', 'not built', 'switched on', 'takes no money']) {
+      expect(ACCOUNT_TODAY_SHORT).not.toContain(stale);
+      expect(PAY_TODAY_SHORT).not.toContain(stale);
+    }
+    // Money is taken at the moment of booking, so the answer says so plainly
+    // and the amounts that follow are real.
     expect(faq.mainEntity[4].acceptedAnswer.text).toBe(
-      `${PAY_TODAY_SHORT} The design is that the labour is paid for here, `
-      + 'on the site, at the moment you book, with no cash and nothing paid '
-      + 'at the door — but that part is not built yet.');
+      `${PAY_TODAY_SHORT} The labour is paid for here, on the site, at the `
+      + 'moment you book, with no cash and nothing paid at the door.');
   });
 
   it('shows a person every answer it shows a crawler', async () => {
@@ -452,11 +462,11 @@ describe('the cost guide’s FAQ markup', () => {
  *
  * /s/<trade> and /cost/<trade> are rendered twice: by src/lib/seo.ts for a
  * crawler and a visitor with no JavaScript, and by the React page that mounts
- * over it. The React pages were rewritten to say that payment is not built;
- * the Worker's were not, so for a while the same URL answered "When do I pay?"
- * with "You pay for the labour when you book" or with "Nothing is paid on this
- * site yet" depending on whether a script ran — and the false one was the one
- * indexed.
+ * over it. The React pages were rewritten once and the Worker's were not, so
+ * for a while the same URL answered "When do I pay?" two different ways
+ * depending on whether a script ran — and the false one was the one indexed.
+ * It happened a second time the day Stripe went live: both trees went on
+ * saying nothing was paid on this site while cards were being charged.
  *
  * The Worker cannot import PaymentState.tsx (different build, different
  * runtime), so the sentence is written out in both trees and pinned here by

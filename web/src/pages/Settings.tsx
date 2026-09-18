@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { api, type Service } from '../api';
+import { Link, useNavigate } from 'react-router-dom';
+import { api, ApiError, type Service } from '../api';
 import { useOperator, useSession } from '../App';
 import CloseAccount from '../components/CloseAccount';
 import PaymentMethod from '../components/PaymentMethod';
 import VehicleForm from '../components/VehicleForm';
+import PayoutSetup from '../components/PayoutSetup';
 import PartsPolicyField, {
   EMPTY_PARTS, partsPayload, type PartsValue,
 } from '../components/PartsPolicyField';
@@ -135,6 +136,16 @@ export default function Settings() {
         {/* First on the page, because an operator whose openings are down is
             looking for the reason, and this is one of the three things that
             takes them down. */}
+        <PayoutSetup />
+
+        {/* Directly under it, and above everything about how the business
+            works, for the same reason: an operator hunting for why nobody can
+            find them should meet the switch that decides it before they meet
+            their own discount settings. It is also the one control here that
+            reaches every public page at once, so burying it among the
+            preferences would be a lie about its weight. */}
+        <TakingBookings />
+
         <VehicleForm />
 
         <section className="stack">
@@ -257,14 +268,20 @@ export default function Settings() {
               }} />
             <span className="stack" style={{ gap: 3 }}>
               <span style={{ color: 'var(--ink)', fontWeight: 600 }}>
-                Let customers see you are on the way
+                Show that you are out and working
               </span>
+              {/* THE CONSENT TEXT, and it has to name BOTH things this switch
+                  does. It used to say only the first, which was true until the
+                  front page got a map. A person ticking a box is agreeing to
+                  what the box says, so the box says all of it. */}
               <span className="faint">
-                Only the customer whose job is next sees anything, only from an
-                hour before their slot until half an hour after, and only
-                roughly — near enough to know you are close, not which house
-                you are outside. It stops on its own ten minutes after you
-                close the app. Off unless you turn it on.
+                While you are free, a vehicle shows on the map on the front
+                page — no name, no link, no trail, and rounded so nobody can
+                tell which street. The moment a job is booked you come off that
+                map, and instead the customer whose job it is sees roughly
+                where you are, from 90 minutes before their slot until 30
+                after. Never both at once. It stops on its own ten minutes
+                after you close the app. Off unless you turn it on.
               </span>
             </span>
           </label>
@@ -307,6 +324,15 @@ export default function Settings() {
           </Link>
         </section>
 
+        {/* Here, and not up beside the pause switch, although both of them
+            send an operator somewhere other than their own dashboard. This one
+            is about the person holding the account rather than about the
+            business being listed, which is what the two sections under it are
+            as well — and a control that opens another identity sitting a
+            centimetre from the one that unlists you is two chances to press
+            the wrong thing. */}
+        <BookSomebody />
+
         <section className="stack">
           <span className="eyebrow">Account</span>
           <div className="card stack" style={{ gap: 4 }}>
@@ -323,6 +349,189 @@ export default function Settings() {
         <CloseAccount />
       </main>
     </>
+  );
+}
+
+/**
+ * Listed, or paused.
+ *
+ * `accept_public_bookings` has been read by the map, the search pages, the
+ * browse lists, the profile pages and the alert sweep since the beginning and
+ * settable by nobody, so a business that wanted to stop being found for a
+ * fortnight had no way to say so: the only thing left was to delete openings
+ * one at a time and hope none went back up. This is that one write.
+ *
+ * THE SENTENCE ABOUT BOOKED WORK IS THE POINT OF THE WHOLE CARD, not a
+ * footnote on it. A switch labelled "stop taking bookings" reads, to somebody
+ * with three jobs on Saturday, as though it might cancel them — so it is never
+ * pressed by the people who most need it, and the ones who do press it spend
+ * the evening wondering what they have just done to a customer. It is said
+ * next to the switch, in both states, before the tap.
+ *
+ * It is a section of its own rather than another row in "Filling slots"
+ * because everything in that section changes who gets offered a gap; this
+ * changes whether the business exists on the public side at all.
+ */
+function TakingBookings() {
+  const op = useOperator();
+  const { refresh } = useSession();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const on = op?.accept_public_bookings === 1;
+
+  async function flip() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.updateSettings({ accept_public_bookings: !on });
+      // The switch is drawn from the stored operator record and from nothing
+      // else, so it only moves once the server says it has. Moving it
+      // optimistically and putting it back on a failure is how a business ends
+      // up reading "Paused" off this screen while the map still has them on it,
+      // which is the one wrong answer this control must never give.
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message
+        : 'That did not save. Check your signal and try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="stack">
+      <span className="eyebrow">Your listing</span>
+      <div className="card stack">
+        <div className="taking-row">
+          {/* role="switch" and not a checkbox: this is a thing with two
+              settings that takes effect on the tap, not a box that is ticked
+              and then saved with everything else on the page, and a screen
+              reader says "on"/"off" for one and "ticked"/"unticked" for the
+              other. The name comes from the heading beside it rather than from
+              the line underneath, which changes with the state — a control
+              whose name changes as you use it is a different control every
+              time it is announced. */}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={on}
+            aria-labelledby="taking-label"
+            aria-busy={busy || undefined}
+            disabled={busy}
+            className={`taking-switch${on ? ' is-on' : ''}`}
+            onClick={() => void flip()}
+          >
+            <span className="taking-track"><span className="taking-knob" /></span>
+          </button>
+          <span className="stack" style={{ gap: 2 }}>
+            <span id="taking-label" className="name" style={{ fontSize: 15 }}>
+              Taking bookings
+            </span>
+            {/* The state in words, not only in the position of the knob and
+                certainly not only in its colour. Whether a business is findable
+                is the single fact on this screen that has to survive a bad
+                screen, a bright windscreen and colour blindness. */}
+            <span className="muted">
+              {busy ? 'Saving…' : on
+                ? 'On. You show on the map, in search and in browse, and your '
+                  + 'openings can be booked.'
+                : 'Paused. You are off the map, out of search and out of '
+                  + 'browse, and nothing new can be booked.'}
+            </span>
+          </span>
+        </div>
+
+        <p className="faint" style={{ margin: 0 }}>
+          {on
+            ? 'Turn it off while you are away, full up or off the road. Nothing '
+              + 'is deleted — your openings, your prices and your page are all '
+              + 'still here.'
+            : 'Turn it back on and you are listed again straight away.'}
+        </p>
+
+        <div className="notice">
+          <strong>Work already booked is not affected.</strong> Anybody who has
+          already booked and paid keeps their appointment, and you still owe
+          them the job. This only stops new bookings coming in.
+        </div>
+
+        {error && <div className="error" role="alert">{error}</div>}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * The business as somebody's customer.
+ *
+ * A detailer needs a locksmith, and until the Worker grew this route there was
+ * nowhere in the product for a business to be the one doing the booking — they
+ * would have had to sign up again, at a second mailbox, as a stranger.
+ *
+ * NOBODY IS SIGNED OUT BY THIS. The two session cookies have different names,
+ * so the customer one is set alongside the operator one and both are live
+ * afterwards: this browser is a business and a customer at the same time. That
+ * is why the copy can promise the way back, and why there is no confirmation
+ * step in front of it — nothing here is given up.
+ *
+ * IT LANDS ON THE PUBLIC SITE AND NOT ON /account. The button's whole promise
+ * is booking somebody, and /account is a customer's own bookings — which, the
+ * first time this is ever pressed, is an empty page. Sending somebody to an
+ * empty page is how a feature gets tried once.
+ */
+function BookSomebody() {
+  const op = useOperator();
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function openCustomerSide() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.enterCustomerMode();
+      navigate('/');
+      // `busy` is deliberately not cleared here. The route is already changing
+      // and a button that goes back to reading "Open the customer side" in the
+      // frame before it does is an invitation to press it twice.
+    } catch (e) {
+      // The Worker's own sentence, word for word. It refuses for two reasons a
+      // browser cannot tell apart — no email address on the business at all, or
+      // an address that already belongs to a different business here — and each
+      // of those refusals carries the thing to do about it. Writing our own
+      // line would throw that away and would guess at which one happened.
+      setError(e instanceof ApiError ? e.message
+        : 'Could not open the customer side. Check your signal and try again.');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="stack">
+      <span className="eyebrow">Booking somebody yourself</span>
+      <div className="card stack">
+        <p style={{ margin: 0 }}>
+          <strong>Need a trade yourself?</strong> Trades book other trades — a
+          detailer needs a locksmith like anybody else.
+        </p>
+        <p className="faint" style={{ margin: 0 }}>
+          This opens the customer side of the site on{' '}
+          {op?.email ?? 'your business email address'}. You are not leaving your
+          business account: it stays signed in on this browser, so going to /app
+          puts you straight back in it.
+        </p>
+
+        {error && <div className="error" role="alert">{error}</div>}
+
+        <div>
+          <button className="btn" type="button" disabled={busy}
+            onClick={() => void openCustomerSide()}>
+            {busy ? 'Opening…' : 'Open the customer side'}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 

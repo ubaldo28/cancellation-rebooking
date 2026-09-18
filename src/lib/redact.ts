@@ -22,7 +22,7 @@
  */
 
 import type { Env } from '../types';
-import { sha256 } from './util';
+import { sessionPepper, sha256 } from './util';
 
 export interface Redaction {
   /** The message as it will be stored — already cleaned. */
@@ -309,7 +309,56 @@ export function maskPhone(e164: string | null | undefined): string | null {
  * enumerate on a laptop, so a stolen table would be a stolen contact list.
  */
 export const claimPhoneHash = (env: Env, e164: string): Promise<string> =>
-  sha256(`${e164}:${env.SESSION_PEPPER}`);
+  pepperedHash(env, e164);
+
+/**
+ * The one peppered digest in this codebase, under one name.
+ *
+ * Three places wanted the same thing and two of them had written it out:
+ * `claimPhoneHash` above, `subjectHash` in retention.ts for an erasure receipt,
+ * and — the reason this is now shared — the rate-limit bucket key, which is a
+ * raw guest link or a raw mailbox on sixteen routes and was being stored in
+ * plain text. A second hand-written copy of "sha256 of the value with the
+ * pepper mixed in" is how one of them quietly ends up unpeppered, and an
+ * unpeppered hash of a phone number or an email address is not a secret at all:
+ * both spaces are small enough to enumerate on a laptop, so a stolen table
+ * would be a stolen contact list.
+ *
+ * AND THE PEPPER IS NOW READ THROUGH A GUARD, which is the other half of that
+ * last sentence and the half that was missing. This line used to interpolate
+ * `env.SESSION_PEPPER` straight into the template. `SESSION_PEPPER` is typed as
+ * required on Env and the README calls it required, and neither of those is a
+ * runtime check — so on a deployment with the secret unset, the template
+ * rendered the literal text "undefined" and every digest below became a plain
+ * unpeppered sha256 of its input. Nothing failed. Nothing could fail: an
+ * unpeppered digest is perfectly stable, so claims still matched, erasure
+ * receipts still resolved and rate-limit buckets still counted, and the tests
+ * passed either way. The only thing that changed was the single scenario the
+ * pepper exists for.
+ *
+ * WHAT THAT COST, CONCRETELY, AND WHY THIS FUNCTION IS THE WORST PLACE FOR IT.
+ * The other peppered digests in the product are over 32 random bytes — session
+ * tokens, guest links — and those are out of reach peppered or not. The values
+ * that arrive HERE are phone numbers and email addresses: claim hashes,
+ * erasure receipts, the audit log's subject_ref, and every rate-limit bucket
+ * key, which is a raw mailbox or a raw booking link on sixteen routes. Those
+ * are not 32 random bytes. A national numbering plan is a few billion
+ * candidates and a mailbox list is a file somebody already has, so unpeppered,
+ * every digest this function ever wrote is reversible by brute force on a
+ * laptop, and the columns that were hashed precisely so they could not be read
+ * back become readable again. A stolen copy of the database is a stolen
+ * contact list — the exact outcome the two paragraphs above promise it is not.
+ *
+ * A deployment can sit in that state for its entire life with no symptom,
+ * which is why the check belongs at the point of use rather than in a
+ * deployment checklist: sessionPepper in ./util.ts trims, refuses anything
+ * under sixteen characters with a 500 and `no_session_pepper`, and logs the
+ * length and never the value. The cost here is one trim and one length check
+ * per hash, and what it buys is that a misconfigured deployment refuses the
+ * request instead of quietly writing a reversible digest forever.
+ */
+export const pepperedHash = (env: Env, value: string): Promise<string> =>
+  sha256(`${value}:${sessionPepper(env)}`);
 
 /** The same, for an email. The domain goes too — it is often the person's name. */
 export function maskEmail(email: string | null | undefined): string | null {

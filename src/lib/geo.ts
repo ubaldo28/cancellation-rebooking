@@ -134,6 +134,44 @@ export async function driveSeconds(
 export type GeocodeResult = Point & { source: 'table' | 'census'; place?: string };
 
 /**
+ * How long the Census geocoder gets to answer before this gives up on it.
+ *
+ * THERE WAS NO BOUND, and "no timeout" is not the same as waiting patiently. A
+ * Worker request has a wall-clock budget, and a fetch that never settles spends
+ * the whole of it: a federal endpoint that accepts the connection and then
+ * stops answering — maintenance, a shutdown, an overloaded afternoon — did not
+ * make geocoding slow, it made the request die. And this fetch sits in the
+ * BOOKING PATH. placeOrder in ./orders.ts and the instant-request paths in
+ * ./public.ts and ./alerts.ts all await it before they will write anything, so
+ * one hung dependency on somebody else's infrastructure stalled every US
+ * booking on the site until the runtime killed the Worker, with whatever the
+ * runtime chooses to say reaching the customer at the moment they are trying to
+ * hand over money. Nothing about that is diagnosable from the outside, and it
+ * is not a state this deployment could do anything about even having spotted
+ * it.
+ *
+ * NO NEW ERROR HANDLING, AND THAT IS CHECKED RATHER THAN HOPED. An abort
+ * surfaces as a rejected fetch, so it lands in exactly the same `catch { return
+ * null }` that already receives a refused connection, a DNS failure or a
+ * malformed body — a timeout is one more way for the Census to be unavailable,
+ * and there is deliberately no branch that makes "slow" mean something
+ * different from "unreachable". A null return is already a fully defined
+ * outcome on every caller: a mobile job with no usable coordinate is refused
+ * with `bad_address` (see placeOrder), and everything else simply goes without
+ * drive-time ranking. Note that it is NOT a fall back to the postal-code
+ * centroid — that branch returns earlier and reaching this one means the table
+ * already missed — so the honest description of a timeout is "the same answer a
+ * Census outage already gave, four seconds in instead of never".
+ *
+ * Four seconds, because this is a single keyless lookup that normally answers
+ * in well under one, and the budget it is spending belongs to a customer
+ * waiting on a checkout screen. Long enough that a merely busy afternoon still
+ * returns the sharper coordinate; short enough that a dead endpoint costs one
+ * slow booking rather than every booking.
+ */
+const GEOCODE_TIMEOUT_MS = 4_000;
+
+/**
  * Geocoding, in cost order.
  *
  *   1. postal_codes table  — offline, free, unlimited, ZIP-centroid accurate.
@@ -204,13 +242,28 @@ export async function geocode(
   //
   // The postcodes.io branch that used to sit here was GB-only and is gone with
   // the rest of the non-US code — it could never be reached again.
+  //
+  // THIS IS A DISCLOSURE, AND IT IS NAMED ON THE PRIVACY PAGE. The street line
+  // and the postcode of a customer's home leave this Worker in a query string
+  // to a United States federal service, on every US booking and every instant
+  // request whose postcode alone is not precise enough. It went unlisted for a
+  // long time because the page's third-party section was read off the
+  // content-security policy, and a CSP governs what the BROWSER fetches — it
+  // has nothing to say about a fetch() made here on the server. Section 5 of
+  // web/src/pages/Privacy.tsx names the Census Bureau for that reason. If this
+  // provider is ever swapped, changed or added to, that section changes in the
+  // same commit.
   try {
     if (iso === 'US' && address && env.GEOCODE_PROVIDER !== 'none') {
       const url = new URL('https://geocoding.geo.census.gov/geocoder/locations/onelineaddress');
       url.searchParams.set('address', [address, postcode].filter(Boolean).join(' '));
       url.searchParams.set('benchmark', 'Public_AR_Current');
       url.searchParams.set('format', 'json');
-      const res = await fetch(url.toString());
+      // See GEOCODE_TIMEOUT_MS. The abort arrives in the catch below as a
+      // rejected fetch, alongside every other way this endpoint can fail.
+      const res = await fetch(url.toString(), {
+        signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS),
+      });
       if (res.ok) {
         const body = (await res.json()) as any;
         const m = body.result?.addressMatches?.[0];

@@ -97,6 +97,37 @@
 
 .acct-rows { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
 
+/* --- narrowing the conversation list ------------------------------------ *
+ * Which business, what was said, and "only the ones waiting on me".
+ *
+ * Drawn only when there is more than one business to choose between, so most
+ * readers never see this bar at all. It wraps rather than scrolling sideways:
+ * at 360px the select takes a line, the search box the next and the button the
+ * one after, which is the order somebody reaches for them in.
+ * ----------------------------------------------------------------------- */
+.acct-msg-filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+}
+.acct-msg-filters select,
+.acct-msg-filters input {
+  min-height: 44px; padding: 0 12px;
+  font: inherit; font-size: 14px;
+  color: var(--ink); background: var(--surface);
+  border: 1px solid var(--control-line); border-radius: var(--r-md);
+}
+.acct-msg-search { flex: 1 1 180px; min-width: 0; }
+.acct-msg-search input { width: 100%; }
+
+/* The pressed look of the unread toggle, taken off the same attribute a screen
+   reader is told it by, so the two cannot drift apart. */
+.acct-msg-filters .btn[aria-pressed="true"] {
+  background: var(--surface-2); color: var(--ink); border-color: var(--line-strong);
+}
+
+/* Full width, because it is the end of a column of full-width rows and a
+   button the width of its own words reads as a link that got lost. */
+.acct-msg-more { width: 100%; }
+
 .acct-row {
   display: flex;
   flex-direction: column;
@@ -118,7 +149,137 @@
 .acct-row-when { font-size: 13.5px; color: var(--ink-3); }
 .acct-row-note { font-size: 13px; color: var(--muted); }
 
+/* --------------------------------------------------------------------------
+ * Where a booking's money is
+ *
+ * Set apart from the rest of the row with a rule rather than a tint, because
+ * this block appears on EVERY booking — paid ones included — and a coloured
+ * panel on every row would turn an ordinary list into a wall of alerts. Only
+ * the rule and the label above it change with the state, which is enough to
+ * pick a refund out of a list at a glance without shouting at somebody whose
+ * bookings are all perfectly normal.
+ *
+ * Not a chip. A chip holds a word; these are sentences, and a sentence squeezed
+ * into a pill is how a screen ends up saying "refund_cents: 24000" instead of
+ * telling somebody their money went back on the 12th.
+ * ----------------------------------------------------------------------- */
+.acct-money {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  padding: 9px 0 0 11px;
+  border-left: 3px solid var(--line-strong);
+}
+
+.acct-money-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.acct-money-says {
+  max-width: 62ch;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+/* Money that has moved, or is about to, is what somebody opened this page to
+   check, so those two carry the accent and everything else stays grey.
+   --accent-ink rather than --accent: the bright one is 4.24:1 on this ground
+   and this label is small. */
+.acct-money-refunded,
+.acct-money-coming { border-left-color: var(--accent-line); }
+.acct-money-refunded .acct-money-label,
+.acct-money-coming .acct-money-label { color: var(--accent-ink); }
+
+/* Held and unpaid are the two the reader has to do something about — answer the
+   question on their booking, or let a charge finish — so they take the warm
+   colour this site uses for a bill rather than a red one for a fault. */
+.acct-money-held,
+.acct-money-unpaid { border-left-color: var(--alert-line); }
+.acct-money-held .acct-money-label,
+.acct-money-unpaid .acct-money-label { color: var(--alert); }
+
 .acct-do { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+/* --------------------------------------------------------------------------
+ * What an account is for, on the signed-out page
+ *
+ * A plain list with no bullet glyph and no tick. A tick is this site's mark
+ * for something that has already happened — the wizard's finish screen, the
+ * arrival marker on a booking — and putting one beside four things that have
+ * NOT happened yet is exactly the sort of borrowed reassurance this product
+ * does not get to use. A rule down the left groups the four instead.
+ *
+ * The padding gives the hanging indent, so a wrapped second line stays under
+ * the first word rather than sliding back under the rule.
+ * ----------------------------------------------------------------------- */
+.acct-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 62ch;
+}
+
+.acct-list li {
+  padding-left: 14px;
+  border-left: 2px solid var(--line);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* The claim in the body ink, so the four of them can be skimmed in a second;
+   the sentence qualifying it stays quieter. That is the whole reason the two
+   halves are marked up separately rather than written as one sentence. */
+.acct-list strong { color: var(--ink); font-weight: 650; }
+
+/* --------------------------------------------------------------------------
+ * A signed-in account with nothing in it
+ *
+ * The most-read screen on this page while nothing has launched, so it is drawn
+ * as a designed panel rather than left as the absence of a list.
+ *
+ * Solid hairline, and specifically NOT the dashed `.acct-seam` treatment
+ * below: dashed is this sheet's mark for a box that has not been built yet,
+ * and this box is built and works. It is empty, which is a fact about the
+ * reader's bookings rather than about the software, and the two must not look
+ * alike on a page that shows both.
+ * ----------------------------------------------------------------------- */
+.acct-none {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.acct-none h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.acct-none p {
+  margin: 0;
+  max-width: 60ch;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.acct-none .acct-do { margin-top: 4px; }
 
 /* The card seam, drawn as what it is: a labelled empty space with the reason
    it is empty inside it. Dashed, because a solid box reads as a control that

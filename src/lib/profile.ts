@@ -11,6 +11,15 @@ import { badRequest, conflict, newId, notFound, now } from './util';
 export interface WorkPhoto {
   id: string;
   operator_id: string;
+  /**
+   * The key of this photograph in the photo store — a Workers KV namespace,
+   * not an R2 bucket, and never an R2 bucket in production. The column is
+   * named `r2_key` in migration 0008_profiles.sql and is deliberately left
+   * that way; ./photostore.ts carries the full reasoning, which comes down to
+   * a NOT NULL column read by name across six modules and in the public JSON
+   * payload the React tree already consumes, on a live deployment taking real
+   * payments, being far too much to rewrite in order to fix a name.
+   */
   r2_key: string;
   caption: string | null;
   width: number | null;
@@ -137,14 +146,58 @@ export interface PhotoInput {
   height?: number | null;
 }
 
-/** Twelve is a portfolio; more is a scroll nobody finishes. Also caps our bucket. */
-export const MAX_PHOTOS = 12;
+/**
+ * Five. Set by the owner on 13 September 2026, down from twelve.
+ *
+ * The old number was an editorial judgement — twelve is a portfolio, more is a
+ * scroll nobody finishes — and that reasoning was sound but it was answering
+ * the smaller question. The number that actually binds is storage. The photo
+ * store is a Workers KV namespace whose free allowance is 1 GB for the WHOLE
+ * ACCOUNT, standing rather than monthly, shared between every business's
+ * portfolio and every photograph taken on every job. When it is full it is
+ * full, and nothing here sits behind a card, so there is no "it just costs a
+ * bit more" ending to that sentence.
+ *
+ * Five photographs at MAX_PHOTO_BYTES is the most any one business can take
+ * out of a gigabyte everybody shares — a little over a fortieth of it in the
+ * worst case, against a tenth before. It also keeps KV's ceiling of 1,000
+ * writes a day out of reach in practice: an operator cannot spend it on a
+ * portfolio that stops at five rows.
+ *
+ * RAISING THIS IS NO LONGER A ONE-LINE CHANGE. PHOTO_MAX_COUNT in
+ * web/src/pages/Profile.tsx must move with it or the form offers a slot the
+ * Worker refuses, and the arithmetic above has to be redone against whatever
+ * the store's allowance is on the day. See ./photostore.ts.
+ */
+export const MAX_PHOTOS = 5;
 
 /** Anything else is either not an image or something a browser will refuse to render. */
 export const ALLOWED_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 
-/** 5 MB. A phone photo straight from the camera fits; a raw file does not. */
-export const MAX_PHOTO_BYTES = 5_000_000;
+/**
+ * 2 MB, down from 5 MB on 13 September 2026. It costs nobody anything.
+ *
+ * THIS NUMBER NEVER DESCRIBED WHAT ACTUALLY ARRIVES. The browser shrinks every
+ * photograph before it is sent — shrinkImage in web/src/lib/image.ts, 1600px
+ * on the long edge at quality 0.82 — and that turns a 9 MB camera file into
+ * roughly 300 KB. Profile.tsx checks the size AFTER shrinking, so the old 5 MB
+ * was not protecting a phone from a failed upload; it was sixteen times the
+ * size of anything a real operator has ever sent.
+ *
+ * What it was really doing was setting the worst case for somebody who does
+ * NOT use the browser form — a script posting straight at the endpoint. Five
+ * photographs at 5 MB is 25 MB of a shared gigabyte from one account. At 2 MB
+ * it is 10 MB, and there is still six times the headroom a shrunk photograph
+ * needs, so a legitimate upload cannot hit it.
+ *
+ * Well under the 25 MiB ceiling Workers KV puts on a single stored value.
+ * putPhoto in ./photostore.ts carries the backstop for that ceiling, in case
+ * this is ever raised by somebody who does not know the store has one.
+ *
+ * The browser's copy is PHOTO_MAX_BYTES in web/src/pages/Profile.tsx and must
+ * move with this one — pinned in test/two-trees.test.ts.
+ */
+export const MAX_PHOTO_BYTES = 2_000_000;
 
 const SLUG_MAX = 60;
 
@@ -512,8 +565,15 @@ export async function addPhoto(
   if (!(ALLOWED_CONTENT_TYPES as readonly string[]).includes(input.content_type)) {
     throw badRequest('Photos have to be a JPEG, PNG or WebP image.', 'bad_content_type');
   }
+  // The number is read off the constant rather than spelled here. It said
+  // "5 MB" while the constant said 5_000_000, which was true right up until
+  // the constant moved, and then it was a refusal naming a limit that was not
+  // the limit — the worst kind, because the person reading it cannot tell.
   if (input.bytes != null && (input.bytes <= 0 || input.bytes > MAX_PHOTO_BYTES)) {
-    throw badRequest('That photo is larger than 5 MB.', 'photo_too_large');
+    throw badRequest(
+      `That photo is larger than ${Math.round(MAX_PHOTO_BYTES / 1_000_000)} MB.`,
+      'photo_too_large',
+    );
   }
 
   const count = await env.DB.prepare(
@@ -561,7 +621,9 @@ export async function addPhoto(
  * operator_id is in the WHERE clause, not checked beforehand: an id guessed or
  * copied from another operator's page deletes nothing at all, and reports the
  * same "not found" a made-up id would, so the caller learns nothing either.
- * Returns the R2 key so the caller can delete the object it was pointing at.
+ * Returns the photo-store key so the caller can delete the bytes it was
+ * pointing at. The column is named `r2_key` and there is no R2 bucket behind
+ * it; see ./photostore.ts.
  */
 export async function deletePhoto(
   env: Env, operatorId: string, photoId: string,

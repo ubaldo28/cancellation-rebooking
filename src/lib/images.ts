@@ -165,6 +165,17 @@ const u32le = (d: Uint8Array, at: number) =>
  * NONE OF THE FOUR promises anything about what is visible in the photograph.
  * A picture of a front door with the number on it is a picture of a front
  * door with the number on it, and no header rewriting changes that.
+ *
+ * THE PRIVACY PAGE SAYS EXACTLY THIS AND NO MORE. Section 2 of
+ * web/src/pages/Privacy.tsx used to say flatly that location metadata is
+ * stripped out of every photograph on the way in, which is true of three of
+ * these four and overstates the fourth — and the fourth is HEIC, which is what
+ * an iPhone produces by default and which is on the job-photo allowlist. The
+ * page now describes the rebuild and the in-place zeroing separately, names
+ * what the HEIC path does not promise, and says that the position itself is
+ * destroyed either way. If this function's guarantees ever change — a
+ * transcode, say, which would make the rebuilt case true of everything — that
+ * section changes with it.
  */
 export function stripImageMetadata(type: ImageType, d: Uint8Array): Uint8Array {
   switch (type) {

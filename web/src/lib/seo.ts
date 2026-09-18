@@ -43,6 +43,67 @@ export const nearTradeHref = (areaSlug: string, trade: string): string =>
   `/near/${encodeURIComponent(areaSlug)}/${tradeSlug(trade)}`;
 
 /**
+ * A TRADE'S TWO PAGES, AND THE ONE SPELLING THEY NOW ANSWER ON.
+ *
+ * THE STORED SLUG IS NOT A URL. `trades.ts` on the Worker keeps the value
+ * already written on live operator rows — 'junk removal', 'mobile car wash and
+ * detailing' — with the spaces in it, and that stored value is what the API
+ * matches on. It is not what the address bar should hold. Every link in this
+ * app used to mint these two paths with `encodeURIComponent(slug)`, which
+ * produced /s/junk%20removal: unreadable in a result, unreadable in a pasted
+ * link, and a different convention from the one /near/<place>/<trade> has
+ * always used.
+ *
+ * The Worker settled it. `canonicalTradeSegment` in src/lib/seo.ts is
+ * `tradeSlug(t.slug)` now and src/index.ts 301s the escaped spelling AT the
+ * hyphenated one rather than away from it. So an `encodeURIComponent` link
+ * from in here is no longer merely ugly — it is a needless round trip through
+ * a redirect and a non-canonical URL sitting in the address bar of anyone who
+ * follows it. These two mint the form the Worker canonicalises to; nothing in
+ * this app should be spelling either path by hand.
+ *
+ * Both take the STORED slug, because that is what the catalogue and the
+ * operator rows carry. Going the other way — URL segment back to stored slug —
+ * is `storedTradeSlug` below.
+ */
+export const tradeHref = (storedSlug: string) => `/s/${tradeSlug(storedSlug)}`;
+export const costHref = (storedSlug: string) => `/cost/${tradeSlug(storedSlug)}`;
+
+/**
+ * The stored slug behind a `/s/:trade` or `/cost/:trade` URL segment.
+ *
+ * The two pages compare the route parameter against `slot.trade`, hand it to
+ * `api.tradeReviews` and look it up in the catalogue — all three of which want
+ * the STORED value, spaces and all. Since the Worker started canonicalising to
+ * the hyphenated form, the parameter usually is not that value, and taking it
+ * at face value is why /s/junk-removal rendered "we do not have this trade" on
+ * a direct load or a click from a search result while in-app navigation, which
+ * happened to pass the stored spelling, kept working.
+ *
+ * So the segment is resolved THROUGH THE CATALOGUE, which is the only thing
+ * either page has that knows the real stored values. Either spelling matches;
+ * anything else falls through unchanged, so an actual typo still reaches the
+ * "not listed" branch rather than being coerced into some trade near it.
+ *
+ * `trades` being null or undefined is the catalogue not having answered yet —
+ * distinct from a catalogue that answered and does not hold this trade. The
+ * segment is returned as-is meanwhile, and callers must key their effects on
+ * the RESULT so that the answer re-fires the lookups when it lands.
+ */
+export function storedTradeSlug(
+  segment: string,
+  trades: readonly { slug: string }[] | null | undefined,
+): string {
+  const seg = (segment ?? '').trim().toLowerCase();
+  if (!trades) return seg;
+  for (const t of trades) {
+    const stored = t.slug.trim().toLowerCase();
+    if (stored === seg || tradeSlug(stored) === seg) return stored;
+  }
+  return seg;
+}
+
+/**
  * A structured-data payload, safe to drop inside <script type="application/ld+json">.
  *
  * HTML-escaping is wrong in there — `&lt;` is not `<` to a JSON parser — so

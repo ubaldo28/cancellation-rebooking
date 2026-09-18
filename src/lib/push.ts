@@ -27,7 +27,8 @@ import type { Env } from '../types';
  * an environment with no VAPID keys still boots, still serves the map, still
  * takes bookings -- alerts just never leave the building. Making them required
  * bindings would take the whole Worker down over a feature nothing else
- * depends on, which is the same call wrangler.toml already makes for R2.
+ * depends on, which is the same call wrangler.toml already makes for the
+ * photo store.
  */
 export interface VapidEnv extends Env {
   /** Base64url, raw uncompressed P-256 point (65 bytes, leading 0x04). */

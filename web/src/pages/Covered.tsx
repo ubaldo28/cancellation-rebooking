@@ -30,12 +30,15 @@ import '../styles-info.css';
  *   src/lib/settlement.ts the hold, the one question, and what silence means.
  *   src/lib/retention.ts  photographs swept 90 days after the job.
  *
- * AND EVERY ONE OF THE MONEY FIGURES IS STILL WAITING ON A SEAM. Nothing in
- * this product charges a card, holds a balance or pays anybody out — see
- * PaymentState.tsx, which carries the one description of that and is rendered
- * at the top of this page. The ladder below is real arithmetic that real code
- * performs; what it cannot yet do is move a penny, and a page reciting refund
- * percentages without saying so is the most misleading page on the site.
+ * AND EVERY ONE OF THE MONEY FIGURES MOVES REAL MONEY. The customer pays the
+ * full listed price by card at the moment they book, Round The Way holds it
+ * until the job is done and then pays the business — see PaymentState.tsx,
+ * which carries the one description of that and is rendered at the top of this
+ * page. The ladder below is arithmetic real code performs on money that has
+ * already left somebody's card, so a rung on it is an amount a reader is about
+ * to lose. For months this file said the opposite, in a paragraph that stayed
+ * put after the switch was thrown; that is why the ladder is stated in the
+ * present tense and never softened.
  *
  * The last section is the one that earns the page. A page that lists what it
  * covers and stops there is read as covering everything it did not mention,
@@ -43,6 +46,34 @@ import '../styles-info.css';
  * moment. So "what this does not do" is a section of the same weight as the
  * rest, and it says the four words nobody wants to write: no guarantee, no
  * insurance, no damage cover, no vetting.
+ *
+ * THE SHAPE IS THE REFERENCE'S AND THE CONTENT IS ITS OPPOSITE. Their page
+ * runs: a band saying they will help, two guarantees with a figure and a
+ * deadline each, numbered steps for claiming, questions, then the eligibility
+ * fine print. Every one of those slots is the right slot — a reader wants to
+ * know what they are getting, then what to do, then the edges of it, in that
+ * order — and the money in three of them does not exist here. So the slots are
+ * kept and filled with the honest answer to the same question:
+ *
+ *   their guarantee band      -> "What a booking is", both halves of it, first
+ *                                screen, before any mechanism is described.
+ *   their claims process      -> "If something goes wrong", which has to be
+ *                                written from the fact that the money is held
+ *                                only between the booking and the job and
+ *                                there is no fund to pay a claim out of, so
+ *                                most of its steps are about the record and
+ *                                the last one is about the routes that are
+ *                                not us.
+ *   their FAQs                -> the questions somebody in trouble actually
+ *                                types, answered without a fund to point at.
+ *   their terms of eligibility -> "The limits on all of this", which is fine
+ *                                print in the sense of being exact, not in the
+ *                                sense of being where the bad news is hidden.
+ *
+ * NOTHING IN THE NEW SECTIONS PROMISES A HUMAN RESPONSE, A TIMESCALE OR AN
+ * OUTCOME. A page telling somebody what to do when a job has gone wrong is
+ * read by somebody angry, and the one thing that would make it worse is a
+ * process that sounds like a claim and settles nothing.
  */
 
 /**
@@ -76,6 +107,81 @@ const LADDER: Array<{ when: string; customer: string; business: string }> = [
   },
 ];
 
+/**
+ * The questions, as an array for the same reason the ladder is one.
+ *
+ * THESE ARE THE QUESTIONS SOMEBODY IN TROUBLE TYPES, not the questions a
+ * marketing page wishes they would ask. The reference's FAQ block is where it
+ * explains its claim windows and its evidence requirements; ours is where the
+ * six most likely versions of "so what happens to me" get an answer that does
+ * not end in a fund. Each answer is a fact from the product or a plain "no".
+ *
+ * DELIBERATELY NOT EMITTED AS FAQPage STRUCTURED DATA. Trade.tsx marks its
+ * questions up because those pages are built to be found by somebody searching
+ * for the trade; this one would be asking a search engine to feature "can you
+ * refund me" against a page whose answer is no, which serves nobody, and the
+ * server does not render this route anyway.
+ */
+const QUESTIONS: Array<{ q: string; a: string }> = [
+  {
+    q: 'The work was bad and the job is finished. Can you get my money back?',
+    a: 'No. Your payment is held between the booking and the job and then goes '
+      + 'to the business, and there is no fund here that buys back work you '
+      + 'are unhappy with and no claims process to open. The refunds this site '
+      + 'makes are the ones on the cancellation ladder above and nothing more. '
+      + 'What this site holds besides is the record — the messages, the '
+      + 'photographs, the times both sides marked — and that record is what is '
+      + 'worth something to their insurer, to the board that licenses them, or '
+      + 'in small claims.',
+  },
+  {
+    q: 'They damaged something. Who pays for it?',
+    a: 'Not Round The Way: there is no damage cover here, of any amount, and no '
+      + 'mechanism in the product that could pay one. It is the business\'s '
+      + 'liability and their insurance is what it is for. Ask them for their '
+      + 'certificate of insurance and claim against it. A policy number typed '
+      + 'onto a profile page is that business telling you about itself and was '
+      + 'never checked by anybody here.',
+  },
+  {
+    q: 'Can a business get a bad review taken down?',
+    a: 'There is no path in this product for the business a review is about '
+      + 'to edit, hide or delete it, and nothing in the product writes the '
+      + 'flag that would hide one from anybody else either. A business can '
+      + 'reply, once, and the reply cannot be edited afterwards. A review can '
+      + 'only come from a booking that actually completed on this site, one '
+      + 'per booking.',
+  },
+  {
+    q: 'How long do I have?',
+    a: 'For the product\'s own clocks: a no-show report can be filed once the '
+      + 'appointment has finished, and the question after a business cancels '
+      + 'closes about three hours after the appointment was due and at the '
+      + 'outside after seven days. For evidence: job photographs and the map '
+      + 'coordinates are deleted ninety days after the job and the '
+      + 'conversation at a hundred and eighty. Nothing outside this site — a '
+      + 'claim, a complaint, a court — runs on our clocks, and those deadlines '
+      + 'are usually much longer.',
+  },
+  {
+    q: 'The business asked me to pay in cash, or to book directly next time. Is that a problem?',
+    a: 'It is your money and your decision, and this is not a rule being '
+      + 'enforced at you. What is worth knowing is what it costs you: a job '
+      + 'arranged off the site has no booking behind it, so it has no held '
+      + 'time, no start code, no photographs, no record of what was agreed and '
+      + 'no review at the end. Every mechanism on this page stops existing. '
+      + 'That is the real reason contact details are stripped out of messages.',
+  },
+  {
+    q: 'Do you check that the business is licensed or insured?',
+    a: 'No. Nothing on this site verifies a licence number against the board '
+      + 'that issued it, and nobody rings an insurer. Where California '
+      + 'licenses a trade, our pages name the board so you can look the number '
+      + 'up yourself, and the Safety page sets out what to ask for and where '
+      + 'to check it.',
+  },
+];
+
 export default function Covered() {
   useDocumentTitle('What is covered, and what is not');
 
@@ -86,7 +192,7 @@ export default function Covered() {
       <header className="info-head">
         <h1>What is covered, and what is not</h1>
         <p className="info-lede">
-          Slotfill is not an insurer and this page is not a guarantee. It is a
+          Round The Way is not an insurer and this page is not a guarantee. It is a
           list of the things the site actually does to make a booking between
           two strangers safer to make — and, at the bottom, a list of the
           things it does not do, which is the half most sites leave out.
@@ -95,9 +201,9 @@ export default function Covered() {
 
       {/* --- money ------------------------------------------------------
           The notice comes before the section rather than inside it, because
-          the heading below and every figure under it are about money changing
-          hands and none of it does yet. A reader who meets the mechanism first
-          and the caveat second has already formed the wrong picture. */}
+          every figure under it is a share of money the reader has already
+          paid, and somebody who meets the percentages before they know they
+          paid anything has formed the wrong picture of both. */}
       <PaymentState />
 
       {/* And what booking asks of the reader, beside what it costs them. This
@@ -106,38 +212,132 @@ export default function Covered() {
           page somebody reads to find out what they are getting into. */}
       <AccountState />
 
-      <section className="info-sec first" aria-labelledby="c-money">
-        <h2 id="c-money">How the money is meant to work</h2>
+      {/* --- what a booking is --------------------------------------------
+          THE SLOT THE REFERENCE FILLS WITH ITS TWO GUARANTEES. Theirs are the
+          first thing under the heading — a figure, a deadline, a promise — for
+          a good reason: it is the question the visitor came with. The question
+          is the same here and the answer is different, so the answer goes in
+          the same place rather than being left to be inferred from six
+          sections of mechanism and one warning at the bottom.
+
+          Both halves are stated together, deliberately. A list of what a
+          booking does, standing alone, is read as a list of everything a
+          booking does. */}
+      <section className="info-sec first" aria-labelledby="c-booking">
+        <h2 id="c-booking">What a booking is</h2>
         <p>
-          The design is that you pay for the labour when you book, on this
-          site: no cash, nothing paid at the door, and the price you agree to
-          is the price the business listed. Card details would be taken by the
-          payment processor's own form and never reach Slotfill's servers —
-          what would be held is the processor's reference, which is not a card
-          number and cannot be used as one. That part is already enforced: a
-          request, a database write or a response carrying something shaped
-          like a card number is refused everywhere in the product, which is why
-          no card can be taken by accident before the rest of it is built.
+          It is an appointment held in one person's diary, and a record of what
+          the two of you agreed. That is a smaller thing than the word
+          "guarantee" on a competitor's page, and it is worth being exact about
+          in both directions.
+        </p>
+
+        <h3>What booking one does</h3>
+        <ul className="info-list">
+          <li>
+            <strong>Holds one specific hour</strong> in the diary of the person
+            who will do the work. Not a request, not a quote, not a lead sent
+            to five businesses to bid on — the time is yours from the moment
+            you take it.
+          </li>
+          <li>
+            <strong>Takes the money and holds it.</strong> You pay the listed
+            price by card as you book. Round The Way holds it until the job is
+            done and then pays the business, which is what makes a refund
+            something already in hand rather than something somebody has to be
+            persuaded to send back.
+          </li>
+          <li>
+            <strong>Fixes the price at the one you were shown.</strong> The
+            business sets it; nothing here marks it up, adds a booking fee or a
+            service charge, or lets the price move afterwards. The only thing
+            that can be added later is a part you approve first.
+          </li>
+          <li>
+            <strong>Puts the two of you on a record neither side owns.</strong>{' '}
+            The vehicle before they arrive, the start code at the door,
+            photographs from both sides, and one conversation kept in one
+            place. If it is ever disputed, that is what it is disputed on.
+          </li>
+          <li>
+            <strong>Applies the same cancellation ladder to both of you.</strong>{' '}
+            The rungs below cost a business exactly what they cost a customer.
+          </li>
+          <li>
+            <strong>Earns you a review the business cannot take down.</strong>{' '}
+            One per completed booking, from the person who paid for it, and
+            there is no path in this product for a business to edit, hide or
+            delete one.
+          </li>
+        </ul>
+
+        <h3>What booking one does not do</h3>
+        <ul className="info-list">
+          <li>
+            <strong>It does not hold the money once the job is done.</strong>{' '}
+            Round The Way holds your payment between the booking and the job and
+            then pays the business. After that there is nothing here to refund
+            from.
+          </li>
+          <li>
+            <strong>It does not put anybody between you and the business if
+            the work is bad.</strong> There is no fund, no adjudicator and no
+            claim to open. What there is is the record above, which is yours to
+            use wherever it is worth using.
+          </li>
+          <li>
+            <strong>It does not mean anybody has been checked.</strong> No
+            background check, no identity check, no licence verified against
+            the board that issued it.
+          </li>
+          <li>
+            <strong>It does not insure you, your home or your car.</strong>
+          </li>
+        </ul>
+
+        <p className="note">
+          That second list is the short version, put here rather than only at
+          the bottom because a page that saves its limits for the end is a page
+          most people never read the limits of.{' '}
+          <a href="#c-not">What this does not do</a> sets out all of them.
+        </p>
+      </section>
+
+      <section className="info-sec" aria-labelledby="c-money">
+        <h2 id="c-money">How the money works</h2>
+        <p>
+          You pay for the labour when you book, on this site: no cash, nothing
+          paid at the door, and the price you agree to is the price the
+          business listed. Nothing is added at checkout. The card goes into the
+          payment processor's own form and never reaches Round The Way's
+          servers — what is held here is the processor's reference, which is
+          not a card number and cannot be used as one. That is enforced rather
+          than promised: a request, a database write or a response carrying
+          something shaped like a card number is refused everywhere in the
+          product.
         </p>
         <p>
-          Slotfill would then hold that money between the booking and the job
-          and pay the business after the work. That is what makes the rest of
-          this page work as written: a refund is money already being held
-          rather than money somebody has to be persuaded to send back. Until it
-          exists, a booking is a held appointment and nothing else, and the
-          price is something you and the business settle between you.
+          Round The Way holds that money between the booking and the job and
+          pays the business after the work. That is what makes the rest of this
+          page work as written: a refund is money already being held rather
+          than money somebody has to be persuaded to send back.
+        </p>
+        <p>
+          What Round The Way takes is 15% of the job, never more than $150 from
+          one business in one day. It comes out of the business's share and is
+          never added to yours, and there is no subscription and nothing
+          charged to either side for using the site.
         </p>
 
         <h3>Parts are quoted and approved before anything is fitted</h3>
         <p>
-          This half runs today. A business says up front which of three things
-          is true of a job: it needs no parts, parts are already inside the
-          price, or the part cannot be known until somebody looks. Only the
-          third one leaves anything open, and there the rule is absolute: the
-          business sends you a price for the part in your messages, and nothing
-          is fitted until you tap approve. A quote stays approvable for three
-          days and then expires by itself. Once payment is switched on, that
-          approval is also what charges you.
+          A business says up front which of three things is true of a job: it
+          needs no parts, parts are already inside the price, or the part
+          cannot be known until somebody looks. Only the third one leaves
+          anything open, and there the rule is absolute: the business sends you
+          a price for the part in your messages, and nothing is fitted until
+          you tap approve. A quote stays approvable for three days and then
+          expires by itself. Tapping approve is also what charges you for it.
         </p>
         <p className="note">
           There is no path in this product for charging a customer an amount
@@ -208,18 +408,16 @@ export default function Covered() {
       <section className="info-sec" aria-labelledby="c-cancel">
         <h2 id="c-cancel">If somebody cancels</h2>
         <p>
-          One ladder, both directions. What it would cost a business to cancel
-          on you is what it would cost you to cancel on them, and the windows
-          are the same. Everything is measured from when the appointment
-          starts.
+          One ladder, both directions. What it costs a business to cancel on
+          you is what it costs you to cancel on them, and the windows are the
+          same. Everything is measured from when the appointment starts.
         </p>
         <p className="note">
-          Every figure in this section is an amount the code already works out
-          and nothing yet moves. Until payment is switched on there is nothing
-          held to refund and no fee is collected from anybody, so cancelling —
-          from either side, at any point on this ladder — costs nothing today.
-          The rung you are on is what the notice at the top of your booking
-          will show you either way.
+          Every figure in this section is money. You paid the full price by
+          card when you booked, so a rung on this ladder is what you get back
+          and what you do not — inside 12 hours that is a quarter of what you
+          paid. The rung you are on is what the notice at the top of your
+          booking shows you before you confirm, either way.
         </p>
 
         {/* The table scrolls inside its own box rather than making the page
@@ -267,7 +465,7 @@ export default function Covered() {
           <li>
             <strong>When the business cancels, you are refunded in full.</strong>{' '}
             Always, whatever they owe. What they owe is between them and
-            Slotfill and never comes out of your refund.
+            Round The Way and never comes out of your refund.
           </li>
           <li>
             <strong>The fee a business owes has a floor of $15 and a ceiling
@@ -283,9 +481,8 @@ export default function Covered() {
 
         <h3>The one question after a cancellation</h3>
         <p>
-          The question itself is asked today; what it settles is the money, so
-          that half waits with the rest. When a business cancels, the money
-          freezes on both sides and you are asked one thing: did they do the
+          When a business cancels, the money freezes on both sides and you are
+          asked one thing: did they do the
           work anyway? If you say they left, your refund goes through and the
           fee applies. If you say they did the job, nobody is refunded, the
           business is paid as though the job completed, and the fee is dropped.
@@ -323,6 +520,118 @@ export default function Covered() {
         </p>
       </section>
 
+      {/* --- when it goes wrong -------------------------------------------
+          THE REFERENCE'S CLAIMS PROCESS, WHICH IS THE HARDEST SLOT ON THE PAGE
+          TO FILL HONESTLY. Theirs is four steps ending in a payment: get it in
+          writing, tell us inside the window, send proof that you hired them,
+          and they assess it. Ours cannot end in a payment: the money is held
+          only between the booking and the job, and once the work is done it
+          has gone to the business and there is no fund to pay a claim out of —
+          so writing four steps in that shape would be describing a claims
+          process that resolves nothing, which is worse than describing none.
+
+          What it ends in instead is the truthful thing: a record, and the list
+          of places where a record is worth something. Steps one to three are
+          the ones that decide whether anybody can ever tell what happened, and
+          they are the steps that stop being possible if you leave them a
+          month; step five is the only part of this page with any actual force
+          behind it, and none of that force is ours. Saying so is the point. */}
+      <section className="info-sec" aria-labelledby="c-wrong">
+        <h2 id="c-wrong">If something goes wrong</h2>
+        <p>
+          In order, and the order matters — the first three are about making
+          sure it is still possible to tell what happened, and they get harder
+          every day you leave them.
+        </p>
+
+        <ol className="info-steps">
+          <li>
+            <h3>Say it in the booking, not on the phone</h3>
+            <p>
+              The booking's own conversation is the record, it is timestamped,
+              and neither of you can edit it afterwards. A call is not a
+              record, and an argument settled by two people's memory of a phone
+              call is not settled. Write what happened while it is fresh, even
+              if you also ring them.
+            </p>
+          </li>
+          <li>
+            <h3>Photograph it today</h3>
+            <p>
+              Both sides can add photographs to a booking, before, during and
+              after. Take them now: the whole set is deleted ninety days after
+              the job, so the evidence has a clock on it whether or not the
+              argument does.
+            </p>
+          </li>
+          <li>
+            <h3>Use the buttons that exist for it</h3>
+            <p>
+              A cancellation is a cancellation, and the ladder above decides it
+              from the time it happens. Somebody not turning up at all is a
+              report, once per booking, from either side. Neither is a message
+              asking somebody to look into it — they are the two events this
+              product can actually act on.
+            </p>
+          </li>
+          <li>
+            <h3>Tell us, knowing what that can and cannot do</h3>
+            <p>
+              A person here reads it. What that can do: uphold a no-show report
+              and suspend an account on the three, seven and thirty day ladder,
+              take a listing down, close an account to new bookings, and settle
+              the one question asked after a business cancels. What it cannot
+              do is refund you outside the ladder above, because the ladder is
+              the whole of the refund rules and the money goes to the business
+              once the job is done; pay for damage, because there is no cover
+              behind it; or make anybody come back and finish a job.
+            </p>
+            <p className="note">
+              There is no promised response time for this, here or anywhere
+              else on the site, and no case number to quote at anybody.
+            </p>
+          </li>
+          <li>
+            <h3>Then use the routes that do have teeth</h3>
+            <p>
+              These are the ones that can actually cost the business something,
+              and none of them is us. The record from steps one and two is what
+              you take to them.
+            </p>
+            <ul className="info-list">
+              <li>
+                <strong>Their insurer.</strong> If a business listed an insurer
+                and a policy number on its profile, that is the policy damage
+                would be claimed against — by you, against them, in the
+                ordinary way. Ask them for the certificate. Nothing here
+                verified it and it is not cover arranged through us.
+              </li>
+              <li>
+                <strong>The board that licenses the trade.</strong> Where
+                California licenses the work, that board takes consumer
+                complaints and it is the same board that can act on the
+                licence.{' '}
+                <Link to="/safety">Safety</Link> names the board for each trade
+                and where to look a licence up.
+              </li>
+              <li>
+                <strong>Your bank, if you paid the business anything
+                directly.</strong> Money that went to the business rather than
+                through this site is between you, them and your card issuer,
+                and a chargeback is that issuer's process rather than ours. We
+                have no visibility of it and cannot start, stop or evidence
+                one.
+              </li>
+              <li>
+                <strong>Small claims.</strong> California's small claims court
+                is built for disputes this size and does not need a lawyer. The
+                court's own site sets out the current limit and how to file.
+              </li>
+            </ul>
+          </li>
+        </ol>
+      </section>
+
       {/* --- what this is not -------------------------------------------- */}
       <section className="info-sec" aria-labelledby="c-not">
         <h2 id="c-not">What this does not do</h2>
@@ -343,7 +652,7 @@ export default function Covered() {
             </li>
             <li>
               <strong>There is no cover for damage to your property.</strong>{' '}
-              Slotfill does not pay for a scratched car, a cracked tile or a
+              Round The Way does not pay for a scratched car, a cracked tile or a
               flooded floor, and there is no mechanism in the product that
               could. That is between you and the business, and it is what the
               business's own insurance is for.
@@ -367,7 +676,8 @@ export default function Covered() {
               <strong>We do not vet the people who sign up.</strong> There is
               no interview, no reference check and no identity check. A
               business gives an email address, a business name, a vehicle and a
-              card before its openings go up, and that is the whole of it.
+              bank account to be paid into before its openings go up, and that
+              is the whole of it.
             </li>
             <li>
               <strong>We do not promise a response time.</strong> Not for a
@@ -385,6 +695,73 @@ export default function Covered() {
             </li>
           </ul>
         </div>
+      </section>
+
+      {/* --- questions ---------------------------------------------------
+          <details> rather than a scripted accordion, for the reasons Help.tsx
+          gives where the same markup first appeared: it opens with JavaScript
+          off, browser find-in-page reaches inside it in most engines, and the
+          disclosure semantics come free instead of being rebuilt out of
+          aria-expanded. */}
+      <section className="info-sec" aria-labelledby="c-qs">
+        <h2 id="c-qs">Questions</h2>
+        <div className="info-qs">
+          {QUESTIONS.map((item) => (
+            <details className="info-q" key={item.q}>
+              <summary>{item.q}</summary>
+              <p className="info-a">{item.a}</p>
+            </details>
+          ))}
+        </div>
+      </section>
+
+      {/* --- the edges ----------------------------------------------------
+          THE REFERENCE ENDS ON EIGHT NUMBERED CONDITIONS OF ELIGIBILITY, and
+          the shape is worth keeping even though we have nothing to be eligible
+          for: a page of general statements needs one place that says exactly
+          where each of them stops. The difference is what fine print is FOR
+          here. Theirs narrows a promise. This narrows a description, and every
+          line of it is something the reader would rather know now. */}
+      <section className="info-sec" aria-labelledby="c-limits">
+        <h2 id="c-limits">The limits on all of this</h2>
+        <ol className="info-list">
+          <li>
+            Everything on this page applies to a booking made on this site and
+            to nothing else. A job arranged in a phone call, a text or cash at
+            the door has no booking behind it and none of these mechanisms
+            exist for it.
+          </li>
+          <li>
+            Every window is measured from the moment the appointment is due to
+            start, not from when it was booked and not from when anybody
+            noticed.
+          </li>
+          <li>
+            Every percentage on this page is worked out on the price of the job
+            you paid when you booked. Parts you approved are outside all of it.
+          </li>
+          <li>
+            The evidence expires before most disputes do: photographs and map
+            coordinates at ninety days after the job, the conversation at a
+            hundred and eighty. Save anything you may need before then.
+          </li>
+          <li>
+            A no-show report and the suspension that can follow it are filed by
+            a person and upheld by a person. Nothing on that ladder is
+            automatic, and nothing about it is promised to happen within any
+            particular time.
+          </li>
+          <li>
+            Suspensions and unpaid fees never touch work already in a diary.
+            Those customers keep their appointments.
+          </li>
+          <li>
+            This page describes how the product behaves. It is not legal
+            advice, and — as <Link to="/terms">Terms</Link> says in its own
+            words — nothing here attempts to waive anybody's rights or take
+            away a right the law gives you.
+          </li>
+        </ol>
       </section>
 
       <footer className="info-foot">

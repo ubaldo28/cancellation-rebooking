@@ -1,9 +1,10 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { ALL_MIGRATIONS, makeEnv } from './d1';
+import { captureBulkEmail, makeReachable } from './reachable';
 import type { Env, Operator } from '../src/types';
 import { detectGaps } from '../src/lib/gaps';
 import { lateLabel, rankCandidates, type GapRow } from '../src/lib/rank';
-import { acceptOffer, createOffers } from '../src/lib/offers';
+import { acceptOffer, createOffers, offerStopToken, stopOffersByToken } from '../src/lib/offers';
 import { fromLocal, toLocal, localDayStart } from '../src/lib/tz';
 import { pickLang, STOP_WORDS, START_WORDS } from '../src/lib/messages';
 import { buildMessage } from '../src/lib/offers';
@@ -74,24 +75,46 @@ async function addAppt(startS: number, endS: number, lat: number, lng: number, c
   return id;
 }
 
+/**
+ * A customer this platform introduced, exactly as the booking paths write one.
+ *
+ * NO PHONE NUMBER AND NO CONSENT FLAG, which is the whole point and not a
+ * shortcut in the fixture: clientWrite in src/lib/orders.ts and the identical
+ * insert in src/lib/public.ts spell out `phone_e164 NULL, email NULL,
+ * sms_consent 0` on purpose, because no contact details are exchanged here.
+ * These fixtures used to set a number and tick consent, which meant every
+ * ranking test in this file was describing a customer the product does not
+ * create — and the two queries under test happily returned them while
+ * returning nobody at all on the live site.
+ *
+ * `reachable: false` writes the row and stops there: a client with no
+ * conversation and no account behind them, which is what an operator's own
+ * imported client looks like and is now the honest definition of somebody this
+ * deployment cannot offer anything to.
+ */
 async function addClient(o: {
-  id: string; name: string; phone: string; lat?: number; lng?: number;
-  dueDaysAgo?: number; consent?: boolean; service?: string; noShows?: number;
+  id: string; name: string; lat?: number; lng?: number;
+  dueDaysAgo?: number; reachable?: boolean; email?: string;
+  service?: string; noShows?: number;
 }) {
   const t = now();
   await env.DB.prepare(
-    `INSERT INTO clients (id,operator_id,first_name,phone_e164,lat,lng,geocode_status,
+    `INSERT INTO clients (id,operator_id,first_name,phone_e164,email,lat,lng,geocode_status,
        default_service_id,last_serviced_at,next_due_at,no_show_count,sms_consent,sms_consent_at,
-       created_at,updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       acquired,platform_introduced,created_at,updated_at)
+     VALUES (?,?,?,NULL,NULL,?,?,?,?,?,?,?,0,NULL,'public',1,?,?)`,
   ).bind(
-    o.id, op.id, o.name, o.phone, o.lat ?? null, o.lng ?? null,
+    o.id, op.id, o.name, o.lat ?? null, o.lng ?? null,
     o.lat != null ? 'ok' : 'failed',
     o.service ?? 'sv_detail', null,
     o.dueDaysAgo != null ? now() - o.dueDaysAgo * 86400 : null,
-    o.noShows ?? 0,
-    o.consent === false ? 0 : 1, o.consent === false ? null : t, t, t,
+    o.noShows ?? 0, t, t,
   ).run();
+
+  if (o.reachable === false) return null;
+  return makeReachable(env, {
+    operator_id: op.id, client_id: o.id, guest_name: o.name, email: o.email, at: t,
+  });
 }
 
 async function openGap(): Promise<GapRow> {
@@ -207,8 +230,8 @@ describe('candidate ranking', () => {
     const nine = futureLocal(9);
     await addAppt(nine, nine + 3600, 34.0522, -118.2437);
     await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
-    await addClient({ id: 'near', name: 'Nina', phone: '+18185550001', lat: 34.0538, lng: -118.2408, dueDaysAgo: 10 });
-    await addClient({ id: 'far', name: 'Fred', phone: '+18185550002', lat: 34.2448, lng: -118.4482, dueDaysAgo: 40 });
+    await addClient({ id: 'near', name: 'Nina', lat: 34.0538, lng: -118.2408, dueDaysAgo: 10 });
+    await addClient({ id: 'far', name: 'Fred', lat: 34.2448, lng: -118.4482, dueDaysAgo: 40 });
 
     await detectGaps(env, op, nine, 1);
     const gap = await openGap();
@@ -221,32 +244,108 @@ describe('candidate ranking', () => {
     if (fred) expect(fred.score).toBeLessThan(ranked[0]!.score);
   });
 
-  it('excludes clients without consent, opted out, or already booked', async () => {
+  /**
+   * THE TEST THAT WOULD HAVE CAUGHT THE WHOLE THING.
+   *
+   * A customer who booked through this site has no phone number and no SMS
+   * consent on their row, by design, and every one of them was therefore
+   * excluded by the old queries — which is to say the feature returned nobody
+   * on a live marketplace and the dashboard told the operator their clients
+   * needed mobile numbers they are never allowed to hold.
+   */
+  it('offers the platform-introduced customer who has no phone at all', async () => {
+    const nine = futureLocal(9);
+    await addAppt(nine, nine + 3600, 34.0522, -118.2437);
+    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
+    const made = await addClient({
+      id: 'rosa', name: 'Rosa', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5,
+    });
+
+    const stored = await env.DB.prepare(
+      `SELECT phone_e164, sms_consent FROM clients WHERE id='rosa'`,
+    ).first<{ phone_e164: string | null; sms_consent: number }>();
+    expect(stored!.phone_e164).toBeNull();
+    expect(stored!.sms_consent).toBe(0);
+
+    await detectGaps(env, op, nine, 1);
+    const ranked = await rankCandidates(env, op, await openGap());
+    const rosa = ranked.find((c) => c.client_id === 'rosa');
+    expect(rosa).toBeTruthy();
+    // The conversation is on the candidate, because it is what makes them one.
+    expect(rosa!.thread_id).toBe(made!.thread_id);
+    // And no contact detail travels with them. A number the operator never
+    // holds cannot be in a payload their browser receives.
+    expect(Object.keys(rosa!)).not.toContain('phone_e164');
+    expect(JSON.stringify(rosa)).not.toContain(made!.email);
+  });
+
+  it('excludes the unreachable, the opted out, and the already booked', async () => {
     const nine = futureLocal(9);
     await addAppt(nine, nine + 3600, 34.0522, -118.2437);
     await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
 
-    await addClient({ id: 'ok', name: 'Ok', phone: '+18185550010', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5 });
-    await addClient({ id: 'noconsent', name: 'No', phone: '+18185550011', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5, consent: false });
-    await addClient({ id: 'optout', name: 'Out', phone: '+18185550012', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5 });
+    await addClient({ id: 'ok', name: 'Ok', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5 });
+    // The operator's own imported client: a row on their list with no
+    // conversation and no account behind it. Nothing this deployment can send
+    // reaches them, so they are not offered anything.
+    await addClient({
+      id: 'noreach', name: 'No', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5,
+      reachable: false,
+    });
+    // Booked here, but the conversation is closed: an offer posted into it
+    // would be a message into a room with the door shut.
+    await addClient({ id: 'shut', name: 'Shut', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5 });
+    await env.DB.prepare(`UPDATE threads SET status='closed' WHERE client_id='shut'`).run();
+    // Booked here, but never proved the mailbox, so there is nowhere to send
+    // the nudge and no way for them to press stop.
+    await addClient({ id: 'unproved', name: 'Un', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5 });
+    await env.DB.prepare(
+      `UPDATE customer_accounts SET email_verified_at=NULL WHERE login_email='unproved@example.test'`,
+    ).run();
+    await addClient({ id: 'optout', name: 'Out', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5 });
     await env.DB.prepare(`UPDATE clients SET opted_out_at=? WHERE id='optout'`).bind(now()).run();
-    await addClient({ id: 'booked', name: 'Booked', phone: '+18185550013', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5 });
+    await addClient({ id: 'booked', name: 'Booked', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5 });
     await addAppt(nine + 30 * 86400, nine + 30 * 86400 + 3600, 34.0538, -118.2408, 'booked');
 
     await detectGaps(env, op, nine, 1);
     const ranked = await rankCandidates(env, op, await openGap());
     const ids = ranked.map((c) => c.client_id);
     expect(ids).toContain('ok');
-    expect(ids).not.toContain('noconsent');
+    expect(ids).not.toContain('noreach');
+    expect(ids).not.toContain('shut');
+    expect(ids).not.toContain('unproved');
     expect(ids).not.toContain('optout');
     expect(ids).not.toContain('booked');
+  });
+
+  /**
+   * One person, four bookings, four client rows — because placeOrder mints a
+   * fresh one per basket and never looks for an existing row. Keyed on the
+   * client row this would put the same person on the screen four times and
+   * send them four offers for one hour, each with its own accept link racing
+   * the others.
+   */
+  it('counts a repeat customer once, however many client rows they have', async () => {
+    const nine = futureLocal(9);
+    await addAppt(nine, nine + 3600, 34.0522, -118.2437);
+    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
+    for (const id of ['visit1', 'visit2', 'visit3']) {
+      await addClient({
+        id, name: 'Dee', lat: 34.0538, lng: -118.2408, dueDaysAgo: 5,
+        email: 'dee@example.test',
+      });
+    }
+
+    await detectGaps(env, op, nine, 1);
+    const ranked = await rankCandidates(env, op, await openGap());
+    expect(ranked.filter((c) => c.first_name === 'Dee')).toHaveLength(1);
   });
 
   it('drops candidates whose job plus travel will not fit the gap', async () => {
     const nine = futureLocal(9);
     await addAppt(nine, nine + 3600, 34.0522, -118.2437);
     await addAppt(nine + 3600 + 900 + 5400 + 900, nine + 3600 + 900 + 5400 + 1800, 34.0522, -118.2437);
-    await addClient({ id: 'toolong', name: 'Long', phone: '+18185550020', lat: 34.0522, lng: -118.2437, dueDaysAgo: 5 });
+    await addClient({ id: 'toolong', name: 'Long', lat: 34.0522, lng: -118.2437, dueDaysAgo: 5 });
     await detectGaps(env, op, nine, 1);
     const gap = await openGap();
     const ranked = await rankCandidates(env, op, gap);
@@ -258,7 +357,7 @@ describe('candidate ranking', () => {
     const nine = futureLocal(9);
     await addAppt(nine, nine + 3600, 34.0522, -118.2437);
     await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
-    await addClient({ id: 'lead_client', name: 'Priya', phone: '+18185550030', lat: 34.0538, lng: -118.2408 });
+    await addClient({ id: 'lead_client', name: 'Priya', lat: 34.0538, lng: -118.2408 });
 
     await env.DB.prepare(
       `INSERT INTO job_leads (id,operator_id,client_id,service_id,title,quoted_price_cents,
@@ -277,7 +376,7 @@ describe('candidate ranking', () => {
     const nine = futureLocal(9);
     await addAppt(nine, nine + 3600, 34.0522, -118.2437);
     await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
-    await addClient({ id: 'lc', name: 'Sam', phone: '+18185550031', lat: 34.0538, lng: -118.2408 });
+    await addClient({ id: 'lc', name: 'Sam', lat: 34.0538, lng: -118.2408 });
     await env.DB.prepare(
       `INSERT INTO job_leads (id,operator_id,client_id,service_id,title,estimated_duration_seconds,
          parts_required,parts_ready,urgency,status,created_at,updated_at)
@@ -294,8 +393,8 @@ describe('candidate ranking', () => {
     const nine = futureLocal(9);
     await addAppt(nine, nine + 3600, 34.0522, -118.2437);
     await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
-    await addClient({ id: 'a', name: 'A', phone: '+18185550040', lat: 34.0538, lng: -118.2408, dueDaysAgo: 2 });
-    await addClient({ id: 'b', name: 'B', phone: '+18185550041', lat: 37.7749, lng: -122.4194, dueDaysAgo: 60 });
+    await addClient({ id: 'a', name: 'A', lat: 34.0538, lng: -118.2408, dueDaysAgo: 2 });
+    await addClient({ id: 'b', name: 'B', lat: 37.7749, lng: -122.4194, dueDaysAgo: 60 });
 
     await detectGaps(env, op, nine, 1);
     const gap = await openGap();
@@ -313,30 +412,100 @@ describe('offer lifecycle', () => {
     const nine = futureLocal(9);
     await addAppt(nine, nine + 3600, 34.0522, -118.2437);
     await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
+    const made = [];
     for (let i = 0; i < count; i++) {
-      await addClient({
-        id: `c${i}`, name: `C${i}`, phone: `+1818555010${i}`,
+      made.push(await addClient({
+        id: `c${i}`, name: `C${i}`,
         lat: 34.0538 + i * 0.001, lng: -118.2408, dueDaysAgo: 10 - i,
-      });
+      }));
     }
     await detectGaps(env, op, nine, 1);
     const gap = await openGap();
     const ranked = await rankCandidates(env, op, gap);
-    const offers = await createOffers(env, op, gap, ranked.slice(0, count));
-    return { gap, offers };
+    const { result: offers, sent } = await captureBulkEmail(
+      env, () => createOffers(env, op, gap, ranked.slice(0, count)));
+    return { gap, offers, sent, made };
   }
 
-  it('creates offers, marks the gap offering, and logs a message each', async () => {
-    const { gap, offers } = await setupOffers(2);
+  /**
+   * THE DELIVERY, WHICH IS THE PART THAT DID NOT EXIST.
+   *
+   * Every offer this feature had ever written said 'sent' and nothing had been
+   * sent: the Worker built an `sms:` link out of a phone number that is never
+   * stored for a platform customer, handed it to the operator's browser, and
+   * logged a row in `messages` — the SMS pipeline's billing table — as the
+   * record. What is checked here is that the offer is now a real message in
+   * the customer's own conversation, that the SMS table is untouched, and that
+   * the nudge left through the BULK lane rather than the one the sign-in links
+   * depend on.
+   */
+  it('lands each offer in that customer conversation and emails about it', async () => {
+    const { gap, offers, sent, made } = await setupOffers(2);
     expect(offers.length).toBe(2);
-    expect(offers[0]!.send.ios).toMatch(/^sms:\+1/);
-    expect(offers[0]!.message).toContain('Reply STOP');
     expect(offers[0]!.url).toContain('/o/');
+    expect(offers[0]!.message).not.toMatch(/STOP/i);
+
+    // The message is in the thread that belongs to that client row, from the
+    // operator's side, and the customer has an unread waiting.
+    for (const o of offers) {
+      const mine = made.find((m) => m!.thread_id === o.thread_id)!;
+      expect(mine).toBeTruthy();
+      const msg = await env.DB.prepare(
+        `SELECT sender, body FROM chat_messages WHERE thread_id = ?`,
+      ).bind(o.thread_id).first<{ sender: string; body: string }>();
+      expect(msg!.sender).toBe('operator');
+      expect(msg!.body).toBe(o.message);
+      expect(msg!.body).toContain(o.url);
+      const th = await env.DB.prepare(
+        `SELECT guest_unread FROM threads WHERE id = ?`,
+      ).bind(o.thread_id).first<{ guest_unread: number }>();
+      expect(th!.guest_unread).toBe(1);
+    }
+
+    // Nothing at all in the SMS table. A row there is a message somebody was
+    // charged to send, and none was.
+    const msgs = await env.DB.prepare(`SELECT COUNT(*) AS n FROM messages`).first<{ n: number }>();
+    expect(msgs!.n).toBe(0);
+
+    // One email each, to the address on their account, carrying the offer link
+    // and a way to stop being offered things.
+    expect(sent.map((s) => s.to).sort()).toEqual(made.map((m) => m!.email).sort());
+    for (const o of offers) {
+      const mine = sent.find((s) => s.text.includes(o.url))!;
+      expect(mine).toBeTruthy();
+      expect(mine.text).toContain('/a/stop-offers/');
+      expect(offers.every((x) => x.emailed)).toBe(true);
+    }
 
     const g = await env.DB.prepare(`SELECT status FROM gaps WHERE id=?`).bind(gap.id).first<any>();
     expect(g.status).toBe('offering');
-    const msgs = await env.DB.prepare(`SELECT COUNT(*) AS n FROM messages`).first<{ n: number }>();
-    expect(msgs!.n).toBe(2);
+  });
+
+  /**
+   * The nudge is a nudge. It is sent after the transaction and cannot be part
+   * of one, so a provider that refuses must not unmake an offer that is
+   * already sitting in somebody's conversation — but the operator is told,
+   * rather than shown a screen that says an email went when none did.
+   */
+  it('keeps the offer when the email is refused, and says so', async () => {
+    const nine = futureLocal(9);
+    await addAppt(nine, nine + 3600, 34.0522, -118.2437);
+    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
+    await addClient({ id: 'c0', name: 'C0', lat: 34.0538, lng: -118.2408, dueDaysAgo: 10 });
+    await detectGaps(env, op, nine, 1);
+    const gap = await openGap();
+    const ranked = await rankCandidates(env, op, gap);
+
+    // No provider named at all, which is what this deployment looks like until
+    // somebody sets BULK_EMAIL_PROVIDER.
+    const offers = await createOffers(env, op, gap, ranked.slice(0, 1));
+    expect(offers).toHaveLength(1);
+    expect(offers[0]!.emailed).toBe(false);
+
+    const msg = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM chat_messages WHERE thread_id = ?`,
+    ).bind(offers[0]!.thread_id).first<{ n: number }>();
+    expect(msg!.n).toBe(1);
   });
 
   it('stores only the hash of the offer token', async () => {
@@ -409,6 +578,73 @@ describe('offer lifecycle', () => {
   });
 });
 
+/**
+ * THE WAY OUT, which sms_consent used to be and which had to be replaced along
+ * with it. A customer who is offered spare hours has to be able to stop being
+ * offered them, and the only place that can happen now is the link at the
+ * bottom of the email — there is no keyword to reply to and no carrier to
+ * honour one.
+ */
+describe('stopping the offers', () => {
+  beforeEach(async () => { await seed(); });
+
+  async function offerOnce() {
+    const nine = futureLocal(9);
+    await addAppt(nine, nine + 3600, 34.0522, -118.2437);
+    await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
+    await addClient({ id: 'c0', name: 'C0', lat: 34.0538, lng: -118.2408, dueDaysAgo: 10 });
+    await detectGaps(env, op, nine, 1);
+    const gap = await openGap();
+    const ranked = await rankCandidates(env, op, gap);
+    const { sent } = await captureBulkEmail(
+      env, () => createOffers(env, op, gap, ranked.slice(0, 1)));
+    return { gap, sent };
+  }
+
+  it('takes them out of the ranking from the link in the email', async () => {
+    const { sent } = await offerOnce();
+    const link = /\/a\/stop-offers\/(\S+)/.exec(sent[0]!.text)?.[1];
+    expect(link).toBeTruthy();
+
+    expect(await stopOffersByToken(env, link!)).toBe(true);
+    const row = await env.DB.prepare(
+      `SELECT opted_out_at FROM clients WHERE id='c0'`,
+    ).first<{ opted_out_at: number | null }>();
+    expect(row!.opted_out_at).not.toBeNull();
+
+    // Past the cooldown they would be a candidate again; opted out they never
+    // are, which is the whole job of the link.
+    await env.DB.prepare(`UPDATE clients SET last_offered_at=NULL WHERE id='c0'`).run();
+    const ranked = await rankCandidates(env, op, await openGap());
+    expect(ranked.map((c) => c.client_id)).not.toContain('c0');
+  });
+
+  it('refuses a token that was not derived from the pepper', async () => {
+    await offerOnce();
+    // The client id on its own, a digest of the wrong thing, and rubbish.
+    expect(await stopOffersByToken(env, 'c0')).toBe(false);
+    expect(await stopOffersByToken(env, `c0.${'a'.repeat(64)}`)).toBe(false);
+    expect(await stopOffersByToken(env, '')).toBe(false);
+    expect(await stopOffersByToken(env, '.')).toBe(false);
+
+    const row = await env.DB.prepare(
+      `SELECT opted_out_at FROM clients WHERE id='c0'`,
+    ).first<{ opted_out_at: number | null }>();
+    expect(row!.opted_out_at).toBeNull();
+  });
+
+  it('stores nothing that could be turned back into a stop link', async () => {
+    await offerOnce();
+    const token = await offerStopToken(env, 'c0');
+    const dump = JSON.stringify(
+      (await env.DB.prepare(`SELECT * FROM clients WHERE id='c0'`).first<any>()));
+    // The link is worked out from the row and the pepper, exactly like the
+    // watch unsubscribe in lib/alerts.ts, so a read-only copy of this table is
+    // not a working set of them.
+    expect(dump).not.toContain(token.split('.')[1]);
+  });
+});
+
 describe('timezone handling', () => {
   it('keeps 09:00 local at 09:00 across a DST boundary', () => {
     // 2027-03-14 is the US spring-forward date.
@@ -471,9 +707,11 @@ describe('late labels are measured from the due date, not the last visit', () =>
     await addAppt(nine + 6 * 3600, nine + 7 * 3600, 34.0548, -118.2378);
     // No default_service_id, so no cadence, so no due date.
     await env.DB.prepare(
-      `INSERT INTO clients (id,operator_id,first_name,phone_e164,lat,lng,sms_consent,sms_consent_at,created_at,updated_at)
-       VALUES ('nocad',?,'Owen','+18185550500',34.0538,-118.2408,1,?,?,?)`,
-    ).bind(op.id, now(), now(), now()).run();
+      `INSERT INTO clients (id,operator_id,first_name,phone_e164,lat,lng,
+         acquired,platform_introduced,created_at,updated_at)
+       VALUES ('nocad',?,'Owen',NULL,34.0538,-118.2408,'public',1,?,?)`,
+    ).bind(op.id, now(), now()).run();
+    await makeReachable(env, { operator_id: op.id, client_id: 'nocad', guest_name: 'Owen' });
     await detectGaps(env, op, nine, 1);
     const ranked = await rankCandidates(env, op, await openGap());
     const owen = ranked.find((c) => c.client_id === 'nocad');
@@ -484,7 +722,7 @@ describe('late labels are measured from the due date, not the last visit', () =>
   });
 });
 
-describe('the customer is texted in their own language, not the country default', () => {
+describe('the customer is written to in their own language, not the country default', () => {
   it('picks the client language over the operator language', () => {
     expect(pickLang('es', 'en')).toBe('es');
     expect(pickLang(null, 'en')).toBe('en');
@@ -492,7 +730,7 @@ describe('the customer is texted in their own language, not the country default'
     expect(pickLang('fr', 'en')).toBe('en');   // unsupported falls back, never guesses
   });
 
-  it('writes a Spanish SMS for a Spanish-speaking client of an English operator', () => {
+  it('writes a Spanish offer for a Spanish-speaking client of an English operator', () => {
     const op: any = {
       business_name: 'Ash Detailing', timezone: 'America/Phoenix',
       country: 'US', currency: 'USD', language: 'en', discount_percent: 0,
@@ -506,12 +744,19 @@ describe('the customer is texted in their own language, not the country default'
     const es = buildMessage(op, { ...base, language: 'es' } as any, gap, 'https://x.test/o/a');
     expect(es).toContain('Hola Rosa');
     expect(es).toContain('Se me desocupó un horario');
-    expect(es).toContain('PARE');
-    expect(es).not.toContain('Reply STOP to opt out.');
+    expect(es).toContain('https://x.test/o/a');
 
     const en = buildMessage(op, { ...base, first_name: 'Dan', language: null } as any, gap, 'https://x.test/o/b');
     expect(en).toContain('Hi Dan');
-    expect(en).toContain('Reply STOP');
+    expect(en).toContain('https://x.test/o/b');
+
+    // NEITHER OF THEM MENTIONS A TEXT MESSAGE OR A KEYWORD. This lands in a
+    // chat bubble and in an inbox; "Reply STOP" there is an instruction to a
+    // carrier that never sees it, which is worse than saying nothing because
+    // somebody will try it and believe they have opted out.
+    for (const line of [es, en]) {
+      expect(line).not.toMatch(/\bSTOP\b|\bPARE\b/);
+    }
   });
 
   it('prices in the operator country currency regardless of the client language', () => {
@@ -529,7 +774,10 @@ describe('the customer is texted in their own language, not the country default'
     expect(msg).toMatch(/\$\s?65/);
   });
 
-  it('honours Spanish and English opt-out words alike', () => {
+  // Read by nothing today — the inbound webhook went with the carrier account
+  // and offers carry a link instead of a keyword — and kept for the day
+  // anything inbound exists again. See the note above STOP_WORDS.
+  it('still knows Spanish and English opt-out words alike', () => {
     for (const w of ['STOP', 'PARE', 'CANCELAR', 'BAJA', 'UNSUBSCRIBE']) {
       expect(STOP_WORDS.has(w), w).toBe(true);
     }

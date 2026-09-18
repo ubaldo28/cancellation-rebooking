@@ -5,9 +5,21 @@
 #               credential for the whole account.
 #   .wrangler/  holds the local D1 database, which after any real use is a file
 #               full of customers' names, addresses and coordinates.
+#   .dev.vars   `wrangler dev` reads it and its values OVERRIDE the [vars] in
+#               wrangler.toml, which is exactly why it is dangerous to commit.
+#               wrangler.toml tells a developer to put their own
+#               ALLOWED_ORIGINS there — "http://localhost:5173" — so that the
+#               dev origin lives on the dev machine and never reaches a
+#               deploy. Committed back, it is the same hole with an extra
+#               step: a localhost origin echoed with
+#               access-control-allow-credentials in production. It is also
+#               where anyone's local API keys end up. Note that `.env.*` above
+#               does NOT cover this name.
 .env
 .env.*
 !web/.env.production
+.dev.vars
+.dev.vars.*
 .wrangler/
 node_modules/
 web/dist/
@@ -19,3 +31,4 @@ web/dist/
 # hundreds of megabytes of SQL.
 web/tsconfig.tsbuildinfo
 seed/
+art-source/

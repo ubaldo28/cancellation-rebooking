@@ -1,0 +1,55 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:1200px;height:630px}
+  body{
+    background:
+      radial-gradient(900px 500px at 50% 8%, rgba(76,179,240,0.16), transparent 62%),
+      linear-gradient(170deg, #10283c 0%, #0b1a29 46%, #071019 100%);
+    font-family:'Carlito','DejaVu Sans',sans-serif;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    color:#fff;position:relative;overflow:hidden;
+  }
+  .mark{width:168px;height:168px;margin-bottom:44px;
+        filter:drop-shadow(0 18px 40px rgba(0,0,0,.55))}
+  h1{font-size:86px;font-weight:700;letter-spacing:-.022em;line-height:1;
+     color:#ffffff}
+  .rule{width:92px;height:4px;border-radius:2px;background:#4CB3F0;margin:30px 0 26px;opacity:.95}
+  p{font-size:40px;font-weight:400;color:#c5d5e4;letter-spacing:.004em}
+  .glow{position:absolute;left:50%;top:-120px;transform:translateX(-50%);
+        width:760px;height:380px;border-radius:50%;
+        background:radial-gradient(closest-side, rgba(76,179,240,.20), transparent);
+        pointer-events:none}
+</style></head><body>
+<div class="glow"></div>
+<svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#0A0E13"/>
+  <g fill="#4CB3F0" transform="translate(80.35 345.23) scale(0.23452 -0.23452)">
+    <path transform="translate(0.00 0)" d="M209 672Q191 672 170 657V332Q196 332 228.0 348.5Q260 365 260 383V598Q260 672 209 672ZM50 102V620Q50 681 9 689V711L110 768Q130 760 150.0 739.0Q170 718 170 701Q280 768 296.0 768.0Q312 768 346.5 727.0Q381 686 381 653V372Q381 364 272 321Q318 166 380 112Q408 89 437 89V59Q344 0 319 0Q286 0 235.5 124.0Q185 248 181 288L170 285V154Q170 117 178.0 101.0Q186 85 211 85V54L6 -32L-10 0Q12 0 32 26Q50 51 50 102Z"/>
+    <path transform="translate(492.00 0)" d="M122 102V632L153 662H90Q29 662 21 629H-1L-58 711Q-46 730 -27.0 745.0Q-8 760 10 760H274Q335 760 343 793H365L422 711Q410 692 391.0 677.0Q372 662 354 662H242V154Q242 117 250.0 101.0Q258 85 283 85V54L78 -32L62 0Q84 0 104 26Q122 51 122 102Z"/>
+    <path transform="translate(917.00 0)" d="M260 623Q260 678 211 688V710Q319 770 320 770Q329 770 352.0 750.5Q375 731 380 709Q382 711 441.0 740.5Q500 770 501 770Q521 770 545 746Q591 700 591 623V93Q591 84 484.0 42.0Q377 0 351 0Q304 0 273 62Q163 0 134.0 0.0Q105 0 77.5 42.5Q50 85 50 121V623Q50 678 1 688V710L110 771Q132 762 151.0 741.5Q170 721 170 704V195Q170 100 229 100Q244 100 260 106ZM470 107V587Q470 639 449.0 656.5Q428 674 381 675V185Q381 153 393.5 125.5Q406 98 428.0 98.0Q450 98 470 107Z"/>
+  </g>
+</svg>
+<h1>Round The Way</h1>
+<div class="rule"></div>
+<p>trades that come to you</p>
+</body></html>
+<!--
+  SOURCE FOR web/public/og.png — the picture a pasted link draws.
+
+  Rendered at exactly 1200x630 and screenshotted; that size is what every
+  unfurler crops to and what index.html declares in og:image:width/height.
+
+  THE MARK IS INLINED, NOT LINKED. This file is opened from disk to be
+  photographed, so a <img src="/icon.svg"> would resolve to nothing. The paths
+  below are the same outlines as web/public/icon.svg — if that mark ever
+  changes, change it in both places and re-render.
+
+  The type is set in whatever sans the rendering machine has. That is a known
+  compromise: the site's own face is Inter, loaded from a font host, and the
+  box this is rendered in has no network access to fetch it. The card is
+  designed around it — one short line of type at a large size, where the
+  difference is invisible at preview scale.
+
+  To re-render:
+    node tools/og-shot.js       (Playwright, Chromium, deviceScaleFactor 1)
+-->

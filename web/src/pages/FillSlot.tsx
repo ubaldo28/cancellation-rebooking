@@ -11,6 +11,37 @@ import '../styles-openings.css';
 
 const key = (c: Candidate) => `${c.kind}:${c.client_id}:${c.lead_id ?? ''}`;
 
+/**
+ * WHY NOBODY FITS, IN WORDS THAT ARE ACTUALLY TRUE.
+ *
+ * This screen used to say "Clients need a mobile number and SMS consent, and
+ * the job has to fit the time available." Every part of that except the last
+ * clause was wrong, and wrong in the most expensive way an empty state can be:
+ * it was an instruction. An operator who read it went looking for a place to
+ * type their customers' numbers, and there is none — a customer who books
+ * through this site is stored with no number on purpose, because the promise
+ * is that no contact details change hands. Even if they had found one, nothing
+ * here can send a text; there is no SMS provider and there is not going to be.
+ * So the advice could not be followed, and following it would not have helped.
+ *
+ * What is true is what the Worker's filters now ask for: somebody who booked
+ * this operator through Round The Way (which is what gives them a conversation
+ * to be messaged in and an account to be emailed at), who has not opted out,
+ * who is not already in the diary, who was not offered something recently, and
+ * whose usual job fits the hole.
+ *
+ * WRITTEN OUT TWICE. The Worker says the same sentence as the `reason` on a
+ * send that finds nobody — see NOBODY_TO_OFFER in src/lib/rank.ts — because
+ * this page can arrive at the same fact by two routes and must not describe it
+ * two ways. test/two-trees.test.ts pins the pair character for character.
+ */
+export const NOBODY_TO_OFFER =
+  'Nobody fits this slot. It can only be offered to customers who booked you '
+  + 'through Round The Way — the offer lands in the conversation you already '
+  + 'have with them, and in their email. It also needs someone who is not '
+  + 'already in your diary, was not offered a slot recently, and whose usual '
+  + 'job fits the time.';
+
 export default function FillSlot() {
   useDocumentTitle('Fill this slot');
   const { gapId = '' } = useParams();
@@ -21,7 +52,6 @@ export default function FillSlot() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [offers, setOffers] = useState<CreatedOffer[] | null>(null);
-  const [sent, setSent] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +94,7 @@ export default function FillSlot() {
         kind: c.kind, client_id: c.client_id, lead_id: c.lead_id,
       })));
       if (res.offers.length === 0) {
-        setError(res.reason ?? 'Nobody eligible for this slot.');
+        setError(res.reason ?? NOBODY_TO_OFFER);
       } else {
         setOffers(res.offers);
       }
@@ -76,7 +106,7 @@ export default function FillSlot() {
   }
 
   if (offers) {
-    return <SendWave offers={offers} sent={sent} setSent={setSent} gap={gap} />;
+    return <SentWave offers={offers} gap={gap} />;
   }
 
   return (
@@ -103,10 +133,7 @@ export default function FillSlot() {
         {loading && <Spinner label="Ranking your clients" />}
 
         {!loading && candidates.length === 0 && !error && (
-          <Empty>
-            Nobody fits this slot. Clients need a mobile number and SMS consent,
-            and the job has to fit the time available.
-          </Empty>
+          <Empty>{NOBODY_TO_OFFER}</Empty>
         )}
 
         {!loading && candidates.length > 0 && (
@@ -147,7 +174,11 @@ export default function FillSlot() {
 
             <div className="stack" style={{ marginTop: 6 }}>
               <button className="btn block" disabled={picked.size === 0 || sending} onClick={send}>
-                {sending ? 'Preparing…'
+                {/* "Preparing…" was honest when the button only built `sms:`
+                    links for the operator to tap afterwards. The Worker does
+                    the sending now, so the word is the one that describes what
+                    is happening while they wait. */}
+                {sending ? 'Sending…'
                   : picked.size === 0 ? 'Select someone to send to'
                   : `Send to ${picked.size}`}
               </button>
@@ -189,30 +220,42 @@ function chipTone(reason: string): 'good' | 'neutral' | 'warn' {
 }
 
 // ---------------------------------------------------------------------------
-// Handing the messages to the operator's own phone.
+// What was sent, and where it went.
+//
+// THIS SCREEN USED TO BE A TO-DO LIST. It said "Send from your phone", handed
+// the operator one `sms:` link per offer and counted how many they had tapped,
+// because the Worker did not send anything itself. Two things were wrong with
+// it. The links were built from a phone number this product deliberately never
+// stores for a customer it introduced, so on a live marketplace booking they
+// were `sms:` with nothing after it. And the offer rows had already been
+// written as 'sent' before the operator tapped anything, so a wave they never
+// got round to sending looked identical in the database to one they did.
+//
+// The Worker now delivers each offer into the conversation the customer
+// already has with this business and emails them about it, so there is nothing
+// left to do here. This screen exists to say what happened — who was asked,
+// what they were told, and whether the email went — and then to get out of the
+// way.
 // ---------------------------------------------------------------------------
-function SendWave({ offers, sent, setSent, gap }: {
+function SentWave({ offers, gap }: {
   offers: CreatedOffer[];
-  sent: Set<string>;
-  setSent: (s: Set<string>) => void;
   gap: Gap | null;
 }) {
   const op = useOperator();
-  const isIOS = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);
 
   return (
     <>
       <header className="page-head">
-        <h1 style={{ fontSize: 21 }}>Send from your phone</h1>
+        <h1 style={{ fontSize: 21 }}>Sent</h1>
         <p className="muted" style={{ marginTop: 6 }}>
-          Each one opens your messages app with the text ready. It arrives from
-          your own number, so they know it's you.
+          Each one is in your conversation with them, with an email to let them
+          know. First to confirm gets the slot.
         </p>
       </header>
 
       <main className="main stack">
         <div className="spread">
-          <span className="eyebrow">{sent.size} of {offers.length} sent</span>
+          <span className="eyebrow">{offers.length} asked</span>
           {/* The slot these messages are about. It used to read "Expires" and
               then the second comma-separated field of a time range whose two
               ends were the same instant — which came out as a bare date and
@@ -221,32 +264,34 @@ function SendWave({ offers, sent, setSent, gap }: {
           {gap && <span className="muted">{timeRange(gap.starts_at, gap.ends_at, op)}</span>}
         </div>
 
-        {offers.map((o) => {
-          const done = sent.has(o.offer_id);
-          const href = isIOS ? o.send.ios : o.send.android;
-          return (
-            <div key={o.offer_id} className="card stack" style={{ opacity: done ? 0.72 : 1 }}>
-              <div className="row">
-                <div className="grow stack" style={{ gap: 2 }}>
-                  <span className="name" style={{ fontSize: 15 }}>{o.first_name}</span>
-                  <span className="mono muted" style={{ fontSize: 12 }}>{o.phone_e164}</span>
-                </div>
-                <a href={href} className={`btn sm${done ? ' quiet' : ''}`}
-                  onClick={() => setSent(new Set([...sent, o.offer_id]))}>
-                  {done && <Icon name="tick" size={15} color="var(--accent)" stroke={2.6} />}
-                  {done ? 'Sent' : 'Send'}
-                </a>
+        {offers.map((o) => (
+          <div key={o.offer_id} className="card stack">
+            <div className="row">
+              <div className="grow stack" style={{ gap: 2 }}>
+                <span className="name" style={{ fontSize: 15 }}>{o.first_name}</span>
+                {/* Said plainly rather than left to assume. The message is in
+                    their conversation either way; whether anything pinged them
+                    about it is the part the operator cannot see for
+                    themselves, and "we emailed them" when nothing left would
+                    be the site lying about its own delivery. */}
+                <span className="muted" style={{ fontSize: 12 }}>
+                  {o.emailed
+                    ? 'In their messages, and emailed'
+                    : 'In their messages — no email went, so they see it next time they open it'}
+                </span>
               </div>
-              <div className="sms">{o.message}</div>
+              <Icon name="tick" size={18} color="var(--accent)" stroke={2.6} />
             </div>
-          );
-        })}
+            <div className="sms">{o.message}</div>
+          </div>
+        ))}
 
         <div className="notice">
-          Sending this way costs you nothing and needs no setup. You can switch
-          to automatic sending later in Settings.
+          Nothing to send by hand, and no phone numbers change hands. Replies
+          come back in Messages.
         </div>
 
+        <Link to="/app/messages" className="btn ghost block">Go to Messages</Link>
         <Link to="/app" className="btn ghost block">Done</Link>
       </main>
     </>

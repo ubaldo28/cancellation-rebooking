@@ -330,7 +330,7 @@
 
 /* One star, not five. Five drawn stars at 12px is a row of grey lozenges
    nobody can count, and the number next to it is the thing being read anyway. */
-.slot-star { color: #1a7f4b; font-size: 12.5px; }
+.slot-star { color: #00477B; font-size: 12.5px; }
 
 .slot-rate-n { font-weight: 600; color: var(--muted); }
 
@@ -396,7 +396,7 @@
   height: 7px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(0, 135, 90, 0.15);
+  box-shadow: 0 0 0 3px rgba(0, 90, 156, 0.15);
 }
 
 /* The card edge picks it up too, so a switched-on business is findable by

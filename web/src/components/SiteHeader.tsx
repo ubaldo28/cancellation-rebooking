@@ -2,6 +2,7 @@ import { useCallback, useId, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, type Trade, type TradeCategory } from '../api';
 import { Icon } from './ui';
+import { tradeHref } from '../lib/seo';
 import '../styles-shell.css';
 
 /**
@@ -59,8 +60,24 @@ interface Hint { trade: Trade; category: string }
  * private job as a marketplace page with their job printed on it. Turning
  * them off leaves the wordmark, which is the one link that page should have.
  */
+/**
+ * THE SEARCH BOX IS OFF BY DEFAULT, and that is a deliberate reversal.
+ *
+ * It used to be on every page, on the reasoning written above: somebody who
+ * lands on a category or a profile from a search engine has to be able to start
+ * a search. That reasoning is sound and the box was still wrong, because of
+ * what it did to the bar it sat in. On anything narrower than a laptop it
+ * cannot share a row, so it takes a whole one to itself and the header becomes
+ * three stacked rows before a single word of the page — a search field, above a
+ * page whose entire job is already to show what is available near you.
+ *
+ * Nothing is lost. /search is still a page, the footer still links to browsing,
+ * and every category page carries its own way in. The prop stays so a page that
+ * genuinely wants the box can pass search — the default is the change, not the
+ * capability.
+ */
 export default function SiteHeader(
-  { search = true, nav = true }: { search?: boolean; nav?: boolean },
+  { search = false, nav = true }: { search?: boolean; nav?: boolean },
 ) {
   const navigate = useNavigate();
   const [q, setQ] = useState('');
@@ -161,7 +178,7 @@ export default function SiteHeader(
   const choose = (hint: Hint) => {
     close();
     setQ('');
-    navigate(`/s/${encodeURIComponent(hint.trade.slug)}`);
+    navigate(tradeHref(hint.trade.slug));
   };
 
   /**
@@ -223,8 +240,35 @@ export default function SiteHeader(
       */}
       <a className="skip-link" href="#main">Skip to main content</a>
 
+      {/*
+        THE TESTING BAND, above the bar rather than inside it.
+
+        Round The Way can send a hundred emails a day, and every account made
+        on either side costs exactly one of them — a code to a customer, a
+        sign-in link to a business. So a hundred is what a day can honour, and
+        it is a hundred SHARED: two buckets of a hundred would be a promise of
+        two hundred emails from an allowance of one hundred, and the second
+        half of that promise fails as a code that never arrives.
+
+        The site says so before somebody types anything rather than after they
+        have filled in a basket. The cap is enforced in the Worker, in
+        enforceDailyIntake; this sentence is the same fact said out loud, and
+        test/two-trees.test.ts pins the two together.
+
+        ABOVE THE HEADER AND ON EVERY PAGE, because "we are still testing" is
+        not a fact about one screen. It is static — no fetch, no flicker, no
+        request — since the answer does not depend on anything the Worker
+        knows, and a band that arrives late is a band that pushes the page down
+        under somebody's finger.
+      */}
+      <p className="testing-band" role="note">
+        <strong>In testing.</strong> A hundred people can join each day —
+        customers and businesses together. Once a day is full, joining reopens
+        the next morning.
+      </p>
+
       <header className="topbar site-head">
-        <Link to="/" className="wordmark"><i />slotfill</Link>
+        <Link to="/" className="wordmark">Round The Way</Link>
 
         {/*
           A real <form>, not an input with a keydown handler, so Enter submits,
@@ -367,7 +411,33 @@ export default function SiteHeader(
               <Icon name="list" size={17} stroke={2} />
               <span className="shell-browse-label">Browse</span>
             </Link>
+            <Link to="/cost" className="tlink shell-nav-drop">Prices</Link>
+            {/*
+              THE CUSTOMER'S OWN DOOR, and it was missing from every page.
+
+              /account is where somebody who has booked before finds their
+              bookings, their card and the two ways of getting rid of the
+              account — and the only links to it were sentences buried inside
+              Help, SignIn and a booking thread. A customer who closed the
+              confirmation email had no way back in from anywhere on the site.
+
+              "Sign in" next to it is the BUSINESS door and always has been.
+              Two doors, two labels: one says what you get, the other says
+              who it is for.
+            */}
+            {/* ALERTS BELONG IN THE BAR, and they were only in the footer.
+                Every other link to /a is on a page that has just failed to
+                show somebody anything — an empty search, a neighbourhood with
+                nothing in it, a checkout that could not send a code. Those are
+                the right places for it AND they all require the visitor to
+                have already been disappointed. Somebody who looks at the home
+                page, sees nothing near them and leaves never reaches one.
+
+                On a site with a short list, "tell me when something opens" is
+                the second most useful thing a customer can do, and it was the
+                one link they had to scroll to the bottom of the page to find. */}
             <Link to="/a" className="tlink">Alert me</Link>
+            <Link to="/account" className="tlink">Your bookings</Link>
             <Link to="/signin" className="tlink shell-nav-drop">Sign in</Link>
             <Link to="/join" className="tlink solid">List your van</Link>
           </nav>

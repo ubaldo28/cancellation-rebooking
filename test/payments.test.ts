@@ -65,7 +65,7 @@ async function signIn(email: string) {
     `INSERT INTO sessions (id,operator_id,token_hash,expires_at,created_at)
      VALUES (?,?,?,?,?)`,
   ).bind(newId(), opId, hash, t + 86400, t).run();
-  return { opId, cookie: `gf_session=${raw}` };
+  return { opId, cookie: `__Host-gf_session=${raw}` };
 }
 
 beforeEach(() => {

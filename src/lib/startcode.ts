@@ -1,7 +1,8 @@
 import type { Env } from '../types';
-import { threadByToken } from './chat';
+import { threadByToken, type ThreadRef } from './chat';
 import { notify } from './feed';
 import { badRequest, conflict, notFound, now } from './util';
+import { isVehicleKind, vehicleNoun, type VehicleKind } from './vehicles';
 
 /**
  * The start code, and the van.
@@ -58,25 +59,42 @@ export interface VehicleDetails {
   model: string | null;
   color: string | null;
   plate: string | null;
+  /**
+   * One of the slugs in vehicles.ts. What SHAPE it is, which no combination of
+   * the four fields above reliably gives: see migration 0039. Null for every
+   * operator who signed up before they were asked.
+   */
+  kind: VehicleKind | null;
 }
 
-/** True when there is enough here for a customer to actually identify a van. */
+/**
+ * True when there is enough here for a customer to actually identify a van.
+ *
+ * The kind is NOT in this test even though the form asks for it. This gate is
+ * what blocks an operator's openings from going up, and the three fields it
+ * names are the three a person standing behind their own front door reads off
+ * the thing on the kerb. Adding a fourth requirement would take every operator
+ * who filled this in before 0039 off the site until they came back and
+ * answered a question that did not exist when they signed up.
+ */
 export const vehicleComplete = (v: VehicleDetails | null): boolean =>
   !!v && !!v.make && !!v.color && !!v.plate;
 
 export async function getVehicle(env: Env, operatorId: string): Promise<VehicleDetails> {
   const row = await env.DB.prepare(
-    `SELECT vehicle_make, vehicle_model, vehicle_color, vehicle_plate
+    `SELECT vehicle_make, vehicle_model, vehicle_color, vehicle_plate, vehicle_kind
        FROM operators WHERE id = ?`,
   ).bind(operatorId).first<{
     vehicle_make: string | null; vehicle_model: string | null;
     vehicle_color: string | null; vehicle_plate: string | null;
+    vehicle_kind: string | null;
   }>();
   return {
     make: row?.vehicle_make ?? null,
     model: row?.vehicle_model ?? null,
     color: row?.vehicle_color ?? null,
     plate: row?.vehicle_plate ?? null,
+    kind: isVehicleKind(row?.vehicle_kind) ? row.vehicle_kind : null,
   };
 }
 
@@ -88,19 +106,37 @@ export async function saveVehicle(
 
   await env.DB.prepare(
     `UPDATE operators SET vehicle_make=?, vehicle_model=?, vehicle_color=?,
-       vehicle_plate=?, updated_at=? WHERE id=?`,
+       vehicle_plate=?, vehicle_kind=?, updated_at=? WHERE id=?`,
   ).bind(clean(v.make), clean(v.model), clean(v.color),
     // Kept exactly as typed. It is shown to a customer to check against their
     // own eyes and is never matched programmatically, so normalising it could
     // only make the stored version stop looking like the plate on the van.
-    clean(v.plate, 16), now(), operatorId).run();
+    clean(v.plate, 16),
+    // Anything that is not one of ours is stored as nothing rather than as
+    // itself: this string is drawn on a public map, and an unknown value would
+    // either render as a missing shape or have to be guessed at draw time.
+    isVehicleKind(v.kind) ? v.kind : null,
+    now(), operatorId).run();
 
   return getVehicle(env, operatorId);
 }
 
-/** What the customer is shown before anybody turns up. */
+/**
+ * What the customer is shown before anybody turns up.
+ *
+ * The kind goes on the end of the words rather than the front: "White Ford
+ * Transit van" is how somebody at a window actually describes what they are
+ * looking at, and the shape is the part that narrows a street fastest. It is
+ * dropped when the make or model already contains that word, so nobody reads
+ * "White Ford Transit Van van".
+ */
 export function describeVehicle(v: VehicleDetails): string | null {
-  const parts = [v.color, v.make, v.model].filter(Boolean).join(' ');
+  const words = [v.color, v.make, v.model].filter(Boolean).join(' ');
+  const noun = vehicleNoun(v.kind);
+  const saidAlready = !!noun
+    && new RegExp(`\\b${noun.split(' ')[0]}\\b`, 'i').test(words);
+
+  const parts = noun && !saidAlready ? `${words} ${noun}`.trim() : words;
   if (!parts && !v.plate) return null;
   if (!v.plate) return parts;
   return parts ? `${parts} · ${v.plate}` : v.plate;
@@ -187,8 +223,8 @@ export async function verifyStartCode(
 }
 
 /** The customer's copy of the code, and the van to look for. */
-export async function jobCodeForGuest(env: Env, rawToken: string) {
-  const thread = await threadByToken(env, rawToken);
+export async function jobCodeForGuest(env: Env, ref: ThreadRef) {
+  const thread = await threadByToken(env, ref);
   if (!thread?.appointment_id) return null;
 
   const item = await env.DB.prepare(
@@ -227,9 +263,9 @@ export async function jobCodeForGuest(env: Env, rawToken: string) {
  * to do other than let a stranger they cannot identify into their house.
  */
 export async function reportVehicle(
-  env: Env, rawToken: string, orderItemId: string, note?: string | null,
+  env: Env, ref: ThreadRef, orderItemId: string, note?: string | null,
 ): Promise<void> {
-  const thread = await threadByToken(env, rawToken);
+  const thread = await threadByToken(env, ref);
   if (!thread) throw notFound('That link is not valid any more.');
 
   const t = now();
@@ -284,7 +320,8 @@ export async function vehicleReports(env: Env, limit = 50) {
     `SELECT oi.id AS order_item_id, oi.operator_id, oi.starts_at,
             oi.vehicle_reported_at, oi.vehicle_reported_note,
             o.business_name,
-            o.vehicle_make, o.vehicle_model, o.vehicle_color, o.vehicle_plate
+            o.vehicle_make, o.vehicle_model, o.vehicle_color, o.vehicle_plate,
+            o.vehicle_kind
        FROM order_items oi
        LEFT JOIN operators o ON o.id = oi.operator_id
       WHERE oi.vehicle_reported_at IS NOT NULL
@@ -296,6 +333,7 @@ export async function vehicleReports(env: Env, limit = 50) {
     business_name: string | null;
     vehicle_make: string | null; vehicle_model: string | null;
     vehicle_color: string | null; vehicle_plate: string | null;
+    vehicle_kind: string | null;
   }>();
 
   return (rows.results ?? []).map((r) => ({
@@ -311,6 +349,7 @@ export async function vehicleReports(env: Env, limit = 50) {
     vehicle_label: describeVehicle({
       make: r.vehicle_make, model: r.vehicle_model,
       color: r.vehicle_color, plate: r.vehicle_plate,
+      kind: isVehicleKind(r.vehicle_kind) ? r.vehicle_kind : null,
     }),
   }));
 }

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_MIGRATIONS, makeEnv } from './d1';
 import type { Env } from '../src/types';
-import { claimSlot, slotById, slotsNear } from '../src/lib/public';
-import { newId, now, sha256 } from '../src/lib/util';
+import { claimSlot, mapData, slotById, slotsNear } from '../src/lib/public';
+import { DEMO_OPERATOR_ID } from '../src/lib/demo';
+import { type HttpError, newId, now, sha256 } from '../src/lib/util';
 
 const MIGRATIONS = ALL_MIGRATIONS;
 
@@ -20,13 +21,18 @@ const FAR = { lat: 34.1680, lng: -118.6050 };
 async function seed(opts: { publicBookings?: boolean; maxDetour?: number } = {}) {
   env = makeEnv(MIGRATIONS) as unknown as Env;
   const n = t();
+  // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+  // must have somewhere to be paid before its work can be sold, so slotsNear
+  // leaves an opening for an operator without it off the public list and
+  // claimSlot refuses it. Drop it and nothing in this file is listed at all.
   await env.DB.prepare(
     `INSERT INTO operators (id,email,business_name,timezone,country,currency,language,
        location_mode,fill_model,sms_mode,max_detour_seconds,min_gap_seconds,buffer_seconds,
        offer_ttl_seconds,offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,
-       discount_percent,plan,accept_public_bookings,deposit_cents,created_at,updated_at)
+       discount_percent,plan,accept_public_bookings,deposit_cents,created_at,updated_at,
+       stripe_payouts_enabled)
      VALUES (?,?,?, 'America/Los_Angeles','US','USD','en','mobile','both','device',
-       ?,3600,900,5400,3,3600,604800,0,'active',?,1000,?,?)`,
+       ?,3600,900,5400,3,3600,604800,0,'active',?,1000,?,?,1)`,
   ).bind(OP, 'a@x.com', 'Valley Detailing',
     opts.maxDetour ?? 900, opts.publicBookings === false ? 0 : 1, n, n).run();
 
@@ -330,5 +336,182 @@ describe('claiming a slot', () => {
       address_line: '15200 Ventura Blvd',
     });
     expect(await slotsNear(env, NEAR, 'sherman-oaks')).toHaveLength(0);
+  });
+});
+
+/**
+ * One of lib/demo.ts's seeded businesses, working the same neighbourhood.
+ *
+ * stripe_payouts_enabled is 0 and that is the true value, not a convenience:
+ * none of the sample businesses has a Stripe account because none of them is a
+ * business. Everything below turns on that being so — a fixture that gave the
+ * sample a payout account would sail through the plain flag filter and prove
+ * nothing at all about the exemption.
+ *
+ * Its service_areas.slug differs from the real operator's while place_slug is
+ * identical, which is how demo.ts writes them: that column is globally unique
+ * because it is a public URL, and the map groups its pins on place_slug.
+ */
+async function sampleBusiness(): Promise<string> {
+  const n = t();
+  await env.DB.prepare(
+    `INSERT INTO operators (id,email,business_name,timezone,country,currency,language,
+       location_mode,fill_model,sms_mode,max_detour_seconds,min_gap_seconds,buffer_seconds,
+       offer_ttl_seconds,offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,
+       discount_percent,plan,accept_public_bookings,deposit_cents,created_at,updated_at,
+       stripe_payouts_enabled)
+     VALUES (?,?,?, 'America/Los_Angeles','US','USD','en','mobile','both','device',
+       900,3600,900,5400,3,3600,604800,0,'active',1,1000,?,?,0)`,
+  ).bind(DEMO_OPERATOR_ID, 'demo@roundtheway.app',
+    'Valley Shine Mobile Detailing', n, n).run();
+
+  await env.DB.prepare(
+    `INSERT INTO services (id,operator_id,name,duration_seconds,price_cents,cadence_days,created_at,updated_at)
+     VALUES ('sv-sample',?,'Full detail',7200,18900,28,?,?)`,
+  ).bind(DEMO_OPERATOR_ID, n, n).run();
+
+  await env.DB.prepare(
+    `INSERT INTO service_areas (id,operator_id,name,slug,place_slug,lat,lng,radius_meters,created_at,updated_at)
+     VALUES (?,?,'Sherman Oaks','sherman-oaks-sample','sherman-oaks',?,?,8000,?,?)`,
+  ).bind(newId(), DEMO_OPERATOR_ID, PREV.lat, PREV.lng, n, n).run();
+
+  const gapId = newId();
+  const start = n + 5 * 3600;
+  await env.DB.prepare(
+    `INSERT INTO gaps (id,operator_id,starts_at,ends_at,prev_lat,prev_lng,next_lat,next_lng,
+       baseline_drive_seconds,is_mobile,status,created_at,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,1,'open',?,?)`,
+  ).bind(gapId, DEMO_OPERATOR_ID, start, start + 5 * 3600,
+    PREV.lat, PREV.lng, NEXT.lat, NEXT.lng, 180, n, n).run();
+  return gapId;
+}
+
+describe('who the public listing leaves out, and who it must never leave out', () => {
+  it('drops a real business that has nowhere to be paid', async () => {
+    const gapId = await seed();
+    // Listed first, so the disappearance below is the payout flag and not the
+    // fixture quietly failing some other condition.
+    expect(await slotsNear(env, NEAR, 'sherman-oaks')).toHaveLength(1);
+
+    // Every booking is paid up front and the operator's share is transferred
+    // afterwards. bypass.ts refuses to let a business in this state PUBLISH an
+    // opening, but the cron detects gaps for every operator on a live plan, so
+    // one reached the map without ever passing that gate — and the customer
+    // only found out at the pricing step, after picking a time and typing an
+    // address.
+    await env.DB.prepare(`UPDATE operators SET stripe_payouts_enabled = 0 WHERE id = ?`)
+      .bind(OP).run();
+
+    expect(await slotsNear(env, NEAR, 'sherman-oaks')).toHaveLength(0);
+    // And the booking page cannot reach it by id either: that lookup is this
+    // same query asked for one row, so the two can never disagree about
+    // whether the opening is on sale.
+    expect(await slotById(env, gapId)).toBeNull();
+  });
+
+  it('keeps the sample businesses on the map even though not one of them can be paid',
+    async () => {
+      // THIS IS THE TEST THAT STOPS A TIDY-UP BLANKING THE WHOLE PUBLIC MAP.
+      //
+      // The payout filter above and the sample exemption are one line in the
+      // WHERE clause, and the exemption reads like a loophole in the rule
+      // beside it. It is not: it is the rule not applying. None of the seeded
+      // businesses has a Stripe account because none of them is a business,
+      // so a future "why is there an OR here" that deletes the second half
+      // takes EVERY sample listing off the map at once — and before the first
+      // real operator signs up the samples are the entire contents of the
+      // product. The failure is a blank map on a live site, with every query
+      // succeeding and nothing in a log to say why.
+      //
+      // What stops a sample being SOLD is priceOrder's sample_listing refusal
+      // and claimSlot's, both pinned below and in orders.test.ts. Being listed
+      // and being bookable are two different questions, and this file is the
+      // one that says a sample answers yes to the first.
+      await seed();
+      const sampleGap = await sampleBusiness();
+
+      // The real operator goes unpayable, so nothing but the sample is left to
+      // list. A map that survives this is a map a first-time visitor sees.
+      await env.DB.prepare(`UPDATE operators SET stripe_payouts_enabled = 0 WHERE id = ?`)
+        .bind(OP).run();
+
+      const slots = await slotsNear(env, NEAR, 'sherman-oaks');
+      expect(slots.map((s) => s.gap_id)).toEqual([sampleGap]);
+      expect(slots[0]!.business_name).toBe('Valley Shine Mobile Detailing');
+      // And it is badged as what it is wherever it is drawn, which is the other
+      // half of why it is allowed to stay.
+      expect(slots[0]!.is_sample).toBe(true);
+
+      // The map's two halves have to agree about who is on it: this query
+      // decides which pins exist and what is drawn driving out of them, and
+      // filtering only the openings would leave the neighbourhood pinned for
+      // nobody. So the sample keeps its pin here too.
+      const { areas, slots: pinned } = await mapData(env, NEAR);
+      expect(areas.map((a) => a.slug)).toContain('sherman-oaks');
+      expect(areas.find((a) => a.slug === 'sherman-oaks')!.slot_count).toBe(1);
+      expect(pinned.map((s) => s.gap_id)).toEqual([sampleGap]);
+    });
+});
+
+describe('the second front door: the no-JavaScript booking form', () => {
+  /**
+   * The refusal itself rather than only the fact that something was thrown.
+   *
+   * The code is what the page maps to a sentence, so a test that checked the
+   * message alone would pass on a refusal a browser could only render as
+   * "something went wrong".
+   */
+  async function refusal(p: Promise<unknown>): Promise<HttpError> {
+    return p.then(
+      () => { throw new Error('that booking was supposed to be refused'); },
+      (e: HttpError) => e,
+    );
+  }
+
+  it('refuses a sample opening in the same words the checkout uses', async () => {
+    await seed();
+    const sampleGap = await sampleBusiness();
+
+    // POST /book/:gapId went through neither priceOrder nor anything else that
+    // knew what a sample was, so it would have written an appointment and a
+    // client row against a business invented in lib/demo.ts — rows the next
+    // reseed deletes underneath the customer, for work nobody was going to
+    // turn up and do.
+    const e = await refusal(claimSlot(env, {
+      gapId: sampleGap, first_name: 'Rosa', phone: '8185550142',
+      postcode: '91403', address_line: '15200 Ventura Blvd',
+    }));
+    expect(e.code).toBe('sample_listing');
+    expect(e.message).toContain('Valley Shine Mobile Detailing');
+    expect(e.message).toContain('sample data, not a real business');
+
+    // Nothing was written on the way to the refusal.
+    const appts = await env.DB.prepare(`SELECT COUNT(*) AS n FROM appointments`)
+      .first<{ n: number }>();
+    expect(appts!.n).toBe(0);
+  });
+
+  it('refuses a real opening with nowhere to send the money, and says no more', async () => {
+    const gapId = await seed();
+    // The listing query hides this business now, but the gap id travels in the
+    // URL of the form and a page cached before the account went bad still
+    // posts to it.
+    await env.DB.prepare(`UPDATE operators SET stripe_payouts_enabled = 0 WHERE id = ?`)
+      .bind(OP).run();
+
+    const e = await refusal(claimSlot(env, {
+      gapId, first_name: 'Rosa', phone: '8185550142',
+      postcode: '91403', address_line: '15200 Ventura Blvd',
+    }));
+    expect(e.message).toBe('That opening is no longer listed.');
+    // Somebody's bank arrangements are not a stranger's business — the same
+    // reason priceOrder gives the vague answer for a real operator. A later
+    // "more helpful" wording here would be the platform telling the public
+    // that a named business's payouts have fallen over.
+    expect(e.message).not.toMatch(/payout|bank|stripe/i);
+
+    const appts = await env.DB.prepare(`SELECT COUNT(*) AS n FROM appointments`)
+      .first<{ n: number }>();
+    expect(appts!.n).toBe(0);
   });
 });

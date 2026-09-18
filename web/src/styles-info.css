@@ -79,19 +79,14 @@
 .info-stamp p + p { margin-top: 8px; }
 .info-stamp b { color: var(--ink); }
 
-/* A value nobody has supplied yet, marked so it cannot be mistaken for one
-   that has been. Square brackets in the text as well as the styling, because
-   a colour alone is not a way of saying anything. */
-.info-ph {
-  font-family: var(--mono);
-  font-size: 0.92em;
-  padding: 1px 5px;
-  border: 1px dashed var(--control-line);
-  border-radius: 4px;
-  color: var(--ink-2);
-  background: var(--surface-2);
-  white-space: nowrap;
-}
+/* `.info-ph` was here: the dashed, monospaced box Terms and Privacy drew
+   around a value nobody had supplied, so that [REGISTERED ADDRESS] could not
+   be mistaken for an address. Both pages have since been given real answers —
+   there is no registered company and no published postal address, and each
+   page now says that in a sentence — so nothing in the app has a placeholder
+   left to render and the rule went with the last of them. Deleted rather than
+   kept "in case": a style for displaying missing information is an invitation
+   to leave information missing. */
 
 /* --------------------------------------------------------------------------
  * Contents
@@ -412,4 +407,134 @@
 @media (min-width: 620px) {
   .info-toc ol { grid-template-columns: 1fr 1fr; gap: 8px 24px; }
   .info-head { padding-top: 14px; }
+}
+
+/* --- the help centre ----------------------------------------------------
+   Shaped like the reference marketplace's: a hero with one search box, a row
+   of quick actions, an audience switch, then topics rather than one list. */
+.help-hero { padding: 8px 0 26px; }
+.help-hero h1 { margin: 0 0 8px; }
+.help-find { margin: 18px 0 0; max-width: 520px; }
+.help-find input {
+  width: 100%; font: inherit; font-size: 16px; padding: 12px 16px;
+  border: 1px solid var(--control-line); border-radius: 999px;
+  background: var(--surface); color: var(--ink);
+}
+.help-find input:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+.help-count { margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+
+.help-quick {
+  display: grid; gap: 10px; margin: 0 0 30px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+.help-quick a {
+  display: block; padding: 14px 16px; border: 1px solid var(--line);
+  border-radius: 14px; background: var(--surface); text-decoration: none;
+}
+.help-quick a:hover { border-color: var(--accent-line); background: var(--accent-soft); }
+.help-quick b { display: block; color: var(--ink); font-size: 15px; letter-spacing: -0.01em; }
+.help-quick span { display: block; margin-top: 3px; color: var(--muted); font-size: 13px; }
+
+.help-side { display: flex; gap: 8px; margin: 0 0 26px; flex-wrap: wrap; }
+.help-side button {
+  font: inherit; font-size: 14px; font-weight: 600; padding: 9px 16px;
+  border-radius: 999px; border: 1px solid var(--line-strong);
+  background: var(--surface); color: var(--ink-2); cursor: pointer;
+}
+.help-side button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.help-half { margin: 0 0 34px; }
+.help-half > h2 { margin: 0 0 14px; }
+.help-topic { margin: 0 0 22px; }
+.help-topic h3 {
+  margin: 0 0 8px; font-size: 15px; font-weight: 650; letter-spacing: -0.01em;
+}
+
+.help-still {
+  margin: 34px 0 0; padding: 22px; border-radius: 18px;
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.help-still h2 { margin: 0 0 8px; }
+.help-still p { margin: 0 0 10px; color: var(--body, var(--ink-2)); }
+.help-still-do { margin: 14px 0 0; }
+
+/* --------------------------------------------------------------------------
+ * Numbered steps
+ *
+ * THE ONE COMPONENT SHAPE THESE PAGES DID NOT HAVE. Every page the reference
+ * marketplace builds for this job — its guarantee, its safety page, its
+ * recruitment page for tradespeople — leads with three or four numbered steps,
+ * and it leads with them for a reason worth copying: somebody who has arrived
+ * part way through a problem wants to know what to DO and in what order, and
+ * an ordered list is the only thing on a page that says "this before that".
+ * Prose implies it and a bulleted list denies it.
+ *
+ * The shape is borrowed; nothing about the claims is. A steps module is as
+ * honest as the sentences inside it, which is why it is used here for "what to
+ * do when a job goes wrong" and "how listing works" rather than for a process
+ * ending in a payout that does not exist.
+ *
+ * THE NUMERAL IS DRAWN BY THE LIST'S OWN COUNTER, not typed into the heading —
+ * the same arrangement as the Worker's server-rendered `.steps` in
+ * src/lib/seo.ts, so the two surfaces of this site draw a step list the same
+ * way. Two things follow from it. The words in the markup are the words a
+ * person would read aloud, so a screen reader announces "Say it in the
+ * booking" rather than "1 1 Say it in the booking" once the <ol> has already
+ * numbered the item itself. And renumbering is a matter of moving an <li>.
+ *
+ * NO ACCENT AND NO FILL IN THE NUMERAL, which is the part that differs from
+ * seo.ts on purpose. The note at the top of this file reserves the green for
+ * links and focus and the warm tones for the block that says what we do NOT
+ * do; a green disc repeated four times down the page would spend the accent on
+ * decoration and make the one place it means something quieter. So the marker
+ * is a hairline ring in the same ink as a list marker, which is what it is.
+ * ----------------------------------------------------------------------- */
+.info-steps {
+  margin: 18px 0 0;
+  padding: 0;
+  max-width: 66ch;
+  list-style: none;
+  counter-reset: info-step;
+  display: grid;
+  gap: 20px;
+}
+.info-steps > li { counter-increment: info-step; }
+
+/* Overrides .info-sec h3's top margin: the gap between steps is the grid's
+   job, and a step whose heading also carried 26px would sit unevenly under the
+   paragraph of the step above it. */
+.info-steps h3 {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 16px;
+  line-height: 1.35;
+}
+.info-steps h3::before {
+  content: counter(info-step);
+  flex: none;
+  width: 24px;
+  height: 24px;
+  /* Baseline-aligned text inside a fixed box: inline-flex centres the digit,
+     and the small nudge puts the ring's optical centre on the heading's first
+     line rather than hanging it below the text. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(3px);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+/* The step's own copy lines up with its heading text rather than with the
+   numeral, so the left edge of the prose is a straight line down the list. */
+.info-steps p,
+.info-steps .info-list {
+  margin-top: 6px;
+  margin-left: 34px;
+  max-width: none;
 }

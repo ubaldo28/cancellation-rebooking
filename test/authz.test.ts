@@ -1,10 +1,12 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { ALL_MIGRATIONS, makeEnv } from './d1';
+import { fakeKV, type FakeKV } from './kv';
 import worker from '../src/index';
+import { maskInstantRequest } from '../src/lib/online';
 import type { Env } from '../src/types';
 import { addJobPhoto } from '../src/lib/proof';
 import { createWatch } from '../src/lib/alerts';
-import { newId, now } from '../src/lib/util';
+import { newId, newToken, now, sha256 } from '../src/lib/util';
 
 /**
  * Who is allowed to call what, and what comes back when they do.
@@ -16,30 +18,9 @@ import { newId, now } from '../src/lib/util';
 
 const BASE = 'https://gap.test';
 let env: Env;
-let stored: Map<string, Uint8Array>;
-
-/** Enough of an R2 bucket for the photo routes to read and write against. */
-function fakeBucket() {
-  stored = new Map();
-  return {
-    put: async (key: string, body: unknown) => {
-      const bytes = body instanceof Uint8Array ? new Uint8Array(body)
-        : new Uint8Array(await new Response(body as any).arrayBuffer());
-      stored.set(key, bytes);
-      return {};
-    },
-    get: async (key: string) => {
-      const hit = stored.get(key);
-      if (!hit) return null;
-      return {
-        body: new Blob([hit]).stream(),
-        httpEtag: '"e"',
-        writeHttpMetadata: () => {},
-      };
-    },
-    delete: async (key: string) => { stored.delete(key); },
-  };
-}
+let photos: FakeKV;
+/** The backing map, named as it was when this was a fake R2 bucket. */
+let stored: FakeKV['entries'];
 
 function makeReq(method: string, path: string, opts: {
   body?: unknown; cookie?: string; ip?: string;
@@ -76,7 +57,7 @@ async function signIn(email: string, businessName = 'A Business') {
      VALUES (?,?,?,?,?)`,
   ).bind(newId(), opId, hash, t + 86400, t).run();
 
-  return { opId, cookie: `gf_session=${raw}` };
+  return { opId, cookie: `__Host-gf_session=${raw}` };
 }
 
 /** A finished booking for `opId`, with the customer's details on the order. */
@@ -112,7 +93,9 @@ function pngFile(): File {
 }
 
 beforeEach(() => {
-  env = { ...makeEnv(ALL_MIGRATIONS), PHOTOS: fakeBucket() } as unknown as Env;
+  photos = fakeKV();
+  stored = photos.entries;
+  env = { ...makeEnv(ALL_MIGRATIONS), PHOTOS: photos } as unknown as Env;
 });
 
 // ---------------------------------------------------------------------------
@@ -170,8 +153,8 @@ describe('the moderation queue is not open to every business on the site', () =>
   it('still works for an operator on the admin allowlist', async () => {
     const victim = await signIn('victim@example.com', 'Victim Plumbing');
     const reportId = await openReport(victim.opId);
-    const admin = await signIn('ops@slotfill.app');
-    env.ADMIN_EMAILS = ' OPS@slotfill.app , someone@else.test ';
+    const admin = await signIn('ops@roundtheway.app');
+    env.ADMIN_EMAILS = ' OPS@roundtheway.app , someone@else.test ';
 
     const queue = await call('GET', '/api/admin/no-shows', { cookie: admin.cookie });
     expect(queue.status).toBe(200);
@@ -215,12 +198,12 @@ describe('private job photos have no public URL', () => {
 
   it('still serves an operator portfolio photo', async () => {
     const key = 'w/some-operator/some-photo';
-    stored.set(key, new Uint8Array([1, 2, 3]));
+    photos.seed(key, 'image/jpeg', new Uint8Array([1, 2, 3]));
     expect((await call('GET', `/api/public/photo/${encodeURIComponent(key)}`)).status).toBe(200);
   });
 
   it('answers a private key that really exists exactly as it answers a missing one', async () => {
-    stored.set('j/op/item/real', new Uint8Array([1, 2, 3]));
+    photos.seed('j/op/item/real', 'image/jpeg', new Uint8Array([1, 2, 3]));
     const a = await call('GET', `/api/public/photo/${encodeURIComponent('j/op/item/real')}`);
     const b = await call('GET', `/api/public/photo/${encodeURIComponent('w/op/never-existed')}`);
     expect(a.status).toBe(404);
@@ -310,8 +293,59 @@ describe('contact details do not cross between the two sides', () => {
     const text = await res.text();
     expect(text).not.toContain('3105550147');
     expect(text).not.toContain('jane@example.com');
-    // The address survives: they have to drive there.
-    expect(text).toContain('12 Private Rd');
+
+    // AND THE ADDRESS DOES NOT SURVIVE, WHICH IS THE OPPOSITE OF WHAT THIS
+    // TEST USED TO ASSERT.
+    //
+    // "They have to drive there" is true of a job somebody has TAKEN. This
+    // request is pending: it is offered to every operator who happens to be
+    // switched on, most of whom will never touch it, and handing each of them
+    // a stranger's exact street line is the one piece of data in this product
+    // with a person's front door in it. Every other doorstep is governed by
+    // address_released_at; a pending request has no order item, so it had no
+    // release rule at all and simply gave the address away.
+    //
+    // The postcode stays, because an operator has to judge whether it is worth
+    // driving to before they accept.
+    expect(text).not.toContain('12 Private Rd');
+  });
+
+  it('hands the address over once the job has actually been accepted', () => {
+    // Through the mask directly rather than the route: pendingForOperator
+    // selects `status = 'pending'` only, so an accepted request never comes
+    // back from it. The rule being defended is the mask's, and this is where
+    // it lives.
+    const accepted = maskInstantRequest({
+      status: 'accepted',
+      phone_e164: '+13105550147',
+      email: 'jane@example.com',
+      address_line: '12 Private Rd',
+      lat: 34.15101,
+      lng: -118.44502,
+      postcode: '91403',
+    });
+    // The operator who took it is the one driving, so they get the door. The
+    // number and the mailbox still never cross — the app carries the messages.
+    expect(accepted.address_line).toBe('12 Private Rd');
+    expect(accepted.lat).toBe(34.15101);
+    expect(accepted.phone_e164).not.toContain('3105550147');
+    expect(accepted.email).not.toContain('jane@example.com');
+
+    const pending = maskInstantRequest({
+      status: 'pending',
+      phone_e164: '+13105550147',
+      email: 'jane@example.com',
+      address_line: '12 Private Rd',
+      lat: 34.15101,
+      lng: -118.44502,
+      postcode: '91403',
+    });
+    expect(pending.address_line).toBeNull();
+    expect(pending.lat).toBeNull();
+    expect(pending.lng).toBeNull();
+    // The postcode stays either way: an operator has to judge whether it is
+    // worth driving to before they can decide to accept.
+    expect(pending.postcode).toBe('91403');
   });
 });
 
@@ -381,10 +415,17 @@ describe('no card number reaches the database by any field', () => {
 
 // ---------------------------------------------------------------------------
 describe('the unauthenticated endpoints that had no ceiling now have one', () => {
-  it('bounds a walk over phone numbers on the standing lookup', async () => {
+  it('bounds a walk over addresses on the standing lookup', async () => {
+    // It asked about the number until migration 0038 and asks about the
+    // address now, because that is what standing hangs on. The walk is the
+    // same shape and so is the reason for the ceiling: anonymous, and it
+    // answers a yes/no question about anybody the caller cares to type, which
+    // over a list becomes "has this person been reported for missing
+    // appointments" — a fact about them and not about us.
     let last = 0;
     for (let i = 0; i < 40; i++) {
-      last = (await call('GET', `/api/public/standing?phone=%2B1310555${String(i).padStart(4, '0')}`,
+      last = (await call('GET',
+        `/api/public/standing?email=walker${i}%40mailbox.test`,
         { ip: '198.51.100.7' })).status;
       if (last === 429) break;
     }
@@ -417,6 +458,12 @@ describe('the unauthenticated endpoints that had no ceiling now have one', () =>
     ['DELETE', '/api/public/watches/'],
     ['PATCH', '/api/public/watches/', { label: 'x' }],
     ['GET', '/a/stop/'],
+    // The offer opt-out, a second token space in the same shape: a link at the
+    // bottom of an email, opened with no session, that turns something off. It
+    // is deliberately not the watch unsubscribe above and does not share its
+    // bucket — a walk over one would otherwise spend the other's allowance,
+    // and the two spaces have different owners and different sizes.
+    ['GET', '/a/stop-offers/'],
     ['GET', '/api/public/online/requests/'],
     ['DELETE', '/api/public/online/requests/'],
   ];
@@ -435,4 +482,71 @@ describe('the unauthenticated endpoints that had no ceiling now have one', () =>
       expect(last).toBe(429);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// A business that keeps working is never mailed another link
+// ---------------------------------------------------------------------------
+
+describe('the operator session renews itself', () => {
+  /**
+   * WHY THIS IS WORTH A TEST AND NOT JUST A CONSTANT.
+   *
+   * The session was thirty days with no renewal, and nothing failed — it is an
+   * omission rather than a bug, and an omission has no failing assertion to
+   * find it. What it cost was invisible from the code: every listed business
+   * was mailed a fresh sign-in link about once a month, out of an allowance of
+   * a hundred emails a day shared with the codes that let new customers join.
+   * A hundred businesses is three a day, for nothing.
+   *
+   * So the renewal is pinned from both ends: that using a session pushes its
+   * expiry out, and that a session left alone past the window is still refused.
+   * The second half is the one that stops "renew on use" quietly becoming
+   * "never expires".
+   */
+  const DAY = 86400;
+
+  /** A real operator with a session whose expiry we choose. */
+  async function sessionAgedTo(expiresIn: number): Promise<string> {
+    const { opId } = await signIn(`renew-${newId()}@example.com`);
+    const token = newToken();
+    await env.DB.prepare(
+      `INSERT INTO sessions (id, operator_id, token_hash, user_agent, expires_at, created_at)
+       VALUES (?,?,?,?,?,?)`,
+    ).bind(newId(), opId, await sha256(`${token}:${env.SESSION_PEPPER}`), null,
+      now() + expiresIn, now()).run();
+    return token;
+  }
+
+  const expiryOf = (token: string) =>
+    sha256(`${token}:${env.SESSION_PEPPER}`).then((h) => env.DB.prepare(
+      `SELECT expires_at FROM sessions WHERE token_hash = ?`,
+    ).bind(h).first<{ expires_at: number }>());
+
+  it('pushes the expiry out when a stale session is used', async () => {
+    // Two hundred days left of a year, so it is past the thirty-day floor.
+    const token = await sessionAgedTo(200 * DAY);
+    const before = (await expiryOf(token))!.expires_at;
+
+    const res = await call('GET', '/api/me', { cookie: `__Host-gf_session=${token}` });
+    expect(res.status).toBe(200);
+
+    const after = (await expiryOf(token))!.expires_at;
+    expect(after).toBeGreaterThan(before);
+    // Back to a full year from now, not merely nudged.
+    expect(after - now()).toBeGreaterThan(364 * DAY);
+  });
+
+  it('leaves a fresh session alone, so this is not a write per request', async () => {
+    // Three hundred and sixty days left: inside the floor, nothing to do.
+    const token = await sessionAgedTo(360 * DAY);
+    const before = (await expiryOf(token))!.expires_at;
+    expect((await call('GET', '/api/me', { cookie: `__Host-gf_session=${token}` })).status).toBe(200);
+    expect((await expiryOf(token))!.expires_at).toBe(before);
+  });
+
+  it('still refuses one that ran out, because renewing is not never expiring', async () => {
+    const token = await sessionAgedTo(-60);
+    expect((await call('GET', '/api/me', { cookie: `__Host-gf_session=${token}` })).status).toBe(401);
+  });
 });

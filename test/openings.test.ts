@@ -25,12 +25,17 @@ async function seed() {
     [OTHER, 'b@x.com', 'Encino Barbers'],
   ] as const) {
     await env.DB.prepare(
+      // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+      // must have somewhere to be paid before its work can be sold, so
+      // slotsNear leaves an opening for an operator without it off the public
+      // list. Drop it and nothing seeded here is listed at all.
       `INSERT INTO operators (id,email,business_name,timezone,country,currency,language,
          location_mode,fill_model,sms_mode,max_detour_seconds,min_gap_seconds,buffer_seconds,
          offer_ttl_seconds,offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,
-         discount_percent,plan,accept_public_bookings,deposit_cents,created_at,updated_at)
+         discount_percent,plan,accept_public_bookings,deposit_cents,created_at,updated_at,
+         stripe_payouts_enabled)
        VALUES (?,?,?, 'America/Los_Angeles','US','USD','en','mobile','both','device',
-         3600,3600,900,5400,3,3600,604800,0,'active',1,1000,?,?)`,
+         3600,3600,900,5400,3,3600,604800,0,'active',1,1000,?,?,1)`,
     ).bind(id, email, name, n, n).run();
   }
 

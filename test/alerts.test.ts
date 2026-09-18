@@ -30,12 +30,17 @@ async function seed(opts: { trade?: string; priceCents?: number } = {}) {
   const n = t();
 
   await env.DB.prepare(
+    // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+    // must have somewhere to be paid before its work can be sold, so slotsNear
+    // leaves an opening for an operator without it off the public list — and
+    // matchWatches reads that same list. Drop it and no watch ever matches.
     `INSERT INTO operators (id,email,business_name,trade,timezone,country,currency,language,
        location_mode,fill_model,sms_mode,max_detour_seconds,min_gap_seconds,buffer_seconds,
        offer_ttl_seconds,offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,
-       discount_percent,plan,accept_public_bookings,deposit_cents,created_at,updated_at)
+       discount_percent,plan,accept_public_bookings,deposit_cents,created_at,updated_at,
+       stripe_payouts_enabled)
      VALUES (?,?,?,?, 'America/Los_Angeles','US','USD','en','mobile','both','device',
-       900,3600,900,5400,3,3600,604800,0,'active',1,1000,?,?)`,
+       900,3600,900,5400,3,3600,604800,0,'active',1,1000,?,?,1)`,
   ).bind(OP, 'a@x.com', 'Valley Detailing', opts.trade ?? 'mobile car wash and detailing', n, n).run();
 
   await env.DB.prepare(
@@ -150,6 +155,23 @@ async function stubDelivery(
 const forgetLastNotification = (watchId: string) => env.DB.prepare(
   `UPDATE watches SET last_notified_at = NULL WHERE id = ?`,
 ).bind(watchId).run();
+
+/**
+ * The address confirmed — what the link in the confirmation email does.
+ *
+ * WHY EVERY TEST BELOW HAS TO DO THIS NOW. An address on a watch used to be a
+ * live delivery channel the moment somebody typed it into a public form, which
+ * meant anyone could point five emails a day at a stranger's mailbox, from our
+ * domain, for as long as that stranger ignored them. Creation now sends
+ * exactly one message — the confirmation — and nothing else is ever delivered
+ * to an address that has not answered it.
+ *
+ * These tests are about what happens AFTER somebody has agreed to be emailed,
+ * so they agree here rather than asserting a defect.
+ */
+const confirm = (watchId: string) => env.DB.prepare(
+  `UPDATE watches SET email_verified_at = ? WHERE id = ?`,
+).bind(t(), watchId).run();
 
 describe('the secret link is the customer identity', () => {
   it('creates a watch, geocodes it, and resolves it from the raw token', async () => {
@@ -469,12 +491,13 @@ describe('the second channel, for the browsers push cannot reach', () => {
     expect((await watchByToken(env, token))!.email).toBeNull();
   });
 
-  it('is a channel of its own: an address alone is enough to be told', async () => {
+  it('is a channel of its own: a confirmed address is enough to be told', async () => {
     await seed();
     await addGap();
     const { watch } = await createWatch(env, {
       postcode: '91403', email: 'sam@example.com',
     });
+    await confirm(watch.id);
     const sent = await stubDelivery();
 
     // No browser attached at all. Before this the watch was skipped and the
@@ -492,6 +515,7 @@ describe('the second channel, for the browsers push cannot reach', () => {
     const { watch, token } = await createWatch(env, {
       postcode: '91403', email: 'sam@example.com',
     });
+    await confirm(watch.id);
     await addSubscription(env, token, SUB);
     const sent = await stubDelivery();
 
@@ -522,6 +546,7 @@ describe('with email switched off, which is how it ships', () => {
     const { watch } = await createWatch(env, {
       postcode: '91403', email: 'sam@example.com',
     });
+    await confirm(watch.id);
 
     // EMAIL_PROVIDER is unset, so sendEmail refuses before it reaches a
     // network. No VAPID either: this watch has two channels on paper and
@@ -554,6 +579,7 @@ describe('with email switched off, which is how it ships', () => {
     expect(await hitCount(watch.id)).toBe(0);
 
     await updateWatch(env, token, { email: 'sam@example.com' });
+    await confirm(watch.id);
     await stubDelivery();
     expect(await matchWatches(env)).toBe(1);
     expect(await hitCount(watch.id)).toBe(1);
@@ -567,6 +593,7 @@ describe('an address that keeps bouncing', () => {
     const { watch } = await createWatch(env, {
       postcode: '91403', email: 'gone@example.com',
     });
+    await confirm(watch.id);
 
     // The provider is configured and answers 500 every time: this is a real
     // refusal, not "email is switched off", so it counts against the address.

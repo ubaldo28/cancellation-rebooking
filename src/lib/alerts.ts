@@ -46,18 +46,18 @@ export interface Watch {
   max_price_cents: number | null;
   label: string | null;
   /**
-   * A single-purpose key that only switches this watch off. Plain text on
-   * purpose — it is what puts a working unsubscribe link in every email.
-   */
-  unsub_token: string | null;
-  /**
    * The optional second channel. NULL is the normal state and means push only.
    *
    * Held because the customer typed it into the alert form, and read by
    * nothing except the code that sends the alert they asked for.
    */
   email: string | null;
-  /** When the address was confirmed. Nothing sets this yet -- see 0018. */
+  /**
+   * When the customer proved this mailbox is theirs, by opening the link in the
+   * one confirmation email we send. NULL until then, and NULL is a hard stop:
+   * nothing is delivered to an unconfirmed address. See the note above
+   * confirmWatchEmail for what that is protecting against.
+   */
   email_verified_at: number | null;
   /** Consecutive refusals. At the ceiling the address stops being tried. */
   email_failed_count: number;
@@ -97,6 +97,41 @@ export interface SubscriptionInput {
 }
 
 const hashWatchToken = hashOfferToken;
+
+/**
+ * THE TWO KEYS A WATCH'S EMAILS CARRY, AND WHY NEITHER IS STORED IN READABLE
+ * FORM.
+ *
+ * Every other bearer token in this codebase -- the session, the sign-in link,
+ * the guest link, an offer, the watch's own token -- is random and stored only
+ * as a peppered SHA-256, so a read-only copy of the database is a pile of
+ * hashes and not a working set of keys. unsub_token was the exception: it was
+ * written in plain text (migration 0019 argued for it) AND handed back in the
+ * watch payload, so one leak of that table was a working unsubscribe link for
+ * every subscriber we have.
+ *
+ * The argument in 0019 was real, though, and it is why this is a derivation
+ * rather than a random string. The matcher sends the alert hours or weeks after
+ * the watch was made, and every one of those emails needs a working
+ * unsubscribe link in it -- so whatever goes in the link has to be something
+ * the matcher can produce from what it holds. A random token cannot be: only
+ * its hash was kept, and a hash does not run backwards.
+ *
+ * So the link token is computed from the watch and the pepper, and only the
+ * HASH of it is stored -- which is what the column holds now, exactly like
+ * token_hash beside it. A leaked table gives up neither key. Reproducing one
+ * needs SESSION_PEPPER, which is a secret and is not in that table.
+ *
+ * The confirm key is bound to the address as well as the watch, so changing the
+ * address invalidates the link that was sent to the old one. Without that, a
+ * customer could confirm their own mailbox and then point the watch at a
+ * stranger's.
+ */
+const unsubTokenFor = (env: Env, watchId: string) =>
+  hashWatchToken(`watch-unsub:${watchId}`, env);
+
+const confirmTokenFor = (env: Env, watchId: string, email: string) =>
+  hashWatchToken(`watch-confirm:${watchId}:${email}`, env);
 
 /** Fifteen minutes, matching the operator-side default in operators. */
 const DEFAULT_MAX_DETOUR_SECONDS = 900;
@@ -162,9 +197,19 @@ const MAX_EMAIL_FAILURES = 5;
 const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const MAX_EMAIL_CHARS = 254;
 
+/**
+ * What a read of a watch returns, and what it deliberately leaves behind.
+ *
+ * Neither unsub_token nor email_confirm_hash is in here. Both are stored as
+ * hashes now, so neither would be usable by a caller anyway -- but they were
+ * also being sent to the browser, and GET /api/public/watches/:token puts this
+ * straight into a JSON body. A key that only ever travels in an email has no
+ * business in a page's payload: the link in the email is the one place it is
+ * supposed to exist.
+ */
 const WATCH_FIELDS =
   `id, postcode, lat, lng, country, trades, max_detour_seconds, max_price_cents,
-   label, unsub_token, email, email_verified_at, email_failed_count, active,
+   label, email, email_verified_at, email_failed_count, active,
    last_notified_at, notify_count, created_at, updated_at`;
 
 type WatchRow = Omit<Watch, 'trades'> & { trades: string | null };
@@ -296,8 +341,9 @@ export async function createWatch(
     max_detour_seconds: cleanDetour(input.max_detour_seconds),
     max_price_cents: cleanPrice(input.max_price_cents),
     label: (input.label ?? '').trim().slice(0, MAX_LABEL_CHARS) || null,
-    unsub_token: null,   // set below; the row that is written carries the real one
     email,
+    // Unconfirmed, and therefore not a delivery address yet. The confirmation
+    // goes out below and clicking it is what turns this into a channel.
     email_verified_at: null,
     email_failed_count: 0,
     active: 1,
@@ -307,23 +353,30 @@ export async function createWatch(
     updated_at: t,
   };
 
-  // A second, separate secret whose only power is switching this watch off.
-  // Stored in plain text on purpose: the matcher needs to put an unsubscribe
-  // link in every email, and it never sees the watch's real token — only the
-  // hash of it is kept. See migration 0019.
-  const unsub = newToken();
-  watch.unsub_token = unsub;
+  // The two email keys, as hashes. See unsubTokenFor above: the link halves are
+  // derived when an email is written and never live in this table.
+  const unsubHash = await hashWatchToken(await unsubTokenFor(env, watch.id), env);
+  const confirmHash = email
+    ? await hashWatchToken(await confirmTokenFor(env, watch.id, email), env)
+    : null;
 
   await env.DB.prepare(
     `INSERT INTO watches (id, token_hash, unsub_token, postcode, lat, lng, country, trades,
        max_detour_seconds, max_price_cents, label, email, email_verified_at,
-       email_failed_count, active, last_notified_at, notify_count, created_at,
-       updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,0,1,NULL,0,?,?)`,
-  ).bind(watch.id, await hashWatchToken(raw, env), unsub, watch.postcode, watch.lat, watch.lng,
-    watch.country, trades ? JSON.stringify(trades) : null, watch.max_detour_seconds,
-    watch.max_price_cents, watch.label, watch.email,
-    watch.created_at, watch.updated_at).run();
+       email_confirm_hash, email_failed_count, active, last_notified_at,
+       notify_count, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,0,1,NULL,0,?,?)`,
+  ).bind(watch.id, await hashWatchToken(raw, env), unsubHash, watch.postcode, watch.lat,
+    watch.lng, watch.country, trades ? JSON.stringify(trades) : null,
+    watch.max_detour_seconds, watch.max_price_cents, watch.label, watch.email,
+    confirmHash, watch.created_at, watch.updated_at).run();
+
+  // One email, to ask. Sent after the row exists so a provider that hangs
+  // cannot lose a watch the customer has already been told about, and its
+  // failure is not the customer's problem to solve on this form: the watch is
+  // made either way, the address simply stays unconfirmed and silent until
+  // somebody opens the link.
+  if (email) await sendConfirmation(env, watch);
 
   return { watch, token: raw };
 }
@@ -334,14 +387,133 @@ export async function createWatch(
  * Deliberately does nothing else. It cannot read the watch, change the address
  * or reveal who it belongs to — the only outcome is that the alerts stop,
  * which is what the person clicking it asked for.
+ *
+ * The presented token is hashed and the hash is what is looked up, the same way
+ * watchByToken resolves the watch's own token. Nothing readable is compared
+ * against anything readable.
  */
 export async function unsubscribeByToken(env: Env, unsubToken: string): Promise<boolean> {
   const token = (unsubToken ?? '').trim();
   if (!token) return false;
   const res = await env.DB.prepare(
     `UPDATE watches SET active = 0, updated_at = ? WHERE unsub_token = ? AND active = 1`,
-  ).bind(now(), token).run();
+  ).bind(now(), await hashWatchToken(token, env)).run();
   return (res.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Marks the address on a watch as belonging to whoever opened the link.
+ *
+ * WHY AN ADDRESS HAS TO BE CONFIRMED AT ALL. A watch is created by a stranger,
+ * with no account, and the address box takes any address. Without this step,
+ * POST /api/public/watches with somebody else's mailbox in it was a standing
+ * instruction to mail them five times a day, from our domain, about openings
+ * near an address they have never heard of, for as long as the watch lives —
+ * and the only way out was a link at the bottom of mail they never asked for.
+ * That is a mail-bombing tool with our reputation behind it and a CAN-SPAM
+ * problem on top, and the rate limits on the route do not touch it: they slow
+ * down making watches, not the sending that one watch goes on doing forever.
+ *
+ * So an address is a channel only once somebody has opened the one message sent
+ * to it. The bounded version of the abuse is what is left: a stranger's mailbox
+ * gets a single email, once, saying what was asked for and offering to do
+ * nothing, and ignoring it is the correct and complete response. A watch nobody
+ * confirms never mails again.
+ *
+ * Returns whether this click was the one that confirmed it, which is false both
+ * for a token that matches nothing and for an address that was already
+ * confirmed. The route must answer identically either way: a caller poking at
+ * tokens learns nothing, and the person who clicked twice is not shown a
+ * failure for an address that is fine.
+ */
+export async function confirmWatchEmail(env: Env, confirmToken: string): Promise<boolean> {
+  const token = (confirmToken ?? '').trim();
+  if (!token) return false;
+  const t = now();
+  const res = await env.DB.prepare(
+    `UPDATE watches SET email_verified_at = ?, updated_at = ?
+      WHERE email_confirm_hash = ? AND email IS NOT NULL AND email_verified_at IS NULL`,
+  ).bind(t, t, await hashWatchToken(token, env)).run();
+  return (res.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Asks the mailbox whether it wants any of this.
+ *
+ * Sent on the 'bulk' lane, with the alerts rather than with the sign-in links,
+ * and the reason is the one wrangler.toml sets out: this is the side of the
+ * site's email that grows with how popular the feature is, so it must not be
+ * able to spend the allowance a business locked out of its own account needs. A
+ * confirmation that arrives a minute late is still a confirmation.
+ *
+ * A provider that refuses is not counted against the address. email_failed_count
+ * is for a mailbox that does not exist, and this send happens before we have
+ * any reason to think one way or the other — counting it would let a bad
+ * afternoon at the provider retire an address that has never been tried.
+ *
+ * WHAT IS STILL WORTH WATCHING. This is one message per watch created, so what
+ * a stranger's mailbox can be made to receive is now bounded by how often a
+ * watch can be created for it — which is the per-address bucket in front of
+ * POST /api/public/watches and nothing in this file. That bucket was sized when
+ * the address bought an endless standing instruction; it is now the whole of
+ * the exposure, and it is the number to tighten if this is ever abused.
+ */
+async function sendConfirmation(env: Env, watch: Watch): Promise<boolean> {
+  if (!watch.email) return false;
+  const token = await confirmTokenFor(env, watch.id, watch.email);
+  const result = await sendEmail(env, confirmEmail(env, watch, watch.email, token), 'bulk');
+  if (!result.sent) {
+    // Worth a line in the log because the customer is looking at a page that
+    // has just told them to check their email.
+    //
+    // THE REASON ONLY, NEVER `detail`. email.ts builds detail as
+    // `${provider} ${status} ${body}`, and a provider's error body routinely
+    // quotes the recipient back at us — so this line was printing a stranger's
+    // email address into the Worker log. Logs sit outside every sweep in
+    // retention.ts and outside every erasure path in it, which makes them the
+    // one place in this product that "delete my data" cannot reach. The watch
+    // id is already here and is the way back to the row for anybody who needs
+    // one.
+    console.error(`watch ${watch.id}: confirmation not sent`, result.reason);
+  }
+  return result.sent;
+}
+
+/** What that one message says. */
+function confirmEmail(env: Env, watch: Watch, to: string, token: string): Email {
+  const base = (env.APP_URL ?? '').replace(/\/$/, '');
+  const link = `${base}/a/confirm/${token}`;
+  const where = watch.label?.trim()
+    ? `${watch.postcode} (${watch.label.trim()})`
+    : watch.postcode;
+
+  const why =
+    `Somebody asked us to email this address when a trade has an opening near `
+    + `${where}. At most one of these an hour, and five in a day.`;
+
+  // The sentence that matters most in the message, and it is addressed to the
+  // person who did not ask for it: doing nothing has to be a complete answer,
+  // said plainly, above the link rather than under it.
+  const notYou =
+    `If that was not you, ignore this email. Nothing else will be sent to this `
+    + `address, and no alert will ever be, unless the link below is opened.`;
+
+  const subject = `Confirm alerts for ${watch.postcode}`;
+
+  const text = [
+    why,
+    '',
+    notYou,
+    '',
+    `Turn the alerts on: ${link}`,
+  ].join('\n');
+
+  const html =
+    `<p>${escapeHtml(why)}</p>`
+    + `<p>${escapeHtml(notYou)}</p>`
+    + `<p><a href="${escapeHtml(link)}">Turn these alerts on</a></p>`;
+
+  return { to, subject, text, html };
 }
 
 /**
@@ -415,30 +587,57 @@ export async function updateWatch(
   if (patch.label !== undefined) {
     next.label = (patch.label ?? '').trim().slice(0, MAX_LABEL_CHARS) || null;
   }
+  // Whether this edit points the watch at a mailbox it was not pointed at
+  // before, which is the thing that has to be re-proved.
+  let addressChanged = false;
+
   if (patch.email !== undefined) {
     // The same consent as on creation, and only for this watch.
     const email = cleanEmail(patch.email);
     // A different address is a different mailbox, so the old one's failures
     // say nothing about it. Carrying the count over would retire a good
     // address on its first send.
-    if (email !== next.email) next.email_failed_count = 0;
+    if (email !== next.email) {
+      next.email_failed_count = 0;
+      addressChanged = true;
+      // AND THE CONFIRMATION DOES NOT CARRY OVER EITHER. This is the hole that
+      // would otherwise reopen everything confirmWatchEmail exists to close:
+      // confirm your own mailbox, then PATCH the watch to a stranger's, and the
+      // verified stamp would sit there blessing an address nobody has agreed
+      // to. A new address is an unconfirmed address, every time, and it is
+      // silent until somebody opens the link sent to it.
+      next.email_verified_at = null;
+    }
     next.email = email;
   }
   if (patch.active !== undefined) next.active = patch.active ? 1 : 0;
 
   next.updated_at = now();
 
+  // Bound to the address, so the link mailed to the previous one stops working
+  // the moment this row changes. NULL when the box was cleared: there is
+  // nothing left to confirm.
+  const confirmHash = addressChanged && next.email
+    ? await hashWatchToken(await confirmTokenFor(env, next.id, next.email), env)
+    : null;
+
   await env.DB.prepare(
     `UPDATE watches
         SET postcode = ?, lat = ?, lng = ?, country = ?, trades = ?,
             max_detour_seconds = ?, max_price_cents = ?, label = ?, email = ?,
+            email_verified_at = ?,
+            email_confirm_hash = CASE WHEN ? THEN ? ELSE email_confirm_hash END,
             email_failed_count = ?, active = ?, updated_at = ?
       WHERE id = ?`,
   ).bind(next.postcode, next.lat, next.lng, next.country,
     next.trades ? JSON.stringify(next.trades) : null,
     next.max_detour_seconds, next.max_price_cents, next.label, next.email,
+    next.email_verified_at, addressChanged ? 1 : 0, confirmHash,
     next.email_failed_count, next.active,
     next.updated_at, next.id).run();
+
+  // Asked for again, because it is a different mailbox being asked.
+  if (addressChanged && next.email) await sendConfirmation(env, next);
 
   return next;
 }
@@ -662,8 +861,15 @@ export async function matchWatches(env: Env, limit = DEFAULT_WATCH_BATCH): Promi
     // prevent -- somebody asked to be told and nothing can reach them -- so it
     // is skipped rather than treated as an error. The page they made it on is
     // where that gets said, while they can still fix it.
+    // An unconfirmed address is not a channel. It is a box somebody typed
+    // something into, and until the link in the confirmation is opened we do
+    // not know whether the person who typed it owns the mailbox. Counted as
+    // "nowhere to deliver" rather than as a failed send, so the opening is not
+    // burned either: if they confirm tomorrow, whatever is open tomorrow is
+    // still theirs to be told about.
     const targets = subscriptions.get(watch.id) ?? [];
-    const hasEmail = Boolean(watch.email) && watch.email_failed_count < MAX_EMAIL_FAILURES;
+    const hasEmail = Boolean(watch.email) && watch.email_verified_at != null
+      && watch.email_failed_count < MAX_EMAIL_FAILURES;
     if (targets.length === 0 && !hasEmail) continue;
 
     const at: Point = { lat: watch.lat, lng: watch.lng };
@@ -885,13 +1091,34 @@ async function deliverEmail(
 ): Promise<boolean> {
   if (!watch.email) return false;
 
+  // THE GATE, said again where the send actually happens.
+  //
+  // matchWatches already treats an unconfirmed address as no channel at all, so
+  // in the ordinary path this is never the thing that stops a message. It is
+  // here because this function is what puts mail in somebody's inbox, and the
+  // rule -- nothing is delivered to an address that has not been confirmed --
+  // has to hold for every future caller of it and not only for the one that
+  // exists today. It is two lines; an email bomb sent from our domain because a
+  // new caller did not know about the rule is not.
+  if (watch.email_verified_at == null) return false;
+
   // Past the ceiling this address is done, and the reason is the count itself:
   // five refusals in a row is a mailbox that does not exist, not a bad
   // afternoon. Retrying it every fifteen minutes forever spends the sending
   // domain's reputation on nobody.
   if (watch.email_failed_count >= MAX_EMAIL_FAILURES) return false;
 
-  const result = await sendEmail(env, alertEmail(env, watch.email, watch, slot, detour));
+  // 'bulk' is what separates these from sign-in links. Alerts are the half of
+  // this site's email that grows with how well it is doing, so they get their
+  // own provider and their own daily allowance -- otherwise a good afternoon
+  // spends the allowance the sign-in links need, and the failure lands on
+  // businesses trying to reach their own accounts. See EmailLane in ./email.ts.
+  // Worked out here rather than read off the row: only the hash of it is
+  // stored. See unsubTokenFor.
+  const stopToken = await unsubTokenFor(env, watch.id);
+
+  const result = await sendEmail(
+    env, alertEmail(env, watch.email, watch, slot, detour, stopToken), 'bulk');
 
   if (result.sent) {
     if (watch.email_failed_count > 0) {
@@ -908,6 +1135,20 @@ async function deliverEmail(
   // off would silently retire an address that has never been tried.
   if (result.reason === 'not_configured') return false;
 
+  // NOR DOES BEING THROTTLED, and for exactly the same reason.
+  //
+  // 'rate_limited' means the provider refused this send because too many went
+  // out too quickly, or because the day's free allowance is spent. Both are
+  // facts about the sending account on a busy day, not about whether this
+  // mailbox exists. Counting them would let one launch afternoon put several
+  // ticks against a perfectly good address, and five of those retire it for
+  // good -- the failure would be invisible, permanent, and land on whoever
+  // happened to be alerted while the site was busiest.
+  //
+  // The counter is for one thing only: an address that is not there. A refusal
+  // that would have been a delivery on a quieter day is not evidence of that.
+  if (result.reason === 'rate_limited') return false;
+
   const failures = watch.email_failed_count + 1;
   await env.DB.prepare(
     `UPDATE watches SET email_failed_count = email_failed_count + 1 WHERE id = ?`,
@@ -916,9 +1157,14 @@ async function deliverEmail(
   if (failures >= MAX_EMAIL_FAILURES) {
     // The same shape as a push endpoint answering 410: stop, and leave
     // something behind that says why nothing is arriving when they ask.
+    //
+    // The reason rather than `detail`, for the reason sendConfirmation gives:
+    // the provider's error body usually contains the mailbox it refused, and a
+    // Worker log is the one store in this product that no sweep and no erasure
+    // can reach.
     console.error(
       `watch ${watch.id}: email dropped after ${failures} refusals`,
-      result.detail ?? '');
+      result.reason);
   }
 
   return false;
@@ -934,11 +1180,13 @@ async function deliverEmail(
  *
  * Unsubscribe is one click, and it does not use the watch's own token. That
  * token grants full control and only its hash is stored, so the matcher could
- * never rebuild it. Instead every watch carries a second, single-purpose key
- * whose only power is switching itself off -- see migration 0019.
+ * never rebuild it. Instead every watch has a second, single-purpose key whose
+ * only power is switching itself off -- worked out from the watch and the
+ * pepper by unsubTokenFor and passed in, because only its hash is kept either.
  */
 function alertEmail(
   env: Env, to: string, watch: Watch, slot: PublicSlot, detour: number | null,
+  stopToken: string,
 ): Email {
   const base = (env.APP_URL ?? '').replace(/\/$/, '');
   const link = `${base}/book/${slot.gap_id}`;
@@ -966,11 +1214,9 @@ function alertEmail(
     `You asked to be told about openings near ${where}. `
     + `At most one of these an hour, and five in a day.`;
 
-  const stopLink = watch.unsub_token ? `${base}/a/stop/${watch.unsub_token}` : null;
-  const stop = stopLink
-    ? `Stop these emails: ${stopLink}`
-    // Only reachable for a watch created before unsubscribe tokens existed.
-    : 'To stop these emails, open the alert link you saved and pause the watch.';
+  // Always present now: the key is derived, so there is no watch this cannot be
+  // built for and no email that goes out without a way to stop it.
+  const stop = `Stop these emails: ${base}/a/stop/${stopToken}`;
 
   const subject = `${slot.business_name} has ${slot.when} free`;
 

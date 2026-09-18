@@ -63,9 +63,21 @@ const UNWIRED: Record<string, string> = {
   'appointments.external_id': '0001_init.sql',
   'locations.is_primary': '0001_init.sql',
   'messages.cost_cents': '0001_init.sql',
+  // All three were written by the inbound and status webhooks behind an
+  // operator's own carrier account. That feature is gone; the columns are
+  // documented in place rather than dropped, because dropping one in SQLite
+  // rebuilds the table.
+  'messages.from_address': '0001_init.sql',
+  'messages.provider_sid': '0001_init.sql',
+  'messages.error_code': '0001_init.sql',
   'services.is_price_from': '0001_init.sql',
   'postal_codes.admin_name1': '0002_postal_codes.sql',
-  'clients.platform_introduced': '0023_standing.sql',
+  // clients.platform_introduced WAS HERE and no longer belongs. 0023 added it
+  // marked READ BY NOTHING and asked that a reader be recorded; the erasure in
+  // lib/retention.ts is now that reader — it is how a customer's row is told
+  // apart from an operator's own imported one — and migration 0048 is where it
+  // is recorded. A column listed as unread while something reads it is the
+  // list lying, which is worse than not having one.
 };
 
 /** Every table and column the migrations actually produce. */

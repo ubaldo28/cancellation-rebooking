@@ -163,18 +163,55 @@
 /* Green, like the reference. A rating in the same colour as the body text
    reads as data; in green it reads as a verdict, which is what it is. */
 .pro-score > strong,
-.stars { color: #1a7f4b; }
+.stars { color: #00477B; }
 
 .stars { letter-spacing: 0.08em; font-size: 15px; }
 .stars-off { color: var(--line); }
 
-.pro-num { font-weight: 700; color: #1a7f4b; }
+.pro-num { font-weight: 700; color: #00477B; }
 
 .pro-tagline {
   margin: 10px 0 0;
   font-size: 15px;
   line-height: 1.5;
   color: var(--muted);
+}
+
+/* --------------------------------------------------------------------------
+ * The trade-and-patch line under the name
+ *
+ * Two facts separated by a middot rather than two lines, because it is a
+ * caption on the name and not a section. The separator is a generated ::before
+ * on every item but the first, so it never has to be typed into the markup and
+ * never ends up dangling at the end of a wrapped line — and it is aria-hidden
+ * by virtue of being generated content the accessibility tree does not carry,
+ * which is right: read aloud, "Car detailing" and "Works Venice" are two
+ * phrases and a spoken middot between them is noise.
+ * ----------------------------------------------------------------------- */
+.pro-head-facts {
+  margin: 8px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+}
+
+.pro-head-facts > span + span::before {
+  content: '·';
+  margin-right: 8px;
+  color: var(--line-strong, var(--muted));
+}
+
+/* The trade is the stronger of the two: it is what the business IS, and the
+   patch only matters once the reader has decided the trade is right. */
+.pro-head-trade { font-weight: 650; color: var(--ink, inherit); }
+
+.pro-head-facts a {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .pro-share { margin: 12px 0 0; }
@@ -319,6 +356,30 @@
   color: var(--muted);
 }
 
+/* --------------------------------------------------------------------------
+ * The openings, cut into days
+ *
+ * A rule above each day rather than a box around it. The cards already carry
+ * their own borders and a second border around a group of them turns a list
+ * into a stack of panels — three visual layers deep for what is, in the end,
+ * one heading and some cards. The first day loses the rule because a line
+ * immediately under the paragraph above it reads as a divider belonging to
+ * that paragraph.
+ * ----------------------------------------------------------------------- */
+.pro-day + .pro-day {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.pro-day-h {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+
 .pro-ask-row { display: flex; flex-wrap: wrap; gap: 10px; }
 
 /* Allowed to take the whole row and no less than most of it, so a long
@@ -390,6 +451,27 @@
 
 .pro-plain { margin: 0; font-size: 14px; line-height: 1.6; }
 
+/* --------------------------------------------------------------------------
+ * "Before they arrive"
+ *
+ * Set at the reading size of the bio rather than the 14px of the fact lists,
+ * and measure-capped, because these are sentences to be read rather than
+ * figures to be scanned — and they are the sentences most likely to save
+ * somebody an afternoon. Numbered would imply an order to do them in; they are
+ * five independent questions and any of them may be the only one that matters.
+ * ----------------------------------------------------------------------- */
+.pro-ask-list {
+  margin: 14px 0 0;
+  padding-left: 20px;
+  max-width: 62ch;
+  display: grid;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.pro-ask-list li::marker { color: var(--muted); }
+
 .pro-social a { color: #1a5fb4; }
 
 .pro-bio { margin: 0; font-size: 15px; line-height: 1.65; white-space: pre-wrap; }
@@ -409,6 +491,29 @@
   font-size: 14px;
 }
 
+/* --------------------------------------------------------------------------
+ * The self-reported list, and why it is deliberately plainer than the one above
+ *
+ * `.pro-list` is a column of ticks and that is a visual claim: a tick beside a
+ * line says somebody confirmed it. Exactly one thing in the overview is
+ * confirmed by anything — the hire count, which this site counts itself — so
+ * exactly one list gets ticks and the facts the business typed about itself get
+ * ordinary bullets. It is the same information laid out with the same care; it
+ * simply does not borrow a mark it has not got.
+ *
+ * Not `list-style: none`. A bulleted list is announced as a list of items and
+ * looks like a set of claims, which is what these are, and there is nothing to
+ * gain here from stripping the marker.
+ * ----------------------------------------------------------------------- */
+.pro-said {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 7px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 /* Green ticks, like the reference's service list. */
 .pro-ticks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 
@@ -423,7 +528,7 @@
   content: '✓';
   position: absolute;
   left: 0;
-  color: #1a7f4b;
+  color: #00477B;
   font-weight: 700;
 }
 
@@ -513,7 +618,7 @@
 }
 
 .pro-bar-track { height: 7px; border-radius: 999px; background: var(--accent-soft); overflow: hidden; }
-.pro-bar-fill { display: block; height: 100%; background: #1a7f4b; }
+.pro-bar-fill { display: block; height: 100%; background: #00477B; }
 
 /* Search and sort, side by side, exactly where the reference puts them. */
 .pro-tools { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -569,7 +674,7 @@
   cursor: pointer;
 }
 
-.pro-chip.on { border-color: #1a7f4b; color: #1a7f4b; font-weight: 600; }
+.pro-chip.on { border-color: #00477B; color: #00477B; font-weight: 600; }
 
 .pro-reviews { display: grid; gap: 22px; }
 
@@ -598,7 +703,7 @@
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: #1a7f4b;
+  color: #00477B;
 }
 
 .pro-review-body { margin: 10px 0 0; font-size: 15px; line-height: 1.65; }

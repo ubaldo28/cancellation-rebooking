@@ -14,6 +14,13 @@
  *
  * The Worker serves it to the browser rather than the browser holding its own
  * copy, for the same reason.
+ *
+ * One fact about a trade is NOT in here, and deliberately: the path of its
+ * tile drawing. It is derived from the slug rather than written down, so
+ * `tradeArt` in lib/seo.ts computes it -- that file is where `tradeSlug` lives
+ * and this one must not import it, because seo.ts imports this. The catalogue
+ * goes out to the browser with the paths added (`withArt`, same file), so the
+ * picture travels the way the label and the hint already travel.
  */
 
 export interface Trade {

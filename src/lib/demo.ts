@@ -1,9 +1,12 @@
 import type { Env, Operator } from '../types';
 import { createSession } from './auth';
 import { detectGaps } from './gaps';
-import { ALL_METRO_AREAS, metroAreaBySlug } from './metros';
+import {
+  ALL_METRO_AREAS, METROS_INCLUDING_HIDDEN, isHiddenPlace, metroAreaBySlug,
+} from './metros';
 import { addLocalDays, fromLocal, localDayStart, toLocal } from './tz';
 import { newId, now } from './util';
+import type { VehicleKind } from './vehicles';
 
 /**
  * Working accounts anyone can open without an email or a password.
@@ -204,6 +207,23 @@ interface DemoBusiness {
   /** Where the van sleeps: the anchor for a gap with no adjacent job. */
   base: PlaceKey;
   /**
+   * What this business drives, as a slug from lib/vehicles.ts.
+   *
+   * A REAL FIELD ON A SAMPLE BUSINESS, not a guess about a real one. The front
+   * page draws these crossing the map, and a seed where all twenty-two drive
+   * the identical van teaches a visitor nothing about a marketplace whose
+   * whole point is that different trades turn up in different things. So junk
+   * removal tows a trailer, the locksmith and the phone repairer are in cars,
+   * and the trades that carry a machine are in vans -- which is what those
+   * trades actually drive.
+   *
+   * Nothing infers this from `trade` at runtime: see vehicles.ts. Working it
+   * out from the trade would be the site deciding what a REAL business drives
+   * and then drawing it on a public map, which is a different thing entirely
+   * from filling in a field on a business we invented.
+   */
+  drives: VehicleKind;
+  /**
    * Deliberately overlapping, so no ZIP shows a single trade. Capped at five:
    * a one-van business that claims eighteen neighbourhoods is not believable,
    * and the whole point of the map is that it looks like real coverage.
@@ -265,9 +285,10 @@ interface DemoBusiness {
 const BUSINESSES: DemoBusiness[] = [
   {
     id: DEMO_OPERATOR_ID,
-    email: 'demo@slotfill.app',
+    email: 'demo@roundtheway.app',
     name: 'Valley Shine Mobile Detailing',
     trade: 'mobile car wash and detailing',
+    drives: 'van',
     phone: '+18185550100',
     slug: 'valley-shine-mobile-detailing',
     tagline: 'Two-man crew, water and power on board',
@@ -375,9 +396,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-junk',
-    email: 'demo-junk@slotfill.app',
+    email: 'demo-junk@roundtheway.app',
     name: 'Haul It Away Junk Removal',
     trade: 'junk removal',
+    drives: 'pickup_trailer',
     phone: '+18185550200',
     slug: 'haul-it-away-junk-removal',
     tagline: 'Sixteen-foot truck, two loaders, we carry it out',
@@ -456,9 +478,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-bins',
-    email: 'demo-bins@slotfill.app',
+    email: 'demo-bins@roundtheway.app',
     name: 'FreshBin Trash Can Cleaning',
     trade: 'trash can cleaning',
+    drives: 'pickup',
     phone: '+18185550300',
     slug: 'freshbin-trash-can-cleaning',
     tagline: 'Hot-water bin washing at the kerb, the day after collection',
@@ -535,9 +558,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-wash',
-    email: 'demo-wash@slotfill.app',
+    email: 'demo-wash@roundtheway.app',
     name: 'Hard Rain Pressure Washing',
     trade: 'mobile pressure washing',
+    drives: 'pickup',
     phone: '+18185550400',
     slug: 'hard-rain-pressure-washing',
     tagline: 'Trailer rig and a 200-gallon tank, no tap needed',
@@ -602,9 +626,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-detail-west',
-    email: 'demo-detail-west@slotfill.app',
+    email: 'demo-detail-west@roundtheway.app',
     name: 'Old Mill Mobile Detailing',
     trade: 'mobile car wash and detailing',
+    drives: 'van',
     phone: '+18185550500',
     slug: 'old-mill-mobile-detailing',
     tagline: 'One van, water and a generator on board, west Valley only',
@@ -683,9 +708,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-windows',
-    email: 'demo-windows@slotfill.app',
+    email: 'demo-windows@roundtheway.app',
     name: 'Clear View Window Cleaning',
     trade: 'window cleaning',
+    drives: 'van',
     phone: '+18185550600',
     slug: 'clear-view-window-cleaning',
     tagline: 'Hand-washed downstairs, water-fed pole upstairs',
@@ -767,9 +793,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-lawn',
-    email: 'demo-lawn@slotfill.app',
+    email: 'demo-lawn@roundtheway.app',
     name: 'Sherman Way Lawn and Garden',
     trade: 'landscaping and gardening',
+    drives: 'pickup_trailer',
     phone: '+18185550800',
     slug: 'sherman-way-lawn-and-garden',
     tagline: 'Mow, edge and haul, the clippings leave on the trailer',
@@ -862,9 +889,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-mechanic',
-    email: 'demo-mechanic@slotfill.app',
+    email: 'demo-mechanic@roundtheway.app',
     name: 'Roscoe Mobile Mechanic',
     trade: 'mobile oil change and mechanics',
+    drives: 'van',
     phone: '+18185550900',
     slug: 'roscoe-mobile-mechanic',
     tagline: 'Service van with jack stands, the car stays on the driveway',
@@ -953,9 +981,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-junk-east',
-    email: 'demo-junk-east@slotfill.app',
+    email: 'demo-junk-east@roundtheway.app',
     name: 'Tuxford Junk Removal',
     trade: 'junk removal',
+    drives: 'pickup_trailer',
     phone: '+18185550700',
     slug: 'tuxford-junk-removal',
     tagline: 'Fourteen-foot truck out of Sun Valley, two on the crew',
@@ -1022,9 +1051,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-carpet',
-    email: 'demo-carpet@slotfill.app',
+    email: 'demo-carpet@roundtheway.app',
     name: 'Whitsett Carpet and Upholstery',
     trade: 'carpet cleaning',
+    drives: 'van',
     phone: '+18185551000',
     slug: 'whitsett-carpet-and-upholstery',
     tagline: 'Truck-mounted extraction, hoses reach a second floor',
@@ -1105,9 +1135,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-locksmith',
-    email: 'demo-locksmith@slotfill.app',
+    email: 'demo-locksmith@roundtheway.app',
     name: 'Nordhoff Mobile Locksmith',
     trade: 'mobile locksmith',
+    drives: 'car',
     phone: '+18185551100',
     slug: 'nordhoff-mobile-locksmith',
     tagline: 'Rekeys, deadbolts and car keys, booked in advance',
@@ -1205,9 +1236,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-cleaning',
-    email: 'demo-cleaning@slotfill.app',
+    email: 'demo-cleaning@roundtheway.app',
     name: 'Las Virgenes House Cleaning',
     trade: 'house cleaning',
+    drives: 'suv',
     phone: '+18185551200',
     slug: 'las-virgenes-house-cleaning',
     tagline: 'Two cleaners, our own vacuums, cloths and products',
@@ -1279,9 +1311,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-pool',
-    email: 'demo-pool@slotfill.app',
+    email: 'demo-pool@roundtheway.app',
     name: 'Valley Vista Pool Service',
     trade: 'pool service',
+    drives: 'pickup',
     phone: '+18185551300',
     slug: 'valley-vista-pool-service',
     tagline: 'Weekly brush, net and water test, half an hour a stop',
@@ -1367,9 +1400,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-grooming',
-    email: 'demo-grooming@slotfill.app',
+    email: 'demo-grooming@roundtheway.app',
     name: 'Sylvan Street Mobile Dog Grooming',
     trade: 'mobile pet grooming',
+    drives: 'van',
     phone: '+18185551400',
     slug: 'sylvan-street-mobile-dog-grooming',
     tagline: 'Bath, dry and clip in the van at your kerb',
@@ -1452,9 +1486,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-appliance',
-    email: 'demo-appliance@slotfill.app',
+    email: 'demo-appliance@roundtheway.app',
     name: 'Verdugo Appliance Repair',
     trade: 'appliance repair',
+    drives: 'van',
     phone: '+18185551500',
     slug: 'verdugo-appliance-repair',
     tagline: 'Washers, dryers and fridges fixed where they stand',
@@ -1548,9 +1583,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-phone',
-    email: 'demo-phone@slotfill.app',
+    email: 'demo-phone@roundtheway.app',
     name: 'Valley Screen Repair',
     trade: 'phone and tablet repair',
+    drives: 'car',
     phone: '+18185551600',
     slug: 'valley-screen-repair',
     tagline: 'Screens and batteries done at your kerb in under an hour',
@@ -1648,9 +1684,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-sm-detail',
-    email: 'demo-sm-detail@slotfill.app',
+    email: 'demo-sm-detail@roundtheway.app',
     name: 'Clark Avenue Mobile Detailing',
     trade: 'mobile car wash and detailing',
+    drives: 'van',
     phone: '+18055550100',
     slug: 'clark-avenue-mobile-detailing',
     tagline: 'Cars and work trucks washed at the kerb, water on board',
@@ -1732,9 +1769,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-sm-power',
-    email: 'demo-sm-power@slotfill.app',
+    email: 'demo-sm-power@roundtheway.app',
     name: 'Betteravia Pressure Washing',
     trade: 'mobile pressure washing',
+    drives: 'pickup',
     phone: '+18055550200',
     slug: 'betteravia-pressure-washing',
     tagline: 'Houses, drives and yard equipment, water and tank on the trailer',
@@ -1809,9 +1847,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-sm-mech',
-    email: 'demo-sm-mech@slotfill.app',
+    email: 'demo-sm-mech@roundtheway.app',
     name: 'Blosser Road Mobile Mechanic',
     trade: 'mobile oil change and mechanics',
+    drives: 'van',
     phone: '+18055550300',
     slug: 'blosser-road-mobile-mechanic',
     tagline: 'Service and brakes done on your drive, common parts on board',
@@ -1903,9 +1942,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-sm-groom',
-    email: 'demo-sm-groom@slotfill.app',
+    email: 'demo-sm-groom@roundtheway.app',
     name: 'Foxen Canyon Mobile Pet Grooming',
     trade: 'mobile pet grooming',
+    drives: 'van',
     phone: '+18055550400',
     slug: 'foxen-canyon-mobile-pet-grooming',
     tagline: 'Grooming van at your door, one dog at a time',
@@ -1976,9 +2016,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-sm-garden',
-    email: 'demo-sm-garden@slotfill.app',
+    email: 'demo-sm-garden@roundtheway.app',
     name: 'Nipomo Mesa Landscaping',
     trade: 'landscaping and gardening',
+    drives: 'pickup_trailer',
     phone: '+18055550500',
     slug: 'nipomo-mesa-landscaping',
     tagline: 'Garden rounds and irrigation across the valley',
@@ -2058,9 +2099,10 @@ const BUSINESSES: DemoBusiness[] = [
 
   {
     id: 'demo-operator-sm-window',
-    email: 'demo-sm-window@slotfill.app',
+    email: 'demo-sm-window@roundtheway.app',
     name: 'Stowell Road Window Cleaning',
     trade: 'window cleaning',
+    drives: 'van',
     phone: '+18055550600',
     slug: 'stowell-road-window-cleaning',
     tagline: 'Pure water pole, single and two storey, no ladders on the lawn',
@@ -2130,8 +2172,37 @@ const BUSINESSES: DemoBusiness[] = [
 ];
 
 
-/** Every id the demo owns. wipe and the seeder both need the whole set. */
+/**
+ * Every id the demo owns. `wipe` needs the WHOLE set and not just the live one.
+ *
+ * A business in a metro that has since been hidden still has rows in a database
+ * that was seeded before it was hidden, and wipe is what removes them. Narrow
+ * this to the live businesses and those rows become unreachable orphans that
+ * nothing deletes and nothing lists.
+ */
 const DEMO_OPERATOR_IDS = BUSINESSES.map((b) => b.id);
+
+/**
+ * The businesses the seeder actually creates: everything except those based in
+ * a metro that is not open. See the skip in seedDemo.
+ *
+ * SEPARATE FROM DEMO_OPERATOR_IDS ABOVE, AND THE DIFFERENCE COST A REAL BUG.
+ * seedDemoIfEmpty decides "already seeded" by comparing the operator count in
+ * the database against a length, and it was comparing against the full list.
+ * The moment the seeder started skipping six Santa Maria businesses, sixteen
+ * rows were being measured against twenty-two, the check could never be true,
+ * and every single call fell through to a full wipe and rebuild.
+ *
+ * That call sits inside GET /api/public/map — the busiest read in the product.
+ * So in demo mode every uncached map request was deleting and re-inserting
+ * several hundred rows, re-randomising which vans were online, and throwing
+ * away whatever a visitor was in the middle of.
+ *
+ * Two lists because they answer two different questions: what the demo OWNS,
+ * and what it CREATES. They were the same number until they were not.
+ */
+const SEEDED_OPERATOR_COUNT =
+  BUSINESSES.filter((b) => !isHiddenPlace(PLACES[b.base].slug)).length;
 
 /** Service row id. Global uniqueness matters: several businesses sell a 'wash'. */
 function serviceId(business: DemoBusiness, key: string): string {
@@ -2165,7 +2236,8 @@ async function wipe(env: Env): Promise<void> {
     `DELETE FROM service_areas WHERE operator_id IN (${holes})`,
     `DELETE FROM working_hours WHERE operator_id IN (${holes})`,
     `DELETE FROM time_off WHERE operator_id IN (${holes})`,
-    // Photos are R2 keys, not bytes, so dropping the rows is the whole job.
+    // Photos are photo-store keys, not bytes, so dropping the rows is the
+    // whole job.
     `DELETE FROM work_photos WHERE operator_id IN (${holes})`,
     `DELETE FROM sessions WHERE operator_id IN (${holes})`,
     `DELETE FROM login_tokens WHERE operator_id IN (${holes})`,
@@ -2200,6 +2272,13 @@ function at(dayStart: number, hour: number, minute = 0): number {
  * the database and rebuilds when they differ, and it is the only thing that
  * carries a change in this file to a database that has already been seeded.
  *
+ * Version 4 hid Santa Maria: the six sample businesses based there are no
+ * longer created, and its postcodes are deleted rather than merely skipped.
+ * The operator count changed, so the count alone would have caught the
+ * businesses — it would NOT have caught the postcodes, which belong to no
+ * operator and which wipe therefore never removes. That is what the version is
+ * for, and it is the second time this exact shape of change has needed it.
+ *
  * Version 3 opened Santa Maria: six sample businesses in the Santa Maria
  * Valley, and a postcode row for every area of every metro rather than only
  * the ones a sample business covers. The business count changed, so the row
@@ -2211,7 +2290,7 @@ function at(dayStart: number, hour: number, minute = 0): number {
  * open-for-work switch. Version 1 is everything before it, which is what a
  * database seeded before the `demo_seed` table existed is assumed to hold.
  */
-export const DEMO_SEED_VERSION = 3;
+export const DEMO_SEED_VERSION = 5;
 
 export async function seedDemo(env: Env): Promise<void> {
   const t = now();
@@ -2234,15 +2313,22 @@ export async function seedDemo(env: Env): Promise<void> {
   // service_areas.slug unique without touching place_slug.
   const areaSeq = new Map<string, number>();
 
-  // A postcode centroid for every area of every metro, not only the ones a
+  // A postcode centroid for every area of every LIVE metro, not only the ones a
   // sample business happens to cover.
   //
   // This is the table the front page's postcode box geocodes against, and in a
   // database that has never loaded the GeoNames extract — which is every local
   // one, and any deployment where seed/postal_codes.sql was never run — it is
   // the ONLY thing in it. Seeding only the covered areas is what made a
-  // visitor typing a Santa Maria ZIP be told we could not place them, on a
-  // site whose Santa Maria page was working perfectly.
+  // visitor typing a ZIP in a served metro be told we could not place them, on
+  // a site whose page for that metro was working perfectly.
+  //
+  // A HIDDEN METRO'S POSTCODES ARE DELIBERATELY ABSENT, and that is a reversal
+  // of what this loop used to do. ALL_METRO_AREAS is built from the live
+  // metros, so while Santa Maria is off, 93454 does not geocode — somebody
+  // there is told plainly that we cannot place them, rather than being dropped
+  // on a neighbourhood with nothing in it and left to conclude the site is
+  // empty. Switching the metro back on restores its codes with it.
   //
   // OR IGNORE is doing real work here. The primary key is (country_code,
   // postal_code) and one code can cover several neighbourhoods — 91302 is
@@ -2252,6 +2338,32 @@ export async function seedDemo(env: Env): Promise<void> {
   // offline geocoder simply cannot tell those neighbourhoods apart. Clients
   // and service areas never go through it, carrying their own coordinates, so
   // only postcode search is affected.
+  // A HIDDEN METRO'S CODES ARE DELETED, not merely left unwritten.
+  //
+  // Not seeding them is only half of it: a database seeded while the metro was
+  // open still holds them, INSERT OR IGNORE never overwrites a row, and wipe
+  // does not touch this table at all — it deletes by operator_id and a postcode
+  // belongs to nobody. So without this, somebody in Santa Maria types 93454 into
+  // a site that says it is testing in Los Angeles, is placed in a neighbourhood
+  // with nothing in it, and concludes the product is empty rather than absent.
+  //
+  // Only codes that NO live area also lists. One code can cover neighbourhoods
+  // in more than one place, and deleting a live one because a hidden area
+  // happens to share it would break postcode search for somebody we do serve.
+  const liveCodes = new Set(ALL_METRO_AREAS.flatMap((a) => a.zips));
+  const stale = [...new Set(
+    METROS_INCLUDING_HIDDEN
+      .filter((m) => !m.live)
+      .flatMap((m) => m.areas.flatMap((a) => a.zips)),
+  )].filter((z) => !liveCodes.has(z));
+
+  if (stale.length) {
+    rows.push(env.DB.prepare(
+      `DELETE FROM postal_codes
+        WHERE country_code = 'US' AND postal_code IN (${stale.map(() => '?').join(',')})`,
+    ).bind(...stale));
+  }
+
   for (const a of ALL_METRO_AREAS) {
     for (const zip of a.zips) {
       rows.push(env.DB.prepare(
@@ -2262,6 +2374,20 @@ export async function seedDemo(env: Env): Promise<void> {
   }
 
   for (const b of BUSINESSES) {
+    // A BUSINESS BASED IN A METRO THAT IS NOT OPEN IS NOT CREATED.
+    //
+    // The demo is what actually fills this site — every business, opening and
+    // neighbourhood count a visitor sees today comes from this function. So
+    // turning Santa Maria off in lib/metros.ts is only half of taking it off
+    // the site: without this line the metro page would be gone while eleven
+    // Santa Maria businesses carried on appearing in the map, the feed and the
+    // neighbourhood rail, which is a worse state than either.
+    //
+    // The rows are left in BUSINESSES rather than deleted. They are hours of
+    // written detail — real street layouts, believable service mixes — and the
+    // day Santa Maria opens they should come back with it, not be rewritten.
+    if (isHiddenPlace(PLACES[b.base].slug)) continue;
+
     const home = PLACES[b.base];
 
     // The counters are added up from the review rows that are about to be
@@ -2285,15 +2411,16 @@ export async function seedDemo(env: Env): Promise<void> {
          min_gap_seconds,max_detour_seconds,buffer_seconds,offer_ttl_seconds,
          offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,discount_percent,
          plan,accept_public_bookings,deposit_cents,
+         vehicle_kind,
          tagline,bio,years_experience,profile_slug,is_published,
          employees,years_in_business,background_check_name,background_checked_at,
          rating_sum,rating_count,hired_count,online_until,online_since,
          created_at,updated_at)
        VALUES (?,?,?,?,?,?, 'US','USD','en','mobile','both','device',?,?,
-         3600,900,900,5400,3,3600,604800,0,'active',1,2500,?,?,?,?,1,
+         3600,900,900,5400,3,3600,604800,0,'active',1,2500,?,?,?,?,?,1,
          ?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(b.id, b.email, b.name, b.trade, b.phone, TZ,
-      home.lat, home.lng, b.tagline, b.bio, b.years, b.slug,
+      home.lat, home.lng, b.drives, b.tagline, b.bio, b.years, b.slug,
       b.employees ?? 1, b.inBusiness ?? null,
       // The name a check was run on, and when. Nothing is asserted about the
       // result and no provider is named: recording that a check happened is
@@ -2500,16 +2627,61 @@ export function isDemoOperator(id: string): boolean {
   return DEMO_OPERATOR_IDS.includes(id);
 }
 
+/**
+ * The same question as isDemoOperator, asked inside a query.
+ *
+ * A listing query that wants to treat the sample businesses differently from
+ * the real ones cannot call isDemoOperator on rows it has not fetched yet — and
+ * the reason it matters is `stripe_payouts_enabled`. A real business with
+ * nowhere to be paid must not be advertised as bookable; not one of the sample
+ * businesses has a Stripe account and every one of them is meant to stay on the
+ * map, badged, so the plain filter would have emptied the map of everything the
+ * product has to show before anybody signs up.
+ *
+ * Returns the fragment and the values to bind with it, in that order, so the
+ * caller splices them into its own bind list at the position the fragment sits
+ * at. A hand-written id list interpolated into SQL would be a second copy of
+ * BUSINESSES that nothing keeps in step with the first.
+ */
+export function demoOperatorSql(column: string): { sql: string; binds: string[] } {
+  return {
+    sql: `${column} IN (${DEMO_OPERATOR_IDS.map(() => '?').join(',')})`,
+    // A copy. The list itself is module state that `wipe` and `refreshOnline`
+    // scope their every statement to, and handing a caller the live array out
+    // of a helper this convenient is how it eventually gets pushed to.
+    binds: [...DEMO_OPERATOR_IDS],
+  };
+}
+
 export async function seedDemoIfEmpty(env: Env): Promise<boolean> {
   if (env.DEMO_MODE !== 'on') return false;
 
-  // Never touch a database that has a real operator in it. Everything below
-  // wipes and rebuilds, and that must never reach someone's actual business.
+  // THERE USED TO BE A GUARD HERE, AND IT WAS A TRAP.
+  //
+  // It read: if any operator exists whose id is not a demo id, do nothing. The
+  // intent was right — a rebuild must never reach somebody's actual business —
+  // but the effect was that THE FIRST REAL BUSINESS TO SIGN UP FROZE THE DEMO
+  // FOREVER. Not for a day, not until something was cleaned up: permanently,
+  // on the live site, silently. Every later change to the sample data would
+  // have looked correct on every developer's machine, which starts empty and
+  // therefore always seeds fresh, and reached roundtheway.app never.
+  //
+  // It was found the way these are usually found: a sign-in test created one
+  // operator row on the live database, six sample businesses that had just
+  // been taken off the site went on being served, and the code that removes
+  // them was correct and unreachable.
+  //
+  // The protection it was trying to give is already structural and cannot be
+  // removed by deleting these lines. Every statement in `wipe` is scoped
+  // `WHERE operator_id IN (DEMO_OPERATOR_IDS)`, down to the operators table
+  // itself, and refreshOnline updates only ids from BUSINESSES. There is no
+  // statement anywhere in this file that can touch a row it does not own. A
+  // second check of the same thing, in a place where being wrong meant
+  // stopping rather than over-reaching, bought nothing and cost that.
+  //
+  // DEMO_MODE above is the switch that decides whether demo rows should exist
+  // at all, and it is the only one that should.
   const holes = DEMO_OPERATOR_IDS.map(() => '?').join(',');
-  const real = await env.DB.prepare(
-    `SELECT 1 FROM operators WHERE id NOT IN (${holes}) LIMIT 1`,
-  ).bind(...DEMO_OPERATOR_IDS).first();
-  if (real) return false;
 
   // Reseed when the demo is missing OR out of date.
   //
@@ -2539,7 +2711,7 @@ export async function seedDemoIfEmpty(env: Env): Promise<boolean> {
     `SELECT version FROM demo_seed WHERE id = 1`,
   ).first<{ version: number }>();
 
-  if ((have?.n ?? 0) === DEMO_OPERATOR_IDS.length
+  if ((have?.n ?? 0) === SEEDED_OPERATOR_COUNT
       && (stamp?.version ?? 1) >= DEMO_SEED_VERSION) {
     // Up to date in every way a rebuild would fix, except the one column that
     // measures itself against the clock rather than against this list.

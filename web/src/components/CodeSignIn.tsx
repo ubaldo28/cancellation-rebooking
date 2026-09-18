@@ -1,16 +1,24 @@
+import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ApiError, api, type BookingState } from '../api';
 import '../styles-account.css';
 
 /**
- * The whole of signing up: a mobile number, and the six digits texted to it.
+ * The whole of signing up: an email address, and the six digits sent to it.
  *
- * IT IS THE SHAPE A RIDER'S ACCOUNT HAS, deliberately, and the owner asked for
- * that shape by name. No password, no mailbox, no second screen and no
- * separate journey — which is why this is a component that sits inside
- * whatever is already on screen rather than a page somebody is sent to. At the
- * checkout it is the last thing before the button that books; on /account it
- * is the whole of the sign-in.
+ * IT ASKED FOR A MOBILE NUMBER UNTIL MIGRATION 0038, and that migration is
+ * worth reading before changing anything here. There is no way to send a text
+ * from this deployment, so the code moved to email — and the ACCOUNT had to
+ * move with it, because a code proving one thing while the account hangs off
+ * another is not a smaller guarantee, it is none: anybody could type a
+ * stranger's mobile beside their own mailbox and be handed that stranger's
+ * bookings. So the address receives the code and the address is the account.
+ *
+ * IT IS STILL THE SHAPE A RIDER'S ACCOUNT HAS, which is what the owner asked
+ * for by name. No password, no second screen and no separate journey — which is
+ * why this is a component that sits inside whatever is already on screen rather
+ * than a page somebody is sent to. At the checkout it is the last thing before
+ * the button that books; on /account it is the whole of the sign-in.
  *
  * IT DOES NOT VERIFY THE CODE, and that is the point of the split. Whoever
  * renders this decides what the digits are for: the checkout sends them with
@@ -22,22 +30,22 @@ import '../styles-account.css';
  * WHAT IT DOES OWN is asking for the code, because every real state of that
  * belongs to this box and to nothing else:
  *
- *   sent                three texts to a number in a quarter hour and ten a
+ *   sent                three emails to a mailbox in a quarter hour and ten a
  *                       day, so the button says when the next one can go.
- *   not configured      503 on a deployment with no SMS provider. THE STATE OF
- *                       EVERY DEPLOYMENT TODAY: no account can be created, so
- *                       nothing can be booked. It is said in the Worker's own
- *                       words, once, with no retry offered — a button that
+ *   not configured      503 on a deployment with no email provider. THE STATE
+ *                       OF EVERY DEPLOYMENT TODAY: no account can be created,
+ *                       so nothing can be booked. It is said in the Worker's
+ *                       own words, once, with no retry offered — a button that
  *                       cannot work is worse than no button.
- *   bad number          400, before a text is sent or an allowance is spent.
- *   too many texts      429, whose message carries the wait.
+ *   bad address         400, before an email is sent or an allowance is spent.
+ *   too many codes      429, whose message carries the wait.
  *
  * THE CODE FIELD IS ONE INPUT AND NOT SIX. Six boxes is the pattern that reads
  * beautifully and is a trap: paste puts one character in the first box, a
  * screen reader announces six unlabelled fields, backspace has to be
  * reimplemented, and the browser's own one-time-code autofill has nowhere to
  * put six digits. One input with `autocomplete="one-time-code"` is what lets
- * iOS and Android offer the code off the notification, which is the whole
+ * a phone offer the code straight off the notification, which is the whole
  * experience this flow is copied from.
  */
 
@@ -51,19 +59,17 @@ import '../styles-account.css';
 export const CODE_DIGITS = 6;
 
 export interface CodeSignInProps {
-  /** The number, in whatever form it was typed. The Worker normalises it. */
-  phone: string;
+  /** The address, as it was typed. The Worker trims and lowercases it. */
+  email: string;
   /**
-   * Editing the number. Omitted where the number is not this box's to change —
-   * at the checkout it was answered a step earlier and is shown there with its
-   * own way back, so asking for it twice would make the sign-up feel like the
-   * separate journey it is not.
+   * Editing the address. Omitted where the address is not this box's to change
+   * — at the checkout it was answered a step earlier and is shown there with
+   * its own way back, so asking for it twice would make the sign-up feel like
+   * the separate journey it is not.
    */
-  onPhone?: (value: string) => void;
+  onEmail?: (value: string) => void;
   code: string;
   onCode: (value: string) => void;
-  /** Two letters, deciding how a national number is read. */
-  country?: string;
   /**
    * This deployment's answer to "can anybody sign up at all". Null while it is
    * still being asked, which is not the same as yes: the button stays on and
@@ -84,24 +90,26 @@ export interface CodeSignInProps {
   /** Called once a token has been spent, so the caller can ask for another. */
   onTokenSpent?: () => void;
   /**
-   * Called with the Worker's sentence when it turns out no text can be sent
+   * Called with the Worker's sentence when it turns out no code can be sent
    * here at all.
    *
    * `state.sms_ready` is the answer to that question BEFORE anything is
-   * pressed, and it can be stale or missing — the request may have failed, or
-   * the provider may have gone away since. When the send itself comes back 503
-   * the caller has to know, or it goes on telling somebody to type digits that
-   * are never going to arrive. The checkout uses it to raise the same notice at
-   * the top of the page that a known-unready deployment raises.
+   * pressed — it is named after the channel this used to go down and answers
+   * for the email provider now; see BookingState — and it can be stale or
+   * missing, because the request may have failed or the provider may have gone
+   * away since. When the send itself comes back 503 the caller has to know, or
+   * it goes on telling somebody to type digits that are never going to arrive.
+   * The checkout uses it to raise the same notice at the top of the page that a
+   * known-unready deployment raises.
    */
   onBlocked?: (message: string) => void;
 }
 
 export default function CodeSignIn({
-  phone, onPhone, code, onCode, country = 'US', state,
+  email, onEmail, code, onCode, state,
   codeError = null, turnstileToken, onTokenSpent, onBlocked,
 }: CodeSignInProps) {
-  const phoneId = useId();
+  const emailId = useId();
   const codeId = useId();
   const codeHintId = useId();
   const codeErrId = useId();
@@ -113,7 +121,7 @@ export default function CodeSignIn({
   const [minutes, setMinutes] = useState<number | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   /**
-   * The refusal there is no point retrying: no text-message provider on this
+   * The refusal there is no point retrying: no email provider on this
    * deployment. Separate from `sendError` because it takes the button away
    * rather than sitting beside it.
    */
@@ -128,7 +136,7 @@ export default function CodeSignIn({
    * This is the move a multi-step form has to get right: a field that is added
    * to the page under a keyboard or a screen reader is a question asked of
    * somebody who cannot tell it was asked. The status line below is announced
-   * separately, so what is heard is "we sent a code to that number" followed
+   * separately, so what is heard is "we sent a code to that address" followed
    * by the field's own label.
    */
   useEffect(() => { if (sent) codeField.current?.focus(); }, [sent]);
@@ -141,8 +149,7 @@ export default function CodeSignIn({
     const token = turnstileToken?.() ?? null;
     try {
       const res = await api.requestCustomerCode({
-        phone: phone.trim(),
-        country,
+        email: email.trim(),
         ...(token ? { turnstile_token: token } : {}),
       });
       setMinutes(Math.round(res.expires_in / 60));
@@ -157,7 +164,7 @@ export default function CodeSignIn({
       // Said in the Worker's own words and with nothing to press afterwards.
       // This is not a fault the customer can retry past and offering them a
       // button implies it is.
-      if (code === 'sms_not_configured') { setBlocked(message); onBlocked?.(message); }
+      if (code === 'email_not_configured') { setBlocked(message); onBlocked?.(message); }
       else setSendError(message);
     } finally {
       // The token is single-use whatever happened, so the caller is told it is
@@ -165,33 +172,43 @@ export default function CodeSignIn({
       if (token) onTokenSpent?.();
       setSending(false);
     }
-  }, [sending, phone, country, onCode, turnstileToken, onTokenSpent, onBlocked]);
+  }, [sending, email, onCode, turnstileToken, onTokenSpent, onBlocked]);
 
-  // The Worker refuses before a text is composed, so a deployment with no
+  // The Worker refuses before an email is composed, so a deployment with no
   // provider is named up front rather than after somebody has pressed a
   // button. `state` is null until the answer arrives; null is not a no.
   const smsOff = blocked ?? (state && !state.sms_ready ? state.sms_note : null);
 
   return (
     <div className="signup">
-      {onPhone ? (
+      {onEmail ? (
         <div className="signup-field">
-          <label htmlFor={phoneId}>
-            Mobile number
-            <input id={phoneId} type="tel" value={phone} autoComplete="tel"
-              inputMode="tel" enterKeyHint="send" disabled={Boolean(smsOff)}
-              onChange={(e) => onPhone(e.target.value)} />
+          <label htmlFor={emailId}>
+            Email address
+            <input id={emailId} type="email" value={email} autoComplete="email"
+              inputMode="email" enterKeyHint="send" disabled={Boolean(smsOff)}
+              onChange={(e) => onEmail(e.target.value)} />
           </label>
           <p className="signup-hint">
-            We text a six-digit code to it. That code is the whole of signing
+            We email a six-digit code to it. That code is the whole of signing
             in — there is no password to choose and none to remember.
           </p>
         </div>
       ) : null}
 
       {smsOff ? (
-        /* No button under it. See the note on `blocked`. */
-        <p className="signup-blocked">{smsOff}</p>
+        /* No button under it. See the note on `blocked`.
+           The alert link is here for the reason set out on the same notice in
+           Discover.tsx: a watch travels over web push as well as email, so it
+           does not stand or fall on the one provider this refusal is about, and
+           this is the one place where somebody has already shown they wanted
+           something. It used to say the watch was safe because it was "not a
+           text message", which stopped being the distinction that matters the
+           day the sign-in code became an email itself. */
+        <p className="signup-blocked">
+          {smsOff}{' '}
+          <Link to="/a">Ask to be told when something opens near you</Link>.
+        </p>
       ) : (
         <>
           {/*
@@ -202,7 +219,7 @@ export default function CodeSignIn({
           */}
           <p className="signup-said" role="status">
             {sent
-              ? `We sent a ${CODE_DIGITS}-digit code by text. It lasts `
+              ? `We sent a ${CODE_DIGITS}-digit code by email. It lasts `
                 + `${minutes} minutes and works once.`
               : ''}
           </p>
@@ -212,13 +229,13 @@ export default function CodeSignIn({
           {sent && (
             <div className="signup-field">
               <label htmlFor={codeId}>
-                The {CODE_DIGITS} digits we texted you
+                The {CODE_DIGITS} digits we emailed you
                 {/*
                   One field, numeric keypad, and the autofill name that lets a
                   phone offer the code straight off the notification. maxLength
                   rather than a pattern that blocks typing: a customer who
-                  pastes the whole message should end up with the digits out of
-                  it and not with a refusal.
+                  pastes the whole line should end up with the digits out of it
+                  and not with a refusal.
                 */}
                 <input id={codeId} ref={codeField} value={code}
                   inputMode="numeric" autoComplete="one-time-code"
@@ -233,7 +250,7 @@ export default function CodeSignIn({
               )}
               <p className="signup-hint" id={codeHintId}>
                 Five wrong tries and that code stops working. Ask for another
-                and the one before it dies — the newest text is always the one
+                and the one before it dies — the newest email is always the one
                 that works.
               </p>
             </div>
@@ -241,13 +258,13 @@ export default function CodeSignIn({
 
           <div className="signup-do">
             <button className="btn quiet sm" type="button"
-              disabled={sending || !phone.trim()}
+              disabled={sending || !email.trim()}
               onClick={() => void requestCode()}>
-              {sending ? 'Sending…' : sent ? 'Send another code' : 'Text me a code'}
+              {sending ? 'Sending…' : sent ? 'Send another code' : 'Email me a code'}
             </button>
-            {!sent && !phone.trim() && (
+            {!sent && !email.trim() && (
               <span className="signup-hint">
-                A mobile number is what this button texts.
+                An email address is what this button sends to.
               </span>
             )}
           </div>

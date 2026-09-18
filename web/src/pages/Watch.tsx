@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, sentence, type Watch as WatchRow } from '../api';
 import Crumbs from '../components/Crumbs';
 import SiteFooter from '../components/SiteFooter';
@@ -31,6 +31,15 @@ import { useDocumentTitle } from '../lib/title';
  * send a replacement — the address on a watch is used for openings and nothing
  * else.
  *
+ * ARRIVING HALF FILLED IN. /a takes `?trade=` and `?postcode=`, which is how
+ * the search results page hands this one what it already knows. It matters
+ * more than it looks: the moment somebody is ready to set a standing alert is
+ * the moment a search has just failed them, and asking that person to pick the
+ * trade a second time — out of a wall of chips, having just typed it — is
+ * where they give up. Only a trade the server currently lists is accepted, and
+ * a prefill is applied once and only to a form nobody has touched yet, so a
+ * slow trades request can never overwrite something already being typed.
+ *
  * The page has one job beyond collecting the watch: making sure something can
  * actually reach this person. Push is refused, blocked or simply absent often
  * enough that "we will tell you" is a promise the browser alone cannot keep —
@@ -58,7 +67,7 @@ const MAX_EMAIL_CHARS = 254;
  * watch, so the endpoint is remembered here. Cleared storage only costs a
  * second press of a button that does the same thing again.
  */
-const regKey = (token: string) => `slotfill.alerts.${token}`;
+const regKey = (token: string) => `roundtheway.alerts.${token}`;
 const readReg = (token: string): string | null => {
   try { return window.localStorage.getItem(regKey(token)); } catch { return null; }
 };
@@ -99,7 +108,22 @@ function pushBlockerNow(): string | null {
 
 export default function WatchPage() {
   const { token } = useParams<{ token?: string }>();
+  const [params] = useSearchParams();
   const navigate = useNavigate();
+
+  /**
+   * What another page has already worked out about this person.
+   *
+   * Read straight off the URL and not trusted an inch further than that: the
+   * postcode goes in the box for them to check, where the same validation runs
+   * on it as on anything typed, and the trade is dropped below unless the
+   * server's own list contains it. A `?trade=` naming something that is not
+   * offered here is a link that has gone stale, and the right answer to a
+   * stale link is the ordinary empty form rather than a chip for work nobody
+   * on this site does.
+   */
+  const wantPostcode = (params.get('postcode') ?? '').trim();
+  const wantTrade = (params.get('trade') ?? '').trim();
 
   const [watch, setWatch] = useState<WatchRow | null>(null);
   // The label a person gave their own watch is not used here: it is private,
@@ -364,13 +388,65 @@ export default function WatchPage() {
 
             <WatchForm
               key="new"
-              initial={emptyForm()}
+              initial={emptyForm(wantPostcode)}
               trades={tradeList}
               tradesFailed={tradesFailed}
+              // Null until the list is back and confirms this is a trade
+              // somebody here actually does. See `wantTrade` above.
+              prefillTrade={
+                wantTrade && tradeList?.includes(wantTrade) ? wantTrade : null}
               submitLabel="Create this watch"
               onSubmit={create}
               challenge
             />
+
+            {/*
+              WHAT HAPPENS AFTER THE BUTTON, said before it is pressed.
+
+              A standing alert is a promise about the future, and the whole
+              reason somebody hesitates over one is that they cannot picture
+              what they are agreeing to: how often it will go off, what will be
+              in it, and how they get out. Every one of those is answered
+              somewhere on this site already — the rate limit was on the
+              notifications panel, which is a page you only reach AFTER
+              committing, and the rest was scattered through hint text. None of
+              it was in front of the person deciding.
+
+              The numbers here are the two the Worker enforces and are stated
+              as the ceiling they are. There is deliberately nothing in this
+              list about how often an opening is likely to appear: that would
+              be a claim about a marketplace with no businesses in it yet, and
+              nobody can honestly make one.
+            */}
+            <section className="card alert-card">
+              <h2>What you are signing up for</h2>
+              <ol className="alert-steps">
+                <li>
+                  <strong>You say where, and what.</strong> A postcode, and the
+                  kinds of work you would want. Nothing else — no name, no
+                  phone number, no account.
+                </li>
+                <li>
+                  <strong>A business near you loses an hour.</strong> Somebody
+                  cancels on them. We check that hour against the postcode, the
+                  trades and the price you set here.
+                </li>
+                <li>
+                  <strong>You get one message.</strong> What the job is, when
+                  it is, what it costs and who is offering it. At most one an
+                  hour and five in a day, whatever else matches.
+                </li>
+                <li>
+                  <strong>You book it, or you ignore it.</strong> An alert
+                  holds nothing for you and commits you to nothing. Whoever
+                  books the hour first gets it.
+                </li>
+              </ol>
+              <p className="muted" style={{ margin: 0 }}>
+                You can pause or delete the whole thing from the page you land
+                on next, at any time and without asking anybody.
+              </p>
+            </section>
 
             <div className="notice keeper">
               <strong>You already have one?</strong> Open the link you saved when
@@ -724,8 +800,16 @@ interface FormValues {
   label: string;
 }
 
-const emptyForm = (): FormValues => ({
-  postcode: '', anyTrade: true, trades: [],
+/**
+ * A blank watch, optionally with a postcode another page already knew.
+ *
+ * The postcode is the one prefill that can go straight in: it needs no list to
+ * be checked against, the field validates whatever ends up in it exactly as if
+ * it had been typed, and it is visible in the box — so a wrong one is caught
+ * by the person, who is the only party here who knows where they live.
+ */
+const emptyForm = (postcode = ''): FormValues => ({
+  postcode, anyTrade: true, trades: [],
   detourMinutes: DEFAULT_DETOUR_MINUTES, priceCap: '', email: '', label: '',
 });
 
@@ -740,11 +824,24 @@ const formFrom = (w: WatchRow): FormValues => ({
 });
 
 function WatchForm({
-  initial, trades, tradesFailed, submitLabel, onSubmit, onCancel, challenge = false,
+  initial, trades, tradesFailed, prefillTrade = null,
+  submitLabel, onSubmit, onCancel, challenge = false,
 }: {
   initial: FormValues;
   trades: string[] | null;
   tradesFailed: boolean;
+  /**
+   * One trade to switch on when the list finally arrives, or null.
+   *
+   * A prop rather than part of `initial` because the answer is not known when
+   * this form first renders: the trades request is still in flight, and a
+   * trade cannot be validated against a list that has not come back. Handling
+   * it by remounting the form on a new `key` once the list lands would be
+   * simpler and is the wrong trade: a remount throws away anything typed into
+   * the postcode box in that window, which is the first field and therefore
+   * exactly where somebody will be.
+   */
+  prefillTrade?: string | null;
   submitLabel: string;
   /** The token is null unless a widget drew and was solved. Editing ignores it. */
   onSubmit: (v: FormValues, turnstileToken: string | null) => Promise<void>;
@@ -773,10 +870,43 @@ function WatchForm({
   const captcha = useRef<string | null>(null);
   const widget = useRef<TurnstileHandle | null>(null);
 
-  const set = <K extends keyof FormValues>(k: K, value: FormValues[K]) =>
+  /**
+   * Whether anybody has answered anything on this form yet.
+   *
+   * A ref and not state: nothing is drawn differently because of it, and it
+   * has to be readable inside the effect below without that effect depending
+   * on it and re-running.
+   */
+  const touched = useRef(false);
+  /** So a prefill is applied once, and not again on every later render. */
+  const prefilled = useRef(false);
+
+  const set = <K extends keyof FormValues>(k: K, value: FormValues[K]) => {
+    touched.current = true;
     setV((prev) => ({ ...prev, [k]: value }));
+  };
+
+  /**
+   * The trade another page said this person wants, switched on the moment the
+   * list confirms it exists.
+   *
+   * `touched` is the whole safety of it. The trades request usually beats
+   * anybody to the first field, but on a slow connection it does not, and a
+   * form that reaches over somebody's hands to change an answer they have
+   * already given is worse than one that never prefilled at all. The guard
+   * covers the trade chips as well: someone who has picked their own trades in
+   * that window keeps them.
+   */
+  useEffect(() => {
+    if (!prefillTrade || prefilled.current || touched.current) return;
+    prefilled.current = true;
+    setV((prev) => (prev.trades.includes(prefillTrade) ? prev : {
+      ...prev, anyTrade: false, trades: [prefillTrade],
+    }));
+  }, [prefillTrade]);
 
   const toggleTrade = (t: string) => setV((prev) => {
+    touched.current = true;
     const on = prev.trades.includes(t);
     if (!on && prev.trades.length >= MAX_TRADES) return prev;
     const next = on ? prev.trades.filter((x) => x !== t) : [...prev.trades, t];
@@ -856,7 +986,10 @@ function WatchForm({
             <div className="chip-wrap">
               <button type="button" aria-pressed={v.anyTrade}
                 className={`trade-chip${v.anyTrade ? ' on' : ''}`}
-                onClick={() => setV((prev) => ({ ...prev, anyTrade: true, trades: [] }))}>
+                onClick={() => {
+                  touched.current = true;
+                  setV((prev) => ({ ...prev, anyTrade: true, trades: [] }));
+                }}>
                 Any trade
               </button>
               {trades.map((t) => {

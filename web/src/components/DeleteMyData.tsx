@@ -23,14 +23,19 @@ import ConfirmDestructive from './ConfirmDestructive';
  * be lying about the third one, and the person who found that out afterwards
  * would be right to think the whole thing was a gesture.
  */
-export default function DeleteMyData({ token, hasBooking, onErased }: {
-  token: string;
+export default function DeleteMyData({ threadRef, hasBooking, onErased }: {
+  threadRef: string;
   /**
    * Whether this link has a booking behind it, which decides the SCOPE of the
    * erasure and so decides what the reader has to be told. With one, the
-   * Worker follows the phone number on the order and reaches every business
-   * this person has booked with; without one there is no number to follow and
+   * Worker follows the EMAIL ADDRESS on the order and reaches every business
+   * this person has booked with; without one there is no address to follow and
    * the conversation is the whole of their footprint.
+   *
+   * It followed the phone number until migration 0038. It cannot any more, and
+   * the reason is worth keeping here rather than only in the Worker: a number
+   * on an order is now whatever somebody typed into a booking form, so erasing
+   * by one would sweep up every stranger who ever typed the same digits.
    */
   hasBooking: boolean;
   onErased: (result: ErasureResult) => void;
@@ -42,7 +47,7 @@ export default function DeleteMyData({ token, hasBooking, onErased }: {
   async function erase() {
     setBusy(true); setError(null);
     try {
-      onErased(await api.eraseMyData(token));
+      onErased(await api.eraseMyData(threadRef));
     } catch (e) {
       setError(e instanceof Error ? e.message
         : 'That did not go through. Nothing has been deleted.');
@@ -74,9 +79,9 @@ export default function DeleteMyData({ token, hasBooking, onErased }: {
           {hasBooking ? (
             <p style={{ margin: 0 }}>
               This does not stop at this business. Your bookings are tied
-              together by your phone number, so this removes your personal data
-              from <strong>every business you have booked through this
-              site</strong> with that number.
+              together by the email address you booked with, so this removes
+              your personal data from <strong>every business you have booked
+              through this site</strong> with that address.
             </p>
           ) : (
             <p style={{ margin: 0 }}>

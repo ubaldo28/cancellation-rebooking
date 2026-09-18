@@ -14,14 +14,13 @@ import '../styles-payment.css';
  * time and the front page's covered band said it a fourth. A visitor who read
  * any two of them had been told something untrue by at least one.
  *
- * THE TRUTH, from the Worker and not from anybody's intention. Every place
- * money would move is an unimplemented seam, and each one is marked as one in
- * the code: createOrder in src/lib/orders.ts writes orders.status 'pending' and
- * says in as many words that no money has moved; the refund and the operator
- * fee in src/lib/bypass.ts, the parts charge in src/lib/parts.ts, the estimate
- * that becomes a booking in src/lib/estimates.ts and the settlement in
- * src/lib/settlement.ts are all the same. Nothing on this site takes a card
- * from a customer, holds a balance, or pays anybody out.
+ * THE TRUTH, from the Worker and not from anybody's intention. A customer pays
+ * the full listed price by card at the moment they book, on this site, in
+ * Stripe's own embedded form -- src/lib/checkout.ts opens the charge,
+ * markPaid confirms it from the signed webhook, and src/lib/fees.ts takes the
+ * platform's share out of the business's end and never adds anything to the
+ * customer's. The cancellation ladder in src/lib/bypass.ts is live and moves
+ * real money, in both directions.
  *
  * SO THE COPY SAYS THAT, EVERYWHERE, IN THESE WORDS. The strings below are the
  * whole of what the site claims about payment; the pages import them rather
@@ -29,17 +28,18 @@ import '../styles-payment.css';
  * last time and is why /covered's ladder, Trade.tsx's FAQ and Discover's
  * covered band are all built from single arrays too.
  *
- * WHAT IS NOT BEING DELETED. The cancellation ladder, the parts-approval rule
- * and the fee floor are real: they are the design, they are computed by code
- * that exists, and a customer is entitled to know them before they book. They
- * are kept and labelled as the rules that take effect when payment does, which
- * is different from a page reciting them as though money were already at
- * stake. When the seam lands, these strings change and every surface changes
- * with them.
+ * THIS FILE WAS ONCE THE OPPOSITE, AND THAT IS THE LESSON. For months every
+ * string here said no money moved, no card was asked for and cancelling cost
+ * nobody anything -- which was true, and then stopped being true the hour
+ * Stripe was switched on, while the sentences stayed. A customer was shown a
+ * working card form under a line promising no card could be taken. Copy that
+ * describes a switchable state has to be changed in the same commit that
+ * throws the switch, and the two-trees and public-payload tests exist to make
+ * that impossible to half-do.
  *
  * THE SECOND HALF OF THIS FILE IS THE SAME ARRANGEMENT FOR THE ACCOUNT. The
- * site made the identical mistake there — one sentence per page, every one of
- * them written from the same wrong belief that a customer never signs up — so
+ * site made the identical mistake there -- one sentence per page, every one of
+ * them written from the same wrong belief that a customer never signs up -- so
  * that correction is kept in one place too, next to the money it is always
  * read beside.
  */
@@ -50,9 +50,9 @@ import '../styles-payment.css';
  * which is why this is a plain string and not markup.
  */
 export const PAY_TODAY_SHORT =
-  'Nothing is paid on this site yet. Booking holds the appointment, asks for '
-  + 'no card and takes no money, and you settle the price with the business '
-  + 'directly.';
+  'You pay on this site when you book, by card, and the price you see is the '
+  + 'price you pay — nothing is added at checkout. Round The Way holds that '
+  + 'payment until the job is done and then pays the business.';
 
 /**
  * The same fact with the consequence spelled out, for the places a reader has
@@ -61,13 +61,12 @@ export const PAY_TODAY_SHORT =
  * reading as a threat about money that does not exist.
  */
 export const PAY_TODAY_LONG =
-  'Paying on the site is not built yet. Pressing Book holds the appointment '
-  + 'and takes no money, and no card is asked for until payment is switched '
-  + 'on; the business confirms it and arranges the price with you directly. '
-  + 'Everything this site says about paying here, about refunds and about '
-  + 'cancellation fees is how it is meant to work once payment is switched on. '
-  + 'Until then there is nothing to refund and cancelling costs nobody '
-  + 'anything.';
+  'You pay when you book, on this site, by card. The price you see is the '
+  + 'price you pay — nothing is added at checkout, and no cash changes hands '
+  + 'at the door. Round The Way holds that payment until the job is done and '
+  + 'then pays the business, which is what makes a refund possible if it goes '
+  + 'wrong. How much comes back if you cancel depends on how close to the '
+  + 'appointment you are; the amounts are set out below and they are real.';
 
 /**
  * The business's half of the same fact, for /pros and the business questions
@@ -75,14 +74,14 @@ export const PAY_TODAY_LONG =
  * a booking arrives unpaid before they take one, not afterwards.
  */
 export const PAY_TODAY_PRO =
-  'No money moves through Slotfill yet. Payment is not built, so a booking '
-  + 'reaches you unpaid and you arrange the price with the customer yourself. '
-  + 'Nothing is charged to your card, no fee is collected and there is no '
-  + 'payout — everything below about being paid through the site, about fees '
-  + 'and about parts charges is how it will work once payment is switched on.';
+  'A booking reaches you already paid for. The customer pays Round The Way at '
+  + 'the moment they book, we hold it until the job is done, and your share '
+  + 'goes straight to your own bank account. Round The Way keeps 15% of the '
+  + 'job, never more than $150 from one business in one day. There is no '
+  + 'subscription and nothing is charged to you for using the site.';
 
 /** The heading the notice wears wherever it is drawn as its own block. */
-export const PAY_TODAY_TITLE = 'Nobody is charged anything today';
+export const PAY_TODAY_TITLE = 'How paying works';
 
 /**
  * The notice, as a block.
@@ -131,17 +130,29 @@ export default function PaymentState(
  * as it, for exactly the reason that one does: /s/<trade> and /cost/<trade>
  * are rendered twice, once by the Worker and once here.
  *
- * The account half is stated as a fact, because it is one and the checkout
- * enforces it today. The card half is stated as the design, because nothing in
- * this product can take a card yet.
+ * THEY WENT OUT OF STEP ONCE AND NOTHING FAILED. Migration 0038 moved the
+ * sign-in code and the account itself from a mobile number to an email address.
+ * This half was updated and the Worker's was not, so for a while the crawler's
+ * copy of /s/<trade> and /cost/<trade> told people booking asked for a mobile
+ * number while the page they actually landed on asked for an address — and the
+ * indexed one was the wrong one, which is the worse half to get wrong.
+ *
+ * Nothing caught it, because the pin in public-payload.test.ts compares seo.ts
+ * against seo.ts's own FAQ payload and never against this file. The pair is now
+ * pinned properly in test/two-trees.test.ts, which is where a fact written out
+ * once per tree belongs.
+ *
+ * Both halves are stated as facts, because the checkout enforces both:
+ * checkoutCard in src/index.ts refuses an order with 402 card_required when
+ * the account has no card, and CardField.tsx is the box the card goes into.
  */
 export const ACCOUNT_TODAY_SHORT =
-  'Booking needs an account, and making one is a text message: you give a '
-  + 'mobile number at the moment you book and type the six digits we send '
-  + 'back. Looking, comparing prices and messaging a business need no account '
-  + 'at all, and neither does opening a booking you already have — the link in '
-  + 'your confirmation still works on any phone. A card is needed as well once '
-  + 'paying on the site is switched on, which it is not yet.';
+  'Booking needs an account and a card. Making the account is an email: you '
+  + 'give an email address at the moment you book and type the six digits we '
+  + 'send to it, then add a card on the same screen. Looking, comparing prices '
+  + 'and messaging a business need no account at all, and neither does opening '
+  + 'a booking you already have — the link in your confirmation still works on '
+  + 'any phone.';
 
 /** The heading the account notice wears wherever it is drawn as its own block. */
 export const ACCOUNT_TODAY_TITLE = 'What booking needs from you';
@@ -150,13 +161,15 @@ export const ACCOUNT_TODAY_TITLE = 'What booking needs from you';
  * The account notice, as a block, with this deployment's own answer under it.
  *
  * WHY THIS ASKS THE SERVER RATHER THAN CARRYING THE ANSWER. Whether an account
- * can be created at all depends on whether a text message can be delivered,
+ * can be created at all depends on whether the sign-in code can be delivered,
  * which is a Worker secret and not something a bundle can know. Today no
- * deployment has an SMS provider configured, so no account can be created and
- * nothing can be booked — and a page that recites the sign-up without saying
- * that is inviting somebody to fill a basket in and meet a 503. The sentence
- * shown is the Worker's own `sms_note`, so the site and the API cannot come to
- * disagree about it; see api.bookingState.
+ * deployment has an email provider configured, so no code can be sent, no
+ * account can be created and nothing can be booked — and a page that recites
+ * the sign-up without saying that is inviting somebody to fill a basket in and
+ * meet a 503. The sentence shown is the Worker's own `sms_note`, so the site
+ * and the API cannot come to disagree about it; see api.bookingState, which
+ * also explains why that field and `sms_ready` keep names from the channel this
+ * used to travel down.
  *
  * A failed request leaves the deployment line off rather than guessing at one.
  * The checkout does not rely on this — Book.tsx reads the same state itself and

@@ -8,44 +8,51 @@ import {
   localeFor, normalisePostcode,
 } from './lib/countries';
 import { preflight, withCors } from './lib/cors';
-import { mayEchoSignInLink, sendEmail, signInEmail } from './lib/email';
+import { mayEchoSignInLink, sendEmail, signInEmail, emailConfigured} from './lib/email';
 import { detectGaps } from './lib/gaps';
 import { geocode } from './lib/geo';
-import { guardGuestLink, sweepGuestLinkAttempts } from './lib/guestlink';
+import {
+  guardGuestLink, sweepGuestLinkAttempts, type ThreadDoor,
+} from './lib/guestlink';
 import { WEB_IMAGE_TYPES, assertBodyWithin, cleanImageUpload } from './lib/images';
-import { RateLimitedError, clientIp, enforceRateLimit } from './lib/ratelimit';
+import { RateLimitedError, clientIp, enforceRateLimit, rateLimit } from './lib/ratelimit';
 import { withSecurityHeaders } from './lib/headers';
 import { requireTurnstile, tokenFromBody } from './lib/turnstile';
 import { START_WORDS, STOP_WORDS, SUPPORTED_LANGUAGES, isLang } from './lib/messages';
-import { smsConfigured, verifyTwilioSignature } from './lib/twilio';
 import {
-  CARD_NOTE_CUSTOMER, SMS_NOT_CONFIGURED, clearCustomerCookie, closeCustomerAccount,
-  currentCustomer, publicAccount, requireCustomer, revokeCustomerSession,
-  saveCustomerCard, sendSignInCode, signInWithCode, sweepCustomerAuth,
-  type CustomerAccount,
+  CARD_NOTE_CUSTOMER, EMAIL_NOT_CONFIGURED, clearCustomerCookie, closeCustomerAccount,
+  accountByEmail, currentCustomer, customerCookie, customerSideOf,
+  ensureStripeCustomer, normaliseLoginEmail, publicAccount, requireCustomer,
+  revokeCustomerSession, saveCustomerCard, sendSignInCode, signInWithCode,
+  sweepCustomerAuth, type CustomerAccount,
 } from './lib/customers';
 import {
   acceptOffer, createOffers, declineOffer, loadOfferByToken, markViewed,
+  stopOffersByToken,
 } from './lib/offers';
 import { claimSlot, discounted, mapData } from './lib/public';
 import { isDemoOperator, seedDemoIfEmpty, startDemo } from './lib/demo';
 import { METROS, metroPath, publicMetro } from './lib/metros';
 import { listNotifications, markAllRead, markRead, unreadCount } from './lib/feed';
 import {
+  MAX_MESSAGE_PHOTO_BYTES,
   assertEnquiryReachAllowed, listMessages, listThreads, markThreadRead, operatorForEnquiry,
-  postAsGuest, postAsOperator, recordEnquiryReach, startThread, sweepEnquiryReach,
+  postAsGuest, postAsOperator, postPhotoAsGuest, postPhotoAsOperator, readMessagePhoto,
+  recordEnquiryReach, setThreadStatus, startThread, sweepEnquiryReach,
   threadByToken, threadForOperator, unreadThreadCount,
+  businessesInCustomerThreads, listThreadsForCustomer, unreadThreadCountForCustomer,
+  type ThreadRef,
 } from './lib/chat';
 import {
-  addSubscription, createWatch, deactivateWatch, matchWatches, removeSubscription,
-  unsubscribeByToken, updateWatch, watchByToken,
+  addSubscription, confirmWatchEmail, createWatch, deactivateWatch, matchWatches,
+  removeSubscription, unsubscribeByToken, updateWatch, watchByToken,
 } from './lib/alerts';
 import { vapidPublicKey } from './lib/push';
 import { cancelOpening, listOpenings, postOpening } from './lib/openings';
 import { placeOrder, priceOrder } from './lib/orders';
 import {
   cleanPartsFields, decideQuote, partsLine, quotableItems, quotesForGuest,
-  quotesForOperator, sendQuote, withdrawQuote, expireQuotes,
+  quotesForOperator, reconcileSentQuotes, sendQuote, withdrawQuote, expireQuotes,
 } from './lib/parts';
 import {
   cancelByCustomer, cancelByOperator, feesOwed, listFees, listingBlock, markArrived,
@@ -55,8 +62,8 @@ import {
   addressReleaseColumns, firstNameOnly, maskCustomerRow, maskEmail, maskPhone,
 } from './lib/redact';
 import {
-  assertNoCardData, assertPaymentRef, cardSafeDb, paymentsLive, safeBrand, safeLast4,
-  stripeWebhooksConfigured, verifyStripeSignature,
+  assertNoCardData, assertPaymentRef, cardSafeDb, customerCardRequired, paymentsLive,
+  safeBrand, safeLast4, stripeWebhooksConfigured, verifyStripeSignature,
 } from './lib/payments';
 import { listAdminActions, recordAdminAction } from './lib/audit';
 import {
@@ -66,8 +73,8 @@ import { catalogFor, TRADE_CATEGORIES } from './lib/trades';
 import { deleteFaq, listFaqs, saveFaq } from './lib/profile';
 import {
   acceptRequest, cancelRequest, createInstantRequest, declineRequest, expireRequests,
-  goOffline, goOnline, onlineStatus, operatorsOnlineNear, pendingForOperator,
-  requestByToken,
+  goOffline, goOnline, maskInstantRequest, onlineStatus, operatorsOnlineNear,
+  pendingForOperator, requestByToken,
 } from './lib/online';
 import {
   askForEstimate, decideEstimate, estimatesForGuest, estimatesForOperator,
@@ -89,26 +96,40 @@ import {
   getVehicle, jobCodeForGuest, reportVehicle, saveVehicle, vehicleReports,
   verifyStartCode,
 } from './lib/startcode';
+import { VEHICLE_KINDS } from './lib/vehicles';
+import {
+  markPaid, markPaymentFailed, reconcileUnpaidOrders, refundItem, settleDueWork,
+  startPayment, sweepPartsRefunds, sweepRefunds,
+} from './lib/checkout';
+import {
+  connectStatus, refreshConnectAccount, startOnboarding, syncConnectAccount,
+} from './lib/connect';
+import {
+  chargeIdOf, createSetupIntent, getPaymentMethod, stripeConfigured,
+} from './lib/stripe';
+import { feeSentence } from './lib/fees';
 import {
   confirmNoShow, customerStanding, hasOperatorCard, openReports, operatorStanding,
-  rejectNoShow, reportNoShow, saveOperatorCard,
+  provedCustomerStanding, rejectNoShow, reportNoShow, saveOperatorCard,
 } from './lib/standing';
 import {
-  areaIndexPage, browseIndexPage, canonicalTradeSegment, categoryPage, costGuidePage,
-  costIndexPage, metroPage, neighbourhoodPage, profilePage, robotsTxt, sitemapXml,
-  tradeFromPathSegment, tradeInPlacePage, tradePage,
+  areaIndexPage, browseIndexPage, canonicalPlaceSlug, canonicalTradeSegment, catalogPayload,
+  categoryPage, costGuidePage, costIndexPage, homePage, metroForOperator, metroPage,
+  neighbourhoodPage, notFoundPage, profilePage, robotsTxt, siteBase, sitemapXml,
+  tradeFromPathSegment, tradeFromSlug, tradeInPlacePage, tradePage, tradeSlug,
 } from './lib/seo';
 import {
   getCredentials, publishBlockers, rulesFor, saveCredentials,
 } from './lib/credentials';
 import {
-  customerView, operatorPosition, recordPosition, setShareLocation,
+  customerView, livePositions, operatorPosition, recordPosition, setShareLocation,
 } from './lib/track';
 import {
   MAX_PHOTO_BYTES, addPhoto, deletePhoto, ensureProfileSlug, getPublicProfile,
   listPhotos, reorderPhotos, similarBusinesses,
 } from './lib/profile';
-import { rankCandidates, type GapRow } from './lib/rank';
+import { getPhoto, putPhoto } from './lib/photostore';
+import { NOBODY_TO_OFFER, rankCandidates, type GapRow } from './lib/rank';
 import { formatTimeRange, localDayStart } from './lib/tz';
 import {
   HttpError, badRequest, conflict, escapeHtml, html, json, newId, notFound, now, toE164,
@@ -119,6 +140,25 @@ import {
 // ---------------------------------------------------------------------------
 type Handler = (ctx: {
   req: Request; env: Env; params: Record<string, string>; url: URL;
+  /**
+   * The conversation this request is about, in the form every guest-side
+   * library function takes. Only meaningful on the routes GUEST_LINK_PATHS
+   * matches; an empty string on every other route, which none of them read.
+   *
+   * ON THE TOKEN DOOR IT IS THE RAW SEGMENT, exactly what `params.token` has
+   * always been, so those handlers do precisely what they did before: the
+   * library resolves the secret itself and refuses an unknown one in its own
+   * words. On the account door it is the row guardGuestLink has already proved
+   * belongs to the signed-in customer. See ThreadRef in lib/chat.ts for why
+   * this is one union rather than thirty twinned routes.
+   */
+  ref: ThreadRef;
+  /**
+   * Which authority opened it. `{ via: 'link' }` on every route that has no
+   * token segment, which is the honest default: nothing was opened on an
+   * account, so nothing may claim it was.
+   */
+  door: ThreadDoor;
 }) => Promise<Response>;
 
 const routes: Array<{ method: string; pattern: RegExp; keys: string[]; handler: Handler }> = [];
@@ -244,6 +284,27 @@ const int = (v: unknown): number | null => {
   return Number.isFinite(n) ? Math.trunc(n) : null;
 };
 
+/**
+ * The `status=` filter on either conversation list, or the caller's default.
+ *
+ * AN ALLOW-LIST AND NOT A PASS-THROUGH, and the default is an argument rather
+ * than a constant because the two lists genuinely want different ones: the
+ * operator's inbox hides closed conversations, because closing is the only way
+ * a business gets a finished job off that screen, and the customer's list
+ * shows them, because a business closing a conversation must not make it
+ * vanish off the customer's own account. lib/chat.ts has the long version
+ * above each list.
+ *
+ * Anything that is not one of the three spellings is the default rather than
+ * an error. This is a filter on a list in a query string — a stale bookmark or
+ * a typo should draw the list, not an error page over a list the reader can
+ * see perfectly well by pressing reload.
+ */
+const threadStatusFilter = (
+  raw: string | null, fallback: 'open' | 'closed' | 'all',
+): 'open' | 'closed' | 'all' =>
+  (raw === 'open' || raw === 'closed' || raw === 'all' ? raw : fallback);
+
 /** The same rule as `int`, keeping the fraction: coordinates and nothing else. */
 const num = (v: unknown): number | null => {
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
@@ -315,6 +376,13 @@ route('POST', '/api/auth/request', async ({ req, env }) => {
     .bind(email).first<Operator>();
 
   if (!op) {
+    // A NEW BUSINESS, so this counts against the day's places — the same
+    // hundred a new customer comes out of. Deliberately inside the branch: an
+    // operator who already has a row is signing in, not joining, and must be
+    // able to reach their account whatever the day's intake has been. See
+    // NEW_ACCOUNTS_PER_DAY.
+    await enforceDailyIntake(env, 'business');
+
     const t = now();
     const id = newId();
     // Country drives the sensible defaults for timezone and currency, but the
@@ -362,7 +430,18 @@ route('POST', '/api/auth/request', async ({ req, env }) => {
   }
 
   if (!result.sent) {
-    console.error('sign-in email not sent', result);
+    // THE REASON, AND NOTHING ELSE ON THE RESULT.
+    //
+    // This logged the whole object, which carries `detail` — built in email.ts
+    // as `${provider} ${status} ${body}`, the body being the provider's own
+    // response, and providers routinely quote the recipient back inside it. So
+    // an ordinary send failure printed an operator's email address into the
+    // Worker log, and a Worker log is the one store in this product that is
+    // outside every sweep in retention.ts and outside every erasure path in
+    // it: somebody who asks to be forgotten cannot be forgotten from there.
+    // The reason is the whole of what anybody reading this line can act on
+    // anyway. The same cut was already made in customers.ts and alerts.ts.
+    console.error('sign-in email not sent', result.reason);
     if (result.reason === 'not_configured') {
       throw new HttpError(
         503,
@@ -414,6 +493,31 @@ route('POST', '/api/auth/verify', async ({ req, env }) => {
  */
 route('GET', '/demo', async ({ req, env }) => {
   if (env.DEMO_MODE !== 'on') throw notFound();
+
+  // A REAL SESSION IS NEVER REPLACED BY THE DEMO ONE.
+  //
+  // This is a GET that sets the operator session cookie — `__Host-gf_session`,
+  // which this comment called `gf_session` until the `__Host-` prefix was
+  // added to it, and a cookie name that is nearly right is worse than none
+  // when somebody is grepping for the thing that gets overwritten here. A
+  // browser sends cookies on a cross-site top-level navigation, so any page
+  // anywhere could point a signed-in operator's browser at /demo and silently
+  // swap them out of their own business into a shared throwaway account, on
+  // the same cookie name and the same path. They would still appear signed in,
+  // at somebody else's diary, with no sign anything had happened.
+  //
+  // Refusing cross-site navigation outright would break the legitimate case,
+  // which is somebody clicking a link to the demo from somewhere else. So the
+  // narrow thing is done instead: if this browser already holds a working
+  // operator session, it keeps it and is simply sent to the app.
+  const alreadyIn = await requireOperator(req, env).then(() => true).catch(() => false);
+  if (alreadyIn) {
+    return new Response(null, {
+      status: 302,
+      headers: { location: '/app', 'cache-control': 'no-store' },
+    });
+  }
+
   // Every visit wipes and rebuilds a whole account — dozens of writes, the
   // most expensive thing an anonymous caller can ask for. Six in a quarter
   // hour is more than anyone kicking the tyres needs and far less than a loop.
@@ -461,28 +565,107 @@ route('POST', '/api/auth/logout', async ({ req, env }) => {
 
 /** The sentence a caller gets when a booking needs an account and has none. */
 const ACCOUNT_REQUIRED =
-  'Booking needs an account, and making one takes one text message: give us '
-  + 'your mobile number, type the six digits we send back, and the account is '
+  'Booking needs an account, and making one takes one email: give us your '
+  + 'email address, type the six digits we send back, and the account is '
   + 'created as you book. Reading a booking you already have never needs one — '
   + 'the link in your confirmation still opens it.';
 
+// ---------------------------------------------------------------------------
+// THE TESTING CAP
+// ---------------------------------------------------------------------------
+//
+// A HUNDRED NEW ACCOUNTS A DAY, SHARED, AND IT IS NOT AN ARBITRARY NUMBER.
+//
+// Every account made here costs exactly one email — a six-digit code to a
+// customer, a sign-in link to a business — and the provider's free tier is one
+// hundred emails a day for the whole deployment. ONE HUNDRED IN TOTAL, not one
+// hundred of each: two buckets of a hundred would be a promise of two hundred
+// emails from an allowance that stops at one hundred, and the second half of
+// that promise fails as a code that is never sent.
+//
+// So the two sides share one bucket, and that is the honest shape of the
+// constraint. A day with eighty new customers leaves room for twenty new
+// businesses, because that is literally what is left.
+//
+// COUNTED ON INTAKE, NOT ON SUCCESS. It sits in front of the code being minted
+// rather than after the account row is written, because the email is spent at
+// the send and not at the sign-in — somebody who asks for a code and never
+// types it has still used one of the hundred.
+//
+// SIGNING IN AGAIN IS NOT CAPPED, and must not be. This bounds how many people
+// can start; a business already listed here has to be able to reach its
+// account on the hundred-and-first day as much as on the first. The ceiling
+// that bounds a returning person is the per-mailbox one in sendSignInCode.
+//
+// The honest caveat, written down rather than discovered: a returning person's
+// sign-in comes out of the same hundred and is not counted here, so a busy day
+// of sign-ins can exhaust the allowance before the intake bucket is full. This
+// cap is what stops the site INVITING more people than it can serve; it is not
+// a guarantee that the hundredth will get through.
+const NEW_ACCOUNTS_PER_DAY = 100;
+
+/** The sentence somebody gets when today's places are gone. */
+const INTAKE_FULL =
+  'Round The Way is in testing, and a hundred people can join each day — '
+  + 'customers and businesses together. Today is full. Come back tomorrow: '
+  + 'nothing you have already done here is affected, and a booking you have '
+  + 'made still opens from the link in your confirmation.';
+
+/**
+ * Refuses once today's places are gone.
+ *
+ * Fixed-window and therefore capable of letting through up to twice the number
+ * across a midnight boundary — which is the documented behaviour of rateLimit
+ * and is fine here for once. The ceiling exists to keep the day's email spend
+ * near a hundred; the per-mailbox and per-address limits are what stand
+ * between this and abuse, and they are not fixed to the same window.
+ *
+ * `side` is taken and deliberately not used in the key. It is here because the
+ * call sites read better naming which door they are, and because the day
+ * somebody wants to know which side filled the bucket, the argument is already
+ * threaded through — but ONE key is the whole point of this function.
+ */
+async function enforceDailyIntake(
+  env: Env, _side: 'customer' | 'business',
+): Promise<void> {
+  const r = await rateLimit(env, 'intake:all', NEW_ACCOUNTS_PER_DAY, 86400);
+  if (!r.ok) throw new RateLimitedError(INTAKE_FULL, r.retryAfter);
+}
+
 route('POST', '/api/customer/auth/code', async ({ req, env }) => {
   const b = await body(req);
-  const country = (str(b.country) ?? 'US').toUpperCase();
-  const phone = toE164(str(b.phone), country);
-  if (!phone) throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
+  const email = normaliseLoginEmail(str(b.email));
+  if (!email) throw badRequest('Enter an email address we can send a code to.', 'bad_email');
 
-  // A door, and one that costs money to open: every call is a text message
-  // somebody pays for, aimed at a phone the caller has merely named. That is
-  // the exact shape the rate limits cannot see — ten thousand hosts sending
+  // A door, and one that costs money to open: every call spends one of a
+  // hundred emails a day, aimed at a mailbox the caller has merely named. That
+  // is the exact shape the rate limits cannot see — ten thousand hosts sending
   // one each — so the challenge belongs here, and it runs before a message is
   // composed and before an allowance is spent.
   await requireTurnstile(env, req, tokenFromBody(b));
 
+  // PER-CALLER CEILINGS FIRST, THE GLOBAL ONE LAST. The order matters more
+  // than it looks: enforceDailyIntake spends from ONE bucket shared by the
+  // whole platform, so putting it in front of the per-IP and per-mailbox
+  // limits meant a hundred unauthenticated requests from one machine could
+  // close sign-in for every customer on the site for a day. The narrow limits
+  // stop that caller long before the shared allowance notices them.
+  await enforceRateLimit(env, `otp-send-ip:${clientIp(req)}`, 20, 900);
+
+  // AND NOT AT ALL FOR SOMEBODY WHO ALREADY HAS AN ACCOUNT. The cap exists to
+  // bound how many NEW people can be signed up in a day while this is being
+  // tested; an existing customer signing in again is not a new account, and
+  // locking them out of their own bookings because a hundred strangers looked
+  // at the site that morning is not what it was for. /api/auth/request has
+  // made the same distinction on the operator side from the start.
+  if (!(await accountByEmail(env, email))) {
+    await enforceDailyIntake(env, 'customer');
+  }
+
   // Fails closed with no provider configured. The volume ceilings, the reasons
   // for each of them and the refusal all live in sendSignInCode.
   const sent = await sendSignInCode(env, {
-    phone,
+    email,
     ip: clientIp(req),
     lang: str(b.language),
     // Local development only: AUTH_DEBUG_TOKEN set as a secret, presented by
@@ -491,34 +674,37 @@ route('POST', '/api/customer/auth/code', async ({ req, env }) => {
     // returned to whoever asked for it.
     echo: mayEchoSignInLink(env, req.headers.get('x-auth-debug')),
   });
-  // The same answer whether or not an account exists for that number. This
-  // must never become the way to ask whether somebody's mobile has booked here.
+  // The same answer whether or not an account exists for that address. This
+  // must never become the way to ask whether somebody has booked here.
   return json({ ok: true, ...sent }, 200, { 'cache-control': 'no-store' });
 });
 
 route('POST', '/api/customer/auth/verify', async ({ req, env }) => {
   const b = await body(req);
+  const email = normaliseLoginEmail(str(b.email));
+  if (!email) throw badRequest('Enter an email address we can send a code to.', 'bad_email');
   const country = (str(b.country) ?? 'US').toUpperCase();
+  // Taken on trust from here on: nothing proves it, and nothing may be
+  // unlocked by it. See migration 0038.
   const phone = toE164(str(b.phone), country);
-  if (!phone) throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
 
   // A SECOND CEILING ON TOP OF THE PER-CODE ATTEMPT COUNTER, and it is not
   // redundant with it. Five wrong guesses kill one code; this bounds how fast
   // somebody can cycle "ask for a code, guess five times" against a number,
   // and it counts a caller who is guessing at codes that were never sent —
   // which reaches no row and so increments no counter at all.
-  await enforceRateLimit(env, `otp-verify:${phone}`, 10, 900);
+  await enforceRateLimit(env, `otp-verify:${email}`, 10, 900);
   await enforceRateLimit(env, `otp-verify-ip:${clientIp(req)}`, 30, 900);
 
   const signed = await signInWithCode(env, {
-    phone,
+    email,
     code: String(b.code ?? ''),
     userAgent: req.headers.get('user-agent'),
     // Only the first word of it, the same rule the checkout applies, because
     // this name becomes the default on a booking and a booking's name is
     // written onto the operator's own client row. See firstNameOnly.
     first_name: firstNameOnly(str(b.first_name)) || null,
-    email: str(b.email),
+    phone,
   });
 
   return json({
@@ -529,7 +715,7 @@ route('POST', '/api/customer/auth/verify', async ({ req, env }) => {
     // suspension can still read their bookings and message a business; what
     // they cannot do is book, and finding that out after filling in a basket
     // is a worse way to learn it.
-    standing: await customerStanding(env, phone),
+    standing: await customerStanding(env, email),
     card_note: CARD_NOTE_CUSTOMER,
   }, 200, { 'set-cookie': signed.cookie, 'cache-control': 'no-store' });
 });
@@ -543,8 +729,8 @@ route('GET', '/api/customer/me', async ({ req, env }) => {
   const account = await requireCustomer(req, env);
   return json({
     account: publicAccount(account),
-    standing: await customerStanding(env, account.phone_e164 ?? ''),
-    /** False in every environment today. See paymentsLive in lib/payments.ts. */
+    standing: await customerStanding(env, account.login_email ?? ''),
+    /** True once the webhook secret is set. See paymentsLive in lib/payments.ts. */
     payments_live: paymentsLive(env),
     card_note: CARD_NOTE_CUSTOMER,
   }, 200, { 'cache-control': 'no-store' });
@@ -569,7 +755,14 @@ route('GET', '/api/customer/bookings', async ({ req, env }) => {
             o.payment_brand, o.payment_last4,
             oi.id AS order_item_id, oi.operator_id, oi.starts_at, oi.ends_at,
             oi.price_cents, oi.parts_cents, oi.cancelled_at, oi.cancelled_by,
-            oi.arrived_at, oi.settlement, oi.refund_cents, oi.start_code,
+            -- refund_cents is what was decided and refunded_at is what was
+            -- done, and the customer is owed both. "Cancelled, you get $240
+            -- back" and "cancelled, your $240 went back on Tuesday" are
+            -- different sentences to somebody watching their bank account,
+            -- and showing only the first is how a refund that never left
+            -- looks exactly like one that did.
+            oi.arrived_at, oi.settlement, oi.refund_cents, oi.refunded_at,
+            oi.start_code,
             op.business_name, op.profile_slug, op.trade
        FROM orders o
        JOIN order_items oi ON oi.order_id = o.id
@@ -579,6 +772,82 @@ route('GET', '/api/customer/bookings', async ({ req, env }) => {
       LIMIT 200`,
   ).bind(account.id).all<Record<string, unknown>>();
   return json({ bookings: rows.results ?? [] }, 200, { 'cache-control': 'no-store' });
+});
+
+/**
+ * This person's conversations, across every business they have written to.
+ *
+ * THE SECOND HALF OF WHAT AN ACCOUNT IS FOR, and until migration 0052 it did
+ * not exist. The list above has shown somebody every booking they have made
+ * since 0037, and the paragraph underneath it on /account had to say: to
+ * message the business, see the photographs or cancel, open the booking from
+ * the link in its confirmation — that link is the only copy there is. For
+ * anybody who had lost it that was the end of the road, and the owner's
+ * description of the problem is exactly right: "there has to be a way for a
+ * business and client to continue a conversation without needing to keep a
+ * link." The business side never had this problem, because /app/messages has
+ * been scoped by operator_id since 0011.
+ *
+ * SCOPED IN THE WHERE CLAUSE, NOT FILTERED AFTERWARDS. listThreadsForCustomer
+ * takes the account id and puts it in the query, the same shape
+ * /api/customer/bookings above uses and the same shape the operator's own
+ * inbox uses. There is no path by which this can return a row belonging to
+ * another account, because no row that does not match is ever read.
+ *
+ * NO MESSAGES IN THIS PAYLOAD, only the conversations. A list is for choosing
+ * which one to open; sending the transcripts of fifty conversations to draw a
+ * list of fifty names would be most of a customer's whole history in one
+ * response, on a route a page may poll. The transcript comes from opening one.
+ *
+ * NO GUEST TOKEN IN IT EITHER, and there cannot be one — only the hash is
+ * stored. That is the point of the whole change rather than a shortcoming of
+ * it: the account reaches a conversation by its id, on its own authority, and
+ * whoever still holds an old link goes on using it.
+ *
+ * ---------------------------------------------------------------------------
+ * PAGED, SEARCHED AND COUNTED, WHICH IT WAS NOT WHEN IT LANDED
+ * ---------------------------------------------------------------------------
+ * The first version of this route returned the account's conversations with no
+ * limit the caller could move and no cursor at all, which was fine for the
+ * person it was written for — somebody with one booking — and wrong for the
+ * person it exists for. The owner's words: "customers will be messaging
+ * multiple [businesses]". Somebody who has had five trades out has five rows
+ * that differ only by which business is on them, and somebody who has used
+ * this site for two years has fifty; the fiftieth was simply unreachable, and
+ * which of them had replied was answerable only by opening each one.
+ *
+ * So: `cursor`/`limit` for the page, `unread=1`, `business=<operator id>` and
+ * `status=` for the narrowing, `q=` for the search, and an `unread` total
+ * beside the rows. `businesses` is the list the filter is drawn from and is
+ * its own query — a filter built from the twenty-five rows on this page could
+ * not offer the business whose conversation is the reason somebody is paging.
+ *
+ * EVERY ONE OF THOSE NARROWS AND NONE OF THEM WIDENS. They are read off the
+ * query string and passed as filters into a statement whose WHERE clause
+ * already carries `customer_account_id = ?` from the session; nothing here
+ * touches that scope, and `business` in particular is an operator id compared
+ * INSIDE it, so naming a business this account has never written to returns an
+ * empty page rather than that business's other customers.
+ */
+route('GET', '/api/customer/threads', async ({ req, env, url }) => {
+  const account = await requireCustomer(req, env);
+  const q = url.searchParams;
+  const [page, unread, businesses] = await Promise.all([
+    listThreadsForCustomer(env, account.id, {
+      unreadOnly: q.get('unread') === '1',
+      operatorId: q.get('business'),
+      status: threadStatusFilter(q.get('status'), 'all'),
+      q: q.get('q'),
+      limit: int(q.get('limit')) ?? undefined,
+      cursor: q.get('cursor'),
+    }),
+    unreadThreadCountForCustomer(env, account.id),
+    businessesInCustomerThreads(env, account.id),
+  ]);
+  return json(
+    { threads: page.threads, next_cursor: page.next_cursor, unread, businesses },
+    200, { 'cache-control': 'no-store' },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -634,9 +903,9 @@ route('POST', '/api/customer/payment-method', async ({ req, env }) => {
  * delete it unilaterally. Somebody who wants the bookings gone as well asks
  * for the erasure below, which says what it is before it runs.
  *
- * A LIVE SUSPENSION IS NOT CLEARED BY THIS. Standing is keyed on the number
+ * A LIVE SUSPENSION IS NOT CLEARED BY THIS. Standing is keyed on the address
  * and outlives the account, so "close it and sign up again" is not the way
- * round the no-show ladder — verifying the same number produces an account
+ * round the no-show ladder — proving the same address produces an account
  * that is still suspended.
  */
 route('POST', '/api/customer/close', async ({ req, env }) => {
@@ -661,10 +930,10 @@ route('POST', '/api/customer/close', async ({ req, env }) => {
  */
 route('DELETE', '/api/customer/data', async ({ req, env }) => {
   const account = await requireCustomer(req, env);
-  const phone = account.phone_e164;
-  if (!phone) throw badRequest('This account has nothing left to erase.', 'no_subject');
+  const subject = account.login_email;
+  if (!subject) throw badRequest('This account has nothing left to erase.', 'no_subject');
   await enforceRateLimit(env, `erase-account:${account.id}`, 3, 3600);
-  const result = await eraseCustomerByPhone(env, phone);
+  const result = await eraseCustomerByPhone(env, subject);
   // The account went with it, so the cookie in this browser now names a closed
   // row. Cleared here rather than left to fail silently on the next request.
   return json(result, 200, {
@@ -743,7 +1012,8 @@ type Rule =
   | { kind: 'currency' }
   | { kind: 'language' }
   | { kind: 'phone' }
-  | { kind: 'timezone' };
+  | { kind: 'timezone' }
+  | { kind: 'flag' };
 
 const SETTABLE: Record<string, Rule> = {
   business_name: { kind: 'text', max: 120 },
@@ -755,7 +1025,6 @@ const SETTABLE: Record<string, Rule> = {
   language: { kind: 'language' },
   location_mode: { kind: 'enum', values: ['mobile', 'premises', 'hybrid'] },
   fill_model: { kind: 'enum', values: ['clients', 'leads', 'both'] },
-  sms_mode: { kind: 'enum', values: ['device', 'twilio'] },
   home_address: { kind: 'text', max: 200, nullable: true },
   home_lat: { kind: 'coord', min: -90, max: 90 },
   home_lng: { kind: 'coord', min: -180, max: 180 },
@@ -771,6 +1040,22 @@ const SETTABLE: Record<string, Rule> = {
   min_notice_seconds: { kind: 'int', min: 0, max: 30 * 86400 },
   reoffer_cooldown_seconds: { kind: 'int', min: 0, max: 365 * 86400 },
   discount_percent: { kind: 'int', min: 0, max: 100 },
+  /**
+   * TAKING BOOKINGS, OR PAUSED.
+   *
+   * Read in a dozen places and, until now, settable in none of them — a
+   * business that wanted to stop being listed for a fortnight had no way to
+   * say so, and the only thing left to do was delete openings one at a time
+   * and hope. Every public query already respects it, so turning it off
+   * removes the business from the map, the search pages and the browse lists
+   * in one write.
+   *
+   * IT DOES NOT TOUCH WORK ALREADY BOOKED. Somebody who has paid keeps their
+   * appointment whatever this says — pausing is about new work, and a switch
+   * that quietly cancelled a customer's Saturday would be the worst button in
+   * the product. The copy beside it says so.
+   */
+  accept_public_bookings: { kind: 'flag' },
 };
 
 /**
@@ -782,6 +1067,16 @@ const SETTABLE: Record<string, Rule> = {
  */
 function checkSetting(key: string, rule: Rule, raw: unknown, country: string): unknown {
   switch (rule.kind) {
+    // Stored as 0 or 1 because that is what the column is and what every
+    // query comparing against it expects. Anything JSON can carry as a yes is
+    // accepted — true, 1, "1", "true" — because a front end sending the
+    // string "false" and getting a truthy row back is a bug that hides for
+    // months.
+    case 'flag': {
+      if (raw === true || raw === 1 || raw === '1' || raw === 'true') return 1;
+      if (raw === false || raw === 0 || raw === '0' || raw === 'false') return 0;
+      throw badRequest(`${key} must be true or false.`, 'bad_setting');
+    }
     case 'text': {
       // A column that is NOT NULL cannot be cleared, and clearing it by
       // sending "" used to store a blank business name on a public profile.
@@ -1336,11 +1631,25 @@ route('GET', '/api/appointments', async ({ req, env, url }) => {
     `SELECT a.*, c.first_name, c.last_name, c.phone_e164, c.acquired,
             s.name AS service_name,
             oi.id AS order_item_id, oi.arrived_at, oi.cancelled_at, oi.parts_cents,
-            oi.address_released_at
+            oi.address_released_at,
+            -- WHAT THE OPERATOR WAS ACTUALLY PAID, which until now this route
+            -- did not carry at all. Every one of these columns was already
+            -- being written by settleOrder and markPaid, and none of them was
+            -- readable by the app -- so a business could see the price of a
+            -- job it had finished and had no way to find out what reached its
+            -- bank, what was kept, or whether the payout had even gone yet.
+            -- Sent from the server rather than worked out in the browser,
+            -- because a payout the page calculates and the transfer disagree
+            -- about by one cent is a support ticket that costs more than the
+            -- cent.
+            oi.fee_cents, oi.transfer_id, oi.transferred_at,
+            oi.refund_cents, oi.refunded_at,
+            o.paid_at, o.payment_status
        FROM appointments a
        LEFT JOIN clients c  ON c.id = a.client_id
        LEFT JOIN services s ON s.id = a.service_id
        LEFT JOIN order_items oi ON oi.appointment_id = a.id
+       LEFT JOIN orders o ON o.id = oi.order_id
       WHERE a.operator_id = ? AND a.ends_at > ? AND a.starts_at < ?
       ORDER BY a.starts_at`,
   ).bind(op.id, from, to).all();
@@ -1403,6 +1712,75 @@ route('POST', '/api/appointments', async ({ req, env }) => {
 });
 
 /**
+ * The columns PATCH /api/appointments/:id is allowed to set, and the reader
+ * each one has to survive on the way in.
+ *
+ * IT USED TO BE A LIST OF NAMES AND `vals.push(b[k])`. The list bounded WHICH
+ * columns could be written, which is why this was never an injection — and it
+ * said nothing whatever about what was written into them. `price_cents: "abc"`
+ * and `lat: {}` went into the database verbatim, and every other update path
+ * in this file puts its values through `int`, `num` or `str` first.
+ *
+ * WHAT THAT COST, AND IT IS NOT COSMETIC. These are not display fields.
+ * price_cents is money: it is summed for an operator's takings, compared
+ * against a fee, and read by the ranking that decides whose opening is shown
+ * first — and SQLite will happily compare a text 'abc' against a number, with
+ * text sorting after every integer, so one bad row does not fail, it quietly
+ * outranks every real one. lat and lng are what every distance in the product
+ * is computed from; an object stored there becomes the string
+ * "[object Object]", and the haversine that reads it produces NaN, which
+ * propagates through the detour calculation and takes an opening out of every
+ * customer's results without erroring anywhere. Nothing in the write path
+ * complains, so the row is wrong from then on and the report of it arrives as
+ * "this job is missing from the map".
+ *
+ * So each column names its reader, and a value the reader cannot make sense of
+ * is refused at the door rather than mangled into the row. The readers are the
+ * same ones POST /api/appointments uses for the same columns — `num` for the
+ * coordinates because they keep their fraction, `int` for the money because it
+ * is cents, `str` for the text.
+ *
+ * EXPLICIT NULL IS STILL "CLEAR THIS", on every one of them. That is the whole
+ * reason the check is not simply "the reader returned null": a caller emptying
+ * the notes or removing a price is doing something ordinary and must keep
+ * working. An empty string does the same for the text columns, which is what
+ * `str` already means everywhere else in this file. It is only a value that is
+ * neither of those and still cannot be read that is an error.
+ */
+const APPOINTMENT_PATCH_FIELDS: ReadonlyArray<
+  readonly [column: string, read: (column: string, raw: unknown) => unknown]
+> = [
+  ['price_cents', (k, v) => patchNumber(k, v, int)],
+  ['notes', patchText],
+  ['address_line', patchText],
+  ['postcode', patchText],
+  ['lat', (k, v) => patchNumber(k, v, num)],
+  ['lng', (k, v) => patchNumber(k, v, num)],
+  // Text like the rest, and the refusal does a second job here: the ownership
+  // check further down is `str(b.service_id)` and skips anything that is not a
+  // string, so a service_id arriving as a number or an object was written onto
+  // the row without ever being proved to belong to this operator.
+  ['service_id', patchText],
+];
+
+/** A text column: null or blank clears it, and only a string is text. */
+function patchText(column: string, raw: unknown): string | null {
+  if (raw === null) return null;
+  if (typeof raw !== 'string') throw badRequest(`${column} has to be text.`, 'bad_field');
+  return str(raw);
+}
+
+/** A number column: null clears it, and anything unreadable is refused. */
+function patchNumber(
+  column: string, raw: unknown, read: (v: unknown) => number | null,
+): number | null {
+  if (raw === null) return null;
+  const n = read(raw);
+  if (n === null) throw badRequest(`${column} has to be a number.`, 'bad_field');
+  return n;
+}
+
+/**
  * Update an appointment: reschedule it, or mark it done.
  *
  * Marking it 'completed' is the event the whole recurring-trade side of the
@@ -1451,8 +1829,10 @@ route('PATCH', '/api/appointments/:id', async ({ req, env, params }) => {
 
   const sets: string[] = ['starts_at = ?', 'ends_at = ?', 'status = ?'];
   const vals: unknown[] = [starts, ends, status];
-  for (const k of ['price_cents', 'notes', 'address_line', 'postcode', 'lat', 'lng', 'service_id']) {
-    if (b[k] !== undefined) { sets.push(`${k} = ?`); vals.push(b[k]); }
+  // Absent means "leave it alone" and is the only thing that skips a column;
+  // everything present goes through its reader. See APPOINTMENT_PATCH_FIELDS.
+  for (const [k, read] of APPOINTMENT_PATCH_FIELDS) {
+    if (b[k] !== undefined) { sets.push(`${k} = ?`); vals.push(read(k, b[k])); }
   }
   if (status === 'no_show' && appt.status !== 'no_show' && appt.client_id) {
     // Counted here, and used to rank a repeat no-show down for future gaps.
@@ -1644,8 +2024,17 @@ route('GET', '/api/gaps/:id/candidates', async ({ req, env, params }) => {
 
 /**
  * Send a wave of offers. The operator picks candidate_ids, or we take the top
- * `offers_per_wave` by score. In 'device' mode the response carries prefilled
- * sms: links for the operator to tap — nothing is sent from the server.
+ * `offers_per_wave` by score.
+ *
+ * THE SERVER SENDS THEM NOW. This used to answer with prefilled `sms:` links
+ * for the operator to tap on their own handset, which was the only delivery
+ * this feature had and could never work: the customers this site introduces
+ * are written with no phone number on purpose, and there is no SMS provider to
+ * send through in any case. Each offer now lands in the conversation that
+ * customer already has with this business, with an email nudge behind it — see
+ * lib/offers.ts. There is nothing left for the operator to do after this call,
+ * which is why `sms_mode` is gone from the response; the column stays on the
+ * operator row and this path no longer reads it.
  */
 route('POST', '/api/gaps/:id/offers', async ({ req, env, params }) => {
   const op = await requireOperator(req, env);
@@ -1656,7 +2045,7 @@ route('POST', '/api/gaps/:id/offers', async ({ req, env, params }) => {
 
   const ranked = await rankCandidates(env, op, gap);
   if (ranked.length === 0) {
-    return json({ offers: [], reason: 'No eligible clients or open jobs fit this gap.' });
+    return json({ offers: [], reason: NOBODY_TO_OFFER });
   }
 
   let chosen: Candidate[];
@@ -1671,7 +2060,13 @@ route('POST', '/api/gaps/:id/offers', async ({ req, env, params }) => {
   if (!chosen.length) throw badRequest('None of those candidates are eligible for this gap.');
 
   const offers = await createOffers(env, op, gap, chosen);
-  return json({ offers, sms_mode: op.sms_mode }, 201);
+  // An empty wave off a non-empty selection means every one of them stopped
+  // being reachable between the ranking and the send -- an account closed, a
+  // conversation closed. Answered as the same "nobody to offer" sentence
+  // rather than as a success with no offers in it, because from the operator's
+  // side those are the same fact and only one of them has a next step.
+  if (offers.length === 0) return json({ offers: [], reason: NOBODY_TO_OFFER });
+  return json({ offers }, 201);
 });
 
 route('POST', '/api/gaps/:id/dismiss', async ({ req, env, params }) => {
@@ -1729,17 +2124,23 @@ padding:5px 10px;border-radius:20px;align-self:flex-start}
 
 route('GET', '/o/:token', async ({ env, params }) => {
   // Every view of this page writes (markViewed), so it is not a free read. The
-  // token is the right bucket: one text message, one offer, one customer
-  // refreshing it. Ten a minute leaves room for someone tapping back and forth
-  // between this and the message it came in.
+  // token is the right bucket: one offer, one customer refreshing it. Ten a
+  // minute leaves room for someone tapping back and forth between this and the
+  // conversation or the email the link arrived in.
   await enforceRateLimit(env, `offer-view:${params.token!}`, 60, 600);
   let offer;
   try {
     offer = await loadOfferByToken(env, params.token!);
   } catch {
+    // "Check the text message" is what this said, and there is no text
+    // message: an offer arrives in the conversation the customer already has
+    // with that business, with an email behind it. Telling somebody to go and
+    // look at something that does not exist is how a dead link turns into a
+    // person who thinks they have lost something.
     return html(page('Link not found',
       `<p class="big">🔗</p><h1>This link isn't valid</h1>
-       <p class="meta">Check the text message, or reply to it and we'll sort it out.</p>`), 404);
+       <p class="meta">Check the link they sent you, or message them in the app
+       and we'll sort it out.</p>`), 404);
   }
 
   const t = now();
@@ -1772,7 +2173,7 @@ route('GET', '/o/:token', async ({ env, params }) => {
   if (dead === 'expired') {
     return html(page('Expired', `<p class="big">⌛</p><h1>This offer has expired</h1>
       <p class="biz">${biz}</p>
-      <p class="meta">Reply to the text if you'd still like the slot.</p>`), 410);
+      <p class="meta">Message them in the app if you'd still like the slot.</p>`), 410);
   }
 
   await markViewed(env, offer.offer_id);
@@ -1811,7 +2212,7 @@ route('POST', '/o/:token/accept', async ({ env, params }) => {
       <p class="biz">${escapeHtml(o.business_name)}</p>
       <p class="slot">${escapeHtml(when)}</p>
       <p class="meta">${escapeHtml(o.title)}</p>
-      <p class="note">See you then. Reply to the text if anything changes.</p>`));
+      <p class="note">See you then. Message them in the app if anything changes.</p>`));
   } catch (e) {
     const code = e instanceof HttpError ? e.code : undefined;
     if (code === 'slot_taken') {
@@ -1819,7 +2220,7 @@ route('POST', '/o/:token/accept', async ({ env, params }) => {
         <p class="meta">Someone confirmed a moment before you. We'll let you know next time.</p>`), 410);
     }
     return html(page('No longer available', `<p class="big">⌛</p><h1>This offer has closed</h1>
-      <p class="meta">Reply to the text if you'd still like a slot.</p>`), 410);
+      <p class="meta">Message them in the app if you'd still like a slot.</p>`), 410);
   }
 });
 
@@ -1993,10 +2394,21 @@ route('GET', '/api/profile/photos', async ({ req, env }) => {
 route('POST', '/api/profile/photos', async ({ req, env }) => {
   const op = await requireOperator(req, env);
   if (!env.PHOTOS) throw new HttpError(503, 'Photo storage is not set up yet.', 'no_storage');
-  // Signed in, so the operator is the bucket rather than the address. This one
-  // is about storage that is paid for and never expires: sixty an hour is a
+  // Signed in, so the operator is the rate-limit bucket rather than the
+  // address. This one is about storage that never expires: sixty an hour is a
   // long afternoon of uploading a portfolio, and it caps what a stolen session
-  // can leave behind in the bucket.
+  // can leave behind in the photo store.
+  //
+  // Worth knowing what this limit now sits in front of. It was written when
+  // the store was going to be R2, where an upload spent storage billed by the
+  // gigabyte and nothing else. The store is Workers KV, whose free allowance
+  // is 1 GB for the whole account and 1,000 writes a day for the whole
+  // account, so an upload now spends a shared, finite, daily thing. This
+  // number was deliberately not tightened for that, and the reasoning is
+  // written out in full at the top of lib/photostore.ts: MAX_PHOTOS caps a
+  // portfolio at five rows, which bounds the realistic daily total far below
+  // what sixty an hour would allow, and a global counter would turn one busy
+  // day into an upload outage for everybody at once.
   await enforceRateLimit(env, `photo-profile:${op.id}`, 60, 3600);
 
   // Refused on the caller's own declared length, before the multipart body is
@@ -2012,12 +2424,19 @@ route('POST', '/api/profile/photos', async ({ req, env }) => {
     maxBytes: MAX_PHOTO_BYTES, allowed: WEB_IMAGE_TYPES,
   });
 
+  // Written once and never overwritten: newId() is unique per upload, and a
+  // replacement photograph is a new key and a new row. The GET route below
+  // leans on that to answer 304s without an etag of its own.
   const key = `w/${op.id}/${newId()}`;
-  await env.PHOTOS.put(key, bytes, {
-    httpMetadata: { contentType, cacheControl: 'public, max-age=31536000, immutable' },
-  });
+  // The sniffed content type rides along in KV's metadata, which is the only
+  // place to put it -- KV has no httpMetadata and no writeHttpMetadata, so the
+  // GET route builds the headers by hand from exactly this. See
+  // lib/photostore.ts.
+  await putPhoto(env.PHOTOS, key, bytes, contentType);
 
   try {
+    // `r2_key` is the column's name and there is no R2 bucket behind it; see
+    // the note at the top of lib/photostore.ts for why it kept the name.
     const photo = await addPhoto(env, op.id, {
       r2_key: key,
       content_type: contentType,
@@ -2026,8 +2445,9 @@ route('POST', '/api/profile/photos', async ({ req, env }) => {
     });
     return json({ photo }, 201);
   } catch (e) {
-    // The row is the record of truth. If it was refused, the object it points
-    // at must not be left behind paying for storage nobody can reach.
+    // The row is the record of truth. If it was refused, the value it points
+    // at must not be left behind eating the account's 1 GB of KV for something
+    // nobody can reach.
     await env.PHOTOS.delete(key).catch(() => {});
     throw e;
   }
@@ -2065,17 +2485,42 @@ route('GET', '/api/public/profile/:slug', async ({ env, params }) => {
   // on `rating.count` and rendered blank for every business on the site.
   // Spreading means a field added to PublicProfile reaches the page instead of
   // waiting for somebody to notice it is missing.
+  /*
+    WHERE THIS BUSINESS WORKS, as the three parts an address is made of.
+
+    A schema.org LocalBusiness cannot produce a rich result without an
+    `address`, and web/src/pages/PublicProfile.tsx emits a LocalBusiness node
+    for this business — it has to, because React throws away the Worker's copy
+    when it mounts over the rendered page. It had no address to give: `areas`
+    is a list of neighbourhood names and nothing in this payload said which
+    town or state they are in. So the metro is sent, resolved the same way
+    lib/seo.ts resolves it for the server-rendered half — by where the majority
+    of this business's round is — and the two halves of one URL can then say
+    the same thing.
+
+    No street line, here or there. These are vans; they have no premises, and
+    this product has never been given an address for one.
+  */
+  const metro = await metroForOperator(env, row?.id ?? null);
+
   return json({
     ...profile,
     operator: { ...profile.operator, is_sample: isDemoOperator(row?.id ?? '') },
     photos,
+    metro: {
+      slug: metro.slug,
+      name: metro.name,
+      state: metro.state,
+      country: metro.country,
+      path: metroPath(metro),
+    },
   }, 200, { 'cache-control': 'public, max-age=300' });
 });
 
 /**
- * Object keys this route is allowed to hand to a stranger.
+ * Photo-store keys this route is allowed to hand to a stranger.
  *
- * One bucket holds two completely different kinds of picture. `w/` is an
+ * One namespace holds two completely different kinds of picture. `w/` is an
  * operator's portfolio: they chose it, it is already on their public profile,
  * and serving it to anybody is the point. `j/` is proof of a job — the inside
  * of somebody's house, their car, their driveway — and proof.ts is explicit
@@ -2091,6 +2536,17 @@ route('GET', '/api/public/profile/:slug', async ({ env, params }) => {
  * later is private until somebody says otherwise.
  *
  * `a/` is reserved for operators.avatar_key, which nothing writes yet.
+ *
+ * `m/` is a photograph sent inside a conversation, added with migration 0051,
+ * and it is absent from this list on purpose — which is the allowlist doing
+ * exactly the job it was made an allowlist for. These are the same kind of
+ * picture `j/` is, often literally the same picture: somebody's kitchen, their
+ * car, the inside of their garage, sent to one business by one customer. Every
+ * read of one goes through readMessagePhoto in lib/chat.ts, which proves the
+ * caller is on that conversation before it hands over a byte. A new prefix
+ * arriving here private-by-default, rather than public until somebody
+ * remembers to block it, is the whole reason this is a list of what may be
+ * served instead of a list of what may not.
  */
 const PUBLIC_PHOTO_PREFIXES = ['w/', 'a/'];
 
@@ -2098,19 +2554,53 @@ route('GET', '/api/public/photo/:key', async ({ env, params, req }) => {
   if (!env.PHOTOS) throw notFound();
   // The key arrives URL-encoded because it contains slashes.
   const key = decodeURIComponent(params.key ?? '');
-  // Checked before the bucket is touched, and answering exactly as a missing
-  // object does: a private key must not be distinguishable from a wrong one.
+  // Checked before the store is touched, and answering exactly as a missing
+  // key does: a private key must not be distinguishable from a wrong one.
   if (!PUBLIC_PHOTO_PREFIXES.some((p) => key.startsWith(p))) throw notFound();
-  const object = await env.PHOTOS.get(key);
-  if (!object) throw notFound();
+  const photo = await getPhoto(env.PHOTOS, key);
+  if (!photo) throw notFound();
+
   const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set('etag', object.httpEtag);
+  // BUILT BY HAND, BECAUSE THERE IS NOTHING TO BUILD IT FOR US. R2 had
+  // `writeHttpMetadata`, which stamped the stored content type onto a Headers
+  // for you; KV has no equivalent, so the header is set here from the one
+  // thing putPhoto recorded. That is the type images.ts sniffed out of the
+  // bytes and never the one the uploader declared -- which matters most on
+  // this route of all of them, because this is the one with no session in
+  // front of it.
+  //
+  // No stored type means the entry was written by something other than
+  // putPhoto, and the honest answer is that we do not know what these bytes
+  // are. It is served as opaque bytes rather than guessed at; combined with
+  // the nosniff that withSecurityHeaders puts on every response, a browser
+  // will download it and will not run it.
+  headers.set('content-type', photo.contentType ?? 'application/octet-stream');
+
+  // AN ETAG DERIVED FROM THE KEY, NOT FROM THE BYTES.
+  //
+  // R2 gave every object an `httpEtag` and this route answered conditional
+  // requests with it. KV has nothing of the kind, and the choice was between
+  // dropping 304s -- which would re-send every portfolio photograph on every
+  // revalidation, on a page whose entire purpose is photographs -- or deriving
+  // one. Deriving one is sound here for a reason specific to this store: keys
+  // are write-once. Both writers mint `${prefix}/${id}/${newId()}` and never
+  // put to an existing key, a replacement photograph is a new key and a new
+  // row, and a deleted key is gone rather than reused. The bytes at a given
+  // key therefore cannot change, which is the same promise the immutable
+  // cache-control below has always made. If a writer that overwrites a key is
+  // ever added, this line becomes a stale-content bug and must go with it.
+  //
+  // encodeURIComponent and not the raw key: the key is a path segment a
+  // stranger controls, and a quote or a newline in it would either corrupt the
+  // header or throw. The encoding is injective, so two different keys cannot
+  // collide on one etag.
+  const etag = `"${encodeURIComponent(key)}"`;
+  headers.set('etag', etag);
   headers.set('cache-control', 'public, max-age=31536000, immutable');
-  if (req.headers.get('if-none-match') === object.httpEtag) {
+  if (req.headers.get('if-none-match') === etag) {
     return new Response(null, { status: 304, headers });
   }
-  return new Response(object.body, { headers });
+  return new Response(photo.body, { headers });
 });
 
 // The map the landing page draws. Public on purpose: no sign-in, no postcode.
@@ -2196,7 +2686,59 @@ route('GET', '/api/public/map', async ({ req, env, url }) => {
 // stop somebody and ask who they are.
 // ---------------------------------------------------------------------------
 
-/** Everything the guest page needs, without leaking anything the operator owns. */
+/**
+ * Everything the guest page needs, without leaking anything the operator owns.
+ *
+ * WHY THE BOOKING NOW CARRIES ITS ORDER, WHICH IS THE WHOLE OF A REAL BUG.
+ *
+ * For most of this product's life the booking object here said what was bought
+ * — the service, the hour, the address, the price — and nothing whatever about
+ * whether it had been paid for. The only order field on it was
+ * `order_item_id`, put there so the photo strip could be hung off the right
+ * line, and an order ITEM is not something a charge can be opened against: the
+ * pay route takes an ORDER id, and nothing in the browser could turn one into
+ * the other.
+ *
+ * What that cost is a dead end, and it is the ordinary one rather than an
+ * exotic one. The checkout holds the appointments and writes the order BEFORE
+ * it asks for a card — deliberately, so a customer who is interrupted has not
+ * lost the slot — and Book.tsx's pay step promises in as many words that "your
+ * booking is held under your conversation and you can pay from there". Somebody
+ * who closed the tab at that step, and there are always some, came back to this
+ * page and found the confirmation card, the start code, the conversation, and
+ * no way at all to finish paying. The booking then sat unpaid for ever: the
+ * operator's calendar said a job was happening, the customer believed they had
+ * bought something, and no money had moved.
+ *
+ * The fix is two joins, because the order id and the order's state were always
+ * one hop from the sub-select that was already being run for `order_item_id`.
+ *
+ * WHY `paid` AND `due` RATHER THAN AN AMOUNT OUTSTANDING. The figure that will
+ * actually be charged is worked out in src/lib/checkout.ts, from the lines that
+ * are still happening, and it is written back onto the order every time the
+ * intent is opened or moved. Deriving a second "amount still owed" here would
+ * be that same money computed twice in two files, and the copy in this one
+ * would be the one that had never heard of a cancelled line. So this sends the
+ * two things the page cannot work out for itself — the id to charge against,
+ * and whether there is anything left to charge — and the amount stays where it
+ * is computed once. `total` below is not arithmetic: it is `orders.total_cents`
+ * formatted, the same stored figure a support person is read back when somebody
+ * asks what they were charged.
+ *
+ * WHY BOTH FLAGS, GIVEN ONE LOOKS LIKE THE OTHER'S OPPOSITE. They are not.
+ * `paid` answers "has the money arrived", which is what the page says out loud.
+ * `due` answers "should this page put a card form in front of them", which is a
+ * narrower question: a booking cancelled before anybody paid for it is neither
+ * paid nor due, and a page carrying only one of these flags gets that case
+ * wrong in one direction or the other — either claiming a cancelled booking was
+ * paid for, or asking somebody to pay for a job that is not going to happen.
+ *
+ * NULL IS A NORMAL ANSWER AND MUST STAY ONE. A handful of bookings predate
+ * orders entirely — the older single-slot claims the comment below has always
+ * mentioned — and they have no order row to join to. That is not an error and
+ * not a missing field: `order` is null, the page draws no card form and says
+ * nothing new about the money, exactly as it did before this existed.
+ */
 async function guestView(env: Env, thread: Awaited<ReturnType<typeof threadByToken>>) {
   if (!thread) throw notFound('That conversation link is not valid any more.');
   const op = await env.DB.prepare(
@@ -2212,13 +2754,31 @@ async function guestView(env: Env, thread: Awaited<ReturnType<typeof threadByTok
   let booking = null;
   if (thread.appointment_id) {
     const a = await env.DB.prepare(
-      `SELECT a.starts_at, a.ends_at, a.address_line, a.price_cents, s.name AS service_name,
-              (SELECT oi.id FROM order_items oi WHERE oi.appointment_id = a.id LIMIT 1)
-                AS order_item_id
-         FROM appointments a LEFT JOIN services s ON s.id = a.service_id
+      // The order_item sub-select is the one that was already here, kept
+      // exactly as it was — LIMIT 1 and all — and merely joined to rather than
+      // selected, so `order_item_id` is still the same line it has always
+      // been. The order hangs off that line, which is the only reason this was
+      // ever one hop away.
+      `SELECT a.starts_at, a.ends_at, a.address_line, a.price_cents,
+              a.status AS appointment_status, s.name AS service_name,
+              oi.id AS order_item_id, oi.cancelled_at AS item_cancelled_at,
+              o.id AS order_id, o.status AS order_status, o.paid_at AS order_paid_at,
+              o.total_cents AS order_total_cents, o.currency AS order_currency
+         FROM appointments a
+         LEFT JOIN services s ON s.id = a.service_id
+         LEFT JOIN order_items oi
+                ON oi.id = (SELECT x.id FROM order_items x
+                             WHERE x.appointment_id = a.id LIMIT 1)
+         LEFT JOIN orders o ON o.id = oi.order_id
         WHERE a.id = ? AND a.operator_id = ?`,
     ).bind(thread.appointment_id, thread.operator_id).first<any>();
     if (a) {
+      // `paid_at` and nothing else, because that is the column the rest of this
+      // codebase treats as the line between claimed and paid — migration 0040
+      // says so where it adds it, and markPaid is the only thing that writes
+      // it. An intent that is still going through has no paid_at, which is the
+      // honest answer: money a bank has not answered on is not money in.
+      const paid = a.order_paid_at != null;
       booking = {
         service_name: a.service_name ?? 'Booking',
         starts_at: a.starts_at, ends_at: a.ends_at,
@@ -2227,12 +2787,82 @@ async function guestView(env: Env, thread: Awaited<ReturnType<typeof threadByTok
         // booking. Null for the older single-slot claims that predate orders.
         order_item_id: a.order_item_id ?? null,
         price: formatMoney(a.price_cents ?? 0, op?.currency ?? 'USD', locale),
+        order: a.order_id == null ? null : {
+          id: a.order_id,
+          // The order's own currency, not the operator's. An order carries one
+          // currency by construction and it is the one the charge is in; using
+          // the business's would print the right number with the wrong symbol
+          // on any booking taken before a business changed it.
+          total: formatMoney(a.order_total_cents ?? 0,
+            a.order_currency ?? op?.currency ?? 'USD', locale),
+          paid,
+          // THREE WAYS A BOOKING STOPS BEING WORTH ASKING MONEY FOR, and all
+          // three have to be checked here because they are written by
+          // different paths and none of them implies the others.
+          //
+          //   The order itself is cancelled or failed — bypass.ts writes the
+          //   first when every line on it has gone, orders.ts the second when
+          //   a placement could not be completed.
+          //
+          //   This particular LINE is cancelled while the rest of the basket
+          //   stands, which is what a single job being called off looks like
+          //   on an order holding two.
+          //
+          //   The APPOINTMENT is cancelled and the line is not. That is not a
+          //   hypothetical: the Cancel button on the operator's own schedule
+          //   (POST /api/appointments/:id/cancel) cancels the appointment and
+          //   deliberately does not touch order_items, so a booking called off
+          //   from the screen an operator actually uses would otherwise still
+          //   be offering the customer a card form for it.
+          due: !paid
+            && a.order_status !== 'cancelled' && a.order_status !== 'failed'
+            && a.item_cancelled_at == null
+            && a.appointment_status !== 'cancelled',
+        },
       };
     }
   }
 
+  // customer_account_id IS DELIBERATELY NOT IN THIS PAYLOAD, which is why the
+  // row is taken apart rather than spread whole.
+  //
+  // Migration 0052 put the column on the thread and the spread below would
+  // have published it to every reader of this route, including the signed-out
+  // one on a link. It is not a secret — holding an account id proves nothing
+  // and grants nothing, and no comparison anywhere in this Worker trusts a
+  // value that came from a request — but there is no screen that shows it and
+  // nothing in web/ reads it, and a field nothing reads is a field that only
+  // travels. It would sit in every browser cache and every proxy log naming
+  // which account a conversation belongs to, for no purpose at all. Same
+  // reasoning as OPERATOR_PRIVATE further down this file.
+  const { customer_account_id: _account, ...rest } = thread;
+
   return {
-    ...thread,
+    ...rest,
+    /**
+     * WHETHER THIS CONVERSATION IS REACHABLE FROM AN ACCOUNT — a boolean, not
+     * the account id, and it exists for exactly one sentence on one page.
+     *
+     * The "keep this link" notice used to state flatly that the link was the
+     * only way to this conversation. Since migration 0052 that is true for
+     * some readers and false for others, and a page cannot say either
+     * confidently without being told: the browser holding a token has no way
+     * to know whether the customer who booked ever proved an email address,
+     * and the two halves of that need opposite advice. A guest with no account
+     * genuinely must keep the link or lose the conversation; somebody with one
+     * should be told they can sign in instead, because otherwise they spend an
+     * evening hunting for a link they do not need.
+     *
+     * A BOOLEAN AND NEVER THE ID. See the note above on why the id itself is
+     * stripped. This answers the only question a page has, adds nothing a
+     * reader could use, and tells a link-holder who is not the customer
+     * nothing they could not already infer — booking requires an account, and
+     * whoever holds the link already has the whole conversation.
+     *
+     * It costs no extra read: the column is on the row this function already
+     * fetched.
+     */
+    on_account: thread.customer_account_id != null,
     business_name: op?.business_name ?? '',
     profile_slug: op?.profile_slug ?? null,
     // The guest is signed out and has no operator record, so without this the
@@ -2300,9 +2930,53 @@ async function openEnquiry(
 
   const kind = str(b.kind) === 'quote' ? 'quote' : 'message';
 
+  /*
+    THE ONE MOMENT A BOOKING-LESS ENQUIRY CAN BE PUT ON AN ACCOUNT.
+
+    An enquiry has no order, no appointment and no client row — that is what
+    makes it an enquiry — so there is nothing to join it to an account
+    afterwards and there never will be. Migration 0052 spells the join out and
+    all three of its hops start at a booking. Whoever asked "does your van fit
+    down my alley" is, to every query in this codebase, a first name and a
+    secret in a link.
+
+    So it is captured HERE or it is not captured at all, and the choice was
+    between two honest answers rather than between a good one and a bad one:
+
+      READ THE SESSION IF THERE IS ONE. Somebody who happens to be signed in
+      when they send the message gets the conversation on their account, and
+      can find it again from /account with no link. It costs one indexed read
+      on a route that already spends a Turnstile verification, three rate-limit
+      writes and an operator lookup.
+
+      LEAVE EVERY ENQUIRY TOKEN-ONLY. Simpler, and it abandons the people the
+      feature is for: the signed-in customer who messaged three businesses
+      about the same job and closed the tabs.
+
+    The first, plainly. And NOTHING IS INFERRED BEYOND IT — no matching on a
+    name, an address or an IP, and no attempt to reconcile it later when the
+    same person signs in. claimGuestHistory can rescue a booking made as a
+    guest because the ORDER carries the email address that was proved; an
+    enquiry carries no address at all, so the only way to claim one later would
+    be to guess whose it was. Guessing here hands a stranger's conversation to
+    whoever guessed closest, so an anonymous enquiry stays reachable on its
+    link and only on its link — permanently, not until something better comes
+    along — and Enquiry.tsx says so before the message is sent rather than
+    after.
+
+    WHY THIS DOES NOT WEAKEN THE ROUTE. No sign-in is asked for and none is
+    required: a null here is the ordinary outcome and changes nothing about
+    what gets written. The session is read, never trusted for anything else —
+    the name still comes out of the form and through the redactor, the
+    challenge still has to be solved, and the rate limits are still bucketed on
+    the address rather than on the account.
+  */
+  const enquirer = await currentCustomer(req, env);
+
   const { thread, token } = await startThread(env, {
     operator_id: op.id,
     gap_id: str(b.gap_id),
+    customer_account_id: enquirer?.id ?? null,
     guest_name: guestName,
     // A quote request writes its own line into the conversation, from
     // estimates.ts, in the customer's own words. Passing the same text as an
@@ -2379,21 +3053,21 @@ route('POST', '/api/public/profile/:slug/enquiries', async ({ req, env, params }
   }, 201);
 });
 
-route('GET', '/api/public/threads/:token', async ({ env, params }) => {
+route('GET', '/api/public/threads/:token', async ({ env, params, ref }) => {
   // The guest page polls this every 15 seconds (GuestThread.tsx), so an open
   // tab spends 20 of these per five minutes. The ceiling is seven times that
   // on purpose: two tabs, a reconnect and a few manual refreshes must all fit
   // under it, because the person tripping this is the customer whose booking
   // it is.
   await enforceRateLimit(env, `thread-read:${params.token ?? ''}`, 150, 300);
-  const thread = await threadByToken(env, params.token ?? '');
+  const thread = await threadByToken(env, ref);
   const view = await guestView(env, thread);
   const messages = await listMessages(env, view.id);
-  await markThreadRead(env, 'guest', { token: params.token ?? '' });
+  await markThreadRead(env, 'guest', { token: ref });
   return json({ thread: view, messages }, 200, { 'cache-control': 'no-store' });
 });
 
-route('POST', '/api/public/threads/:token/messages', async ({ req, env, params }) => {
+route('POST', '/api/public/threads/:token/messages', async ({ req, env, params, ref }) => {
   // Bucketed on the token rather than the IP: this route asks for no sign-in,
   // the link is who they are, and a family on one connection must not share a
   // budget. Thirty a minute is roughly one message every two seconds — well
@@ -2401,18 +3075,47 @@ route('POST', '/api/public/threads/:token/messages', async ({ req, env, params }
   // operator's inbox.
   await enforceRateLimit(env, `guest-msg:${params.token ?? ''}`, 30, 60);
   const b = await body(req);
-  const message = await postAsGuest(env, params.token ?? '', String(b.body ?? ''));
+  const message = await postAsGuest(env, ref, String(b.body ?? ''));
   return json({ message }, 201);
 });
 
-route('GET', '/api/threads', async ({ req, env }) => {
+/**
+ * The operator's inbox: one page of it, unanswered questions first.
+ *
+ * WHAT THIS ROUTE WAS. `?unread=1` or nothing, a hard fifty rows, and no way
+ * to ask for the fifty-first. That is the whole of it, and for a business with
+ * a handful of conversations it was enough. The owner's description of why it
+ * stopped being enough — "business will have more messages by customers asking
+ * questions" — names three separate failures, and lib/chat.ts sets them out
+ * above listThreads: no way past the last row, no way to find one row, and an
+ * ordering under which an unanswered question sinks for every message anybody
+ * else sends.
+ *
+ * `cursor`/`limit` page it, `unread=1` and `booked=1` and `status=` narrow it,
+ * `q=` searches the name, the subject and what was said. Every one of those is
+ * a filter inside a statement already scoped by `operator_id = ?`; none of
+ * them can widen it, and the search in particular reads message bodies only
+ * through an EXISTS correlated to a thread this operator owns.
+ *
+ * `unread` stays beside the rows and is deliberately NOT derived from them:
+ * it is how many conversations are waiting in total, which is a different
+ * number from how many are on this page and is the one the header prints.
+ */
+route('GET', '/api/threads', async ({ req, env, url }) => {
   const op = await requireOperator(req, env);
-  const unreadOnly = new URL(req.url).searchParams.get('unread') === '1';
-  const [threads, unread] = await Promise.all([
-    listThreads(env, op.id, { unreadOnly }),
+  const q = url.searchParams;
+  const [page, unread] = await Promise.all([
+    listThreads(env, op.id, {
+      unreadOnly: q.get('unread') === '1',
+      bookedOnly: q.get('booked') === '1',
+      status: threadStatusFilter(q.get('status'), 'open'),
+      q: q.get('q'),
+      limit: int(q.get('limit')) ?? undefined,
+      cursor: q.get('cursor'),
+    }),
     unreadThreadCount(env, op.id),
   ]);
-  return json({ threads, unread });
+  return json({ threads: page.threads, next_cursor: page.next_cursor, unread });
 });
 
 route('GET', '/api/threads/:id', async ({ req, env, params }) => {
@@ -2434,6 +3137,143 @@ route('POST', '/api/threads/:id/read', async ({ req, env, params }) => {
   await markThreadRead(env, 'operator', { operator_id: op.id, thread_id: params.id ?? '' });
   return json({ ok: true });
 });
+
+/**
+ * Closing a conversation, and opening it again.
+ *
+ * THE PRODUCER FOR A COLUMN THAT HAS HAD NONE SINCE 0011. threads.status has
+ * existed, been CHECK-constrained, refused new messages through assertOpen,
+ * been excluded from the offer fan-out by lib/rank.ts, drawn a notice in the
+ * operator's inbox and had a sentence waiting for it on the customer's account
+ * page — and nothing anywhere ever wrote it. Every row was 'open' for ever, so
+ * an inbox could only grow: March's finished job sat between two live
+ * conversations permanently, and the answer to "more messages by customers
+ * asking questions" was to scroll past the ones already dealt with.
+ *
+ * ONE ROUTE FOR BOTH DIRECTIONS rather than /close and /reopen. It is one
+ * decision with two values, the body carries which, and two routes would be
+ * two authorisation checks and two chances for them to differ. The default is
+ * `closed` because that is the button; `{"open": true}` is the way back.
+ *
+ * THE CUSTOMER HAS NO EQUIVALENT ROUTE AND IS NOT GETTING ONE — see
+ * setThreadStatus in lib/chat.ts for why closing is the business's call about
+ * its own queue. What the customer gets is honesty: their list keeps showing a
+ * closed conversation, says on the row that the business has closed it, and
+ * still opens it to read.
+ *
+ * Scoped by operator_id inside setThreadStatus, so a thread id copied out of
+ * another business's inbox reports the same "not yours" a made-up one does and
+ * changes nothing.
+ */
+route('POST', '/api/threads/:id/status', async ({ req, env, params }) => {
+  const op = await requireOperator(req, env);
+  const b = await body(req);
+  const thread = await setThreadStatus(
+    env, op.id, params.id ?? '', b.open === true ? 'open' : 'closed',
+  );
+  return json({ thread });
+});
+
+// ---------------------------------------------------------------------------
+// A photograph, inside the conversation
+// ---------------------------------------------------------------------------
+//
+// Four routes: one upload door per side, one serve door per side. The split
+// between this and the proof gallery further down is the product's, not an
+// accident of where the code went: routine photographs are shared here, where
+// they are part of what was said, and the staged before/during/after gallery
+// on the booking stays what it is, which is the record a claim is settled
+// from. lib/chat.ts has the long version.
+//
+// ON TURNSTILE, WHICH IS LIVE IN PRODUCTION AND IS DELIBERATELY NOT ON THESE.
+//
+// The guest upload is the only one of the four where the question even
+// arises -- the other three are behind an operator session, and no
+// session-authenticated route in this file has ever carried a challenge.
+// It is not here for two reasons, and the first is the one that decides it.
+//
+// THE CHALLENGE WAS ALREADY SPENT TO GET THE LINK. Every route under
+// /api/public/threads/:token is reachable only by holding a token minted by
+// openEnquiry above, and openEnquiry calls requireTurnstile before it mints
+// one. That is stated there in as many words: "a challenge here is a challenge
+// on all of them, and none of those has to ask for one again mid-
+// conversation." A guest photo upload is not a new door into the product, it
+// is the thirtieth thing you can do once you are already through the one door
+// that is challenged. Adding a second challenge here would not stop anybody
+// who got past the first, and it would stop the customer standing in their own
+// kitchen on a weak signal trying to show somebody a leak -- which is the one
+// person this feature exists for.
+//
+// THE SECOND REASON IS MECHANICAL AND WOULD MATTER EVEN IF THE FIRST DID NOT.
+// requireTurnstile takes its token from tokenFromBody, a parsed JSON body.
+// These two routes are multipart, because they carry a file. Wiring a
+// challenge in would mean a second way of finding the token -- a form field --
+// and therefore two code paths through the check, which is how one of them
+// ends up being the one that does not really check.
+//
+// What IS on the guest door instead is the same shape every other guest route
+// carries: guardGuestLink in handle() below counts wrong tokens per address
+// and locks out a walk (a per-token limit cannot see one, because every guess
+// carries a different token -- see lib/guestlink.ts), a per-token volume
+// ceiling here, a declared-length refusal before the body is read, and the
+// per-conversation daily ceiling on the rows themselves inside lib/chat.ts.
+
+route('POST', '/api/threads/:id/photos', async ({ req, env, params }) => {
+  const op = await requireOperator(req, env);
+  // Sixty an hour, which is the number the portfolio upload uses and for the
+  // same reason: it is set where a busy real day fits comfortably under it and
+  // a script does not. One upload is one write against the 1,000 a day the
+  // whole account gets from Workers KV, and what actually bounds the daily
+  // total is not this -- it is the per-conversation ceiling enforced on the
+  // rows in lib/chat.ts, which is the argument lib/photostore.ts makes about
+  // why there is no account-wide counter sitting on top of any of these.
+  await enforceRateLimit(env, `photo-msg:${op.id}`, 60, 3600);
+  // Refused on the caller's own declared length, before the multipart body is
+  // read at all. It proves nothing -- cleanImageUpload measures the real bytes
+  // -- but a request announcing forty megabytes is usually telling the truth.
+  assertBodyWithin(req, MAX_MESSAGE_PHOTO_BYTES);
+  const form = await req.formData();
+  const message = await postPhotoAsOperator(env, op.id, params.id ?? '', {
+    file: form.get('file'),
+    // The caption is an ordinary message body: same length cap, same
+    // contact-detail filter, same column. It may be empty, because a
+    // photograph sent on its own is a complete thing to say.
+    body: str(form.get('body')),
+    width: int(form.get('width')), height: int(form.get('height')),
+  });
+  return json({ message }, 201);
+});
+
+route('POST', '/api/public/threads/:token/photos', async ({ req, env, params, ref }) => {
+  // Bucketed on the token and not the IP, the same way the guest message route
+  // is: this asks for no sign-in, the link is who they are, and a family
+  // behind one address must not share one budget. Twenty an hour is well past
+  // documenting one problem from several angles, and it is deliberately below
+  // the operator's sixty -- an operator's threads are many conversations and a
+  // guest's token is exactly one.
+  await enforceRateLimit(env, `photo-msg-guest:${params.token ?? ''}`, 20, 3600);
+  assertBodyWithin(req, MAX_MESSAGE_PHOTO_BYTES);
+  const form = await req.formData();
+  const message = await postPhotoAsGuest(env, ref, {
+    file: form.get('file'),
+    body: str(form.get('body')),
+    width: int(form.get('width')), height: int(form.get('height')),
+  });
+  return json({ message }, 201);
+});
+
+// Serving one. Authorised on every single read, both sides, exactly as the
+// proof photos are -- there is no public URL for one of these and there must
+// never be one. readMessagePhoto answers "no such photo" for an id belonging
+// to somebody else's conversation, in the same words a made-up id gets, so
+// neither door can be walked to count other people's pictures.
+route('GET', '/api/message-photo/:id', async ({ req, env, params }) => {
+  const op = await requireOperator(req, env);
+  return readMessagePhoto(env, { operator_id: op.id }, params.id!);
+});
+
+route('GET', '/api/public/threads/:token/message-photo/:id',
+  async ({ env, params, ref }) => readMessagePhoto(env, { token: ref }, params.id!));
 
 // ---------------------------------------------------------------------------
 // Openings an operator posts by hand.
@@ -2511,17 +3351,17 @@ route('DELETE', '/api/parts/quotes/:id', async ({ req, env, params }) => {
 
 // The customer side, authorised by their link and nothing else.
 
-route('GET', '/api/public/threads/:token/parts', async ({ env, params }) => {
-  return json(await quotesForGuest(env, params.token!));
+route('GET', '/api/public/threads/:token/parts', async ({ env, params, ref }) => {
+  return json(await quotesForGuest(env, ref));
 });
 
-route('POST', '/api/public/threads/:token/parts/:id', async ({ req, env, params }) => {
+route('POST', '/api/public/threads/:token/parts/:id', async ({ req, env, params, ref }) => {
   const b = await body(req);
   const decision = str(b.decision);
   if (decision !== 'approved' && decision !== 'declined') {
     throw badRequest('Approve it or decline it.', 'bad_decision');
   }
-  return json({ quote: await decideQuote(env, params.token!, params.id!, decision) });
+  return json({ quote: await decideQuote(env, ref, params.id!, decision) });
 });
 
 // ---------------------------------------------------------------------------
@@ -2541,13 +3381,13 @@ route('POST', '/api/bookings/:id/cancel', async ({ req, env, params }) => {
 
 // What they would get back, before they decide. Same function the cancel
 // itself uses, so the number shown and the number refunded cannot disagree.
-route('GET', '/api/public/threads/:token/refund/:id', async ({ env, params }) => {
-  return json({ refund: await quoteRefund(env, params.token!, params.id!) });
+route('GET', '/api/public/threads/:token/refund/:id', async ({ env, params, ref }) => {
+  return json({ refund: await quoteRefund(env, ref, params.id!) });
 });
 
-route('POST', '/api/public/threads/:token/cancel/:id', async ({ req, env, params }) => {
+route('POST', '/api/public/threads/:token/cancel/:id', async ({ req, env, params, ref }) => {
   const b = await body(req);
-  return json(await cancelByCustomer(env, params.token!, params.id!, str(b.reason)));
+  return json(await cancelByCustomer(env, ref, params.id!, str(b.reason)));
 });
 
 route('GET', '/api/fees', async ({ req, env }) => {
@@ -2615,6 +3455,35 @@ route('POST', '/api/payment-method', async ({ req, env }) => {
  * lib/payments.ts.
  */
 route('POST', '/webhooks/stripe', async ({ req, env }) => {
+  /*
+    A CEILING BEFORE THE BODY IS READ, NOT AFTER.
+
+    This route is unauthenticated until the signature is checked, and the
+    signature cannot be checked without the bytes — which is exactly the right
+    order and also means the endpoint was willing to buffer a body of any size
+    from any caller on the internet before deciding it was a forgery. A Worker
+    that reads a hundred megabytes into memory to then throw it away is a way
+    of spending this deployment's CPU and memory limits that costs the sender
+    nothing but bandwidth, and it needs no secret at all.
+
+    256 KB, which is not a tight fit. A Stripe event is a few kilobytes; the
+    largest anything here reads is a payment intent with an expanded charge
+    on it, and that is still well inside one. Anything an order of magnitude
+    past that is not an event this switch has an arm for.
+
+    Content-Length is the caller's own claim and proves nothing — the same
+    point assertBodyWithin makes about photographs — so this is not a limit, it
+    is refusing the ones that announce themselves. A caller who lies downwards
+    is not stopped here and gains nothing by it: the signature still has to
+    verify, and a body that does not match the header it was signed with does
+    not. The same sentence as a malformed payload gets, because a caller who
+    cannot produce a signature must not be able to tell the two refusals apart.
+  */
+  const declared = Number(req.headers.get('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > 256 * 1024) {
+    throw badRequest('That is not a Stripe event.', 'bad_event');
+  }
+
   // The exact bytes, because that is what the signature covers. Re-serialising
   // parsed JSON reorders keys and every signature then fails for reasons that
   // look like a configuration problem.
@@ -2650,8 +3519,132 @@ route('POST', '/webhooks/stripe', async ({ req, env }) => {
   // and amounts, and a log line is a copy of all of it that nothing erases.
   console.log('stripe webhook', event.type ?? 'unknown');
 
-  // 200 with nothing done. Stripe retries anything else for days, and there
-  // is no handler yet for it to retry into.
+  /*
+    ONCE, AND ONLY ONCE — because a verified signature does not mean a first
+    delivery.
+
+    verifyStripeSignature accepts any timestamp inside a 300-second tolerance,
+    which is correct and is also the exact size of the window in which a signed
+    event is a replayable bearer token. One captured copy of a real event — out
+    of a proxy log, a debugging dump, a paste in a support thread — can be
+    re-POSTed unchanged for five minutes and every check above it passes,
+    because everything above it is asking whether Stripe sent this, not whether
+    we have already acted on it. Stripe also re-sends events on its own: any
+    delivery that does not answer 2xx is retried, so a handler that did all its
+    work and then failed on the way out arrives again as a matter of routine.
+
+    THE ROUTE LOOKED IDEMPOTENT AND ONLY ONE ARM OF IT WAS. markPaid is written
+    to survive a second delivery, and it is the arm anybody checking would have
+    looked at first. The other two do not survive one: markPaymentFailed writes
+    a failure against an order, so a replay lands a stale decline on a booking
+    the customer has since paid for with another card, and syncConnectAccount
+    overwrites an operator's cached charges_enabled and payouts_enabled from
+    the event body — so a five-minute-old "payouts disabled" replayed over the
+    newer "payouts enabled" leaves a business Stripe is perfectly happy with
+    unpayable, silently, because those two flags are exactly what the payout
+    step reads and nothing else contradicts them.
+
+    The primary key does the work rather than a SELECT then an INSERT: two
+    concurrent deliveries of the same event both read "not seen" in the gap
+    between the two statements, and INSERT OR IGNORE has no gap. Nought rows
+    changed means somebody else has this one.
+
+    200 AND NOT AN ERROR on the duplicate. Anything other than a 2xx makes
+    Stripe retry for days over an event that was received and handled
+    perfectly well the first time, which is how a dedupe check turns into the
+    retry storm it was added to stop.
+
+    An event with no id cannot be deduplicated and is processed anyway. Stripe
+    always sends one; if a signed payload somehow lacks it, dropping a real
+    event is the worse of the two failures, and keying an empty string would be
+    worse still — the first id-less event would then dedupe every later one
+    against itself.
+
+    THIS TABLE IS SWEPT, which it was not when it was added and which this
+    note used to say was still outstanding. Left alone it only grows: one row
+    per event this deployment has ever been sent, kept forever to answer a
+    question that stops being askable days after the event, once Stripe's
+    retries are finished. `sweepStripeEvents` in lib/retention.ts is the
+    DELETE on received_at and it runs from the cron with the other passes.
+
+    The age it sweeps on has a FLOOR under it rather than being as small as it
+    could be, and that floor is this route's problem rather than that file's:
+    deleting a row while Stripe may still retry the event makes the retry look
+    like a first delivery and re-runs everything below. See STRIPE_EVENT_DAYS,
+    which is written against the 300-second signature tolerance above and
+    against a retry schedule measured in days. Not personal data — an opaque
+    event id and a timestamp — so it is housekeeping in the sweeps, it is in no
+    erasure path, and it is not one of the published windows in RETENTION.
+  */
+  const eventId = String(event.id ?? '');
+  if (eventId) {
+    const seen = await env.DB.prepare(
+      `INSERT OR IGNORE INTO stripe_events (id, received_at) VALUES (?,?)`,
+    ).bind(eventId, now()).run();
+    if ((seen.meta?.changes ?? 0) === 0) {
+      // The id and nothing else. It is Stripe's own opaque identifier, so it
+      // is both safe to write down and the only thing that makes this line
+      // actionable — it is what somebody pastes into the dashboard to see what
+      // the event was.
+      console.log('stripe webhook already handled', eventId);
+      return json({ received: true });
+    }
+  }
+
+  const obj = (event as any)?.data?.object ?? {};
+
+  switch (event.type) {
+    // THE ONE THAT MATTERS. The money arrived. Confirming the order here and
+    // not in the browser is deliberate: a customer who pays and closes the tab
+    // in the same second must still end up with a confirmed booking, and an
+    // operator must never be left holding an appointment marked unpaid for
+    // money that was taken.
+    case 'payment_intent.succeeded': {
+      const intentId = String(obj.id ?? '');
+      // NOT String(). Stripe sends latest_charge as a bare 'ch_...' normally
+      // and as the whole expanded charge object whenever anything asks it to —
+      // an account default, a dashboard replay, a version change — and
+      // String() turns that into the literal text "[object Object]". That text
+      // then goes into orders.charge_id, reaches createTransfer as
+      // source_transaction, and Stripe rejects it: the one field whose job is
+      // to stop a business being paid out of a charge that has not settled.
+      await markPaid(env, intentId, chargeIdOf(obj.latest_charge));
+      // AND NOTHING IS PAID OUT HERE, which is the change worth explaining.
+      // This used to call settleOrder the moment the card cleared, so every
+      // business had its share days before the job — and a customer cancelling
+      // the next morning for a full refund was refunded out of the platform's
+      // own money, because a Transfer that has landed in somebody's bank is not
+      // something this product can take back. The money now stays in the
+      // platform balance until each job is behind it and its cancellation
+      // window has closed, and the cron's 'pay for finished work' step is what
+      // moves it. See settleDueWork in lib/checkout.ts.
+      break;
+    }
+
+    // Recorded, and the claim is NOT thrown away. A declined card is somebody
+    // trying again in thirty seconds with a different one, not somebody who
+    // has changed their mind about the appointment.
+    case 'payment_intent.payment_failed':
+    case 'payment_intent.canceled':
+      await markPaymentFailed(env, String(obj.id ?? ''), String(obj.status ?? event.type));
+      break;
+
+    // A business finished onboarding, or Stripe changed its mind about one.
+    // The cached flags on the operator row are refreshed from the event rather
+    // than polled, so somebody who finishes at midnight can be paid at 00:01.
+    case 'account.updated':
+      await syncConnectAccount(env, String(obj.id ?? ''), {
+        charges_enabled: !!obj.charges_enabled,
+        payouts_enabled: !!obj.payouts_enabled,
+      });
+      break;
+
+    default:
+      // Everything else is acknowledged and ignored. Returning anything but a
+      // 200 makes Stripe retry for days over an event nothing reads.
+      break;
+  }
+
   return json({ received: true });
 });
 
@@ -2681,9 +3674,9 @@ route('POST', '/api/bookings/:id/no-show', async ({ req, env, params }) => {
 });
 
 // The customer says the operator never came. Authorised by their link.
-route('POST', '/api/public/threads/:token/no-show/:id', async ({ req, env, params }) => {
+route('POST', '/api/public/threads/:token/no-show/:id', async ({ req, env, params, ref }) => {
   const b = await body(req);
-  const thread = await threadByToken(env, params.token ?? '');
+  const thread = await threadByToken(env, ref);
   if (!thread) throw notFound('That link is not valid any more.');
   const mine = await env.DB.prepare(
     `SELECT oi.id FROM order_items oi
@@ -2764,15 +3757,32 @@ route('GET', '/api/public/standing', async ({ req, env, url }) => {
   // address, not after. Answers only about the number that was asked about.
   //
   // Which is exactly why it needs a ceiling it did not have: anonymous, and it
-  // answers a yes/no question about any phone number anybody cares to type. A
-  // walk over a list of numbers turns it into "has this person been reported
-  // for missing appointments", which is a fact about them and not about us.
-  // The checkout asks once, when the number field loses focus.
+  // answers a yes/no question about any address anybody cares to type. A walk
+  // over a list turns it into "has this person been reported for missing
+  // appointments", which is a fact about them and not about us. The checkout
+  // asks once, when the email field loses focus.
+  //
+  // It asks about the ADDRESS now rather than the number, because that is what
+  // standing hangs on since 0038. A probe against the old parameter would have
+  // quietly answered "not blocked" for everybody, forever.
   await enforceRateLimit(env, `standing:${clientIp(req)}`, 30, 300);
-  const phone = url.searchParams.get('phone') ?? '';
-  const e164 = toE164(phone, 'US');
-  if (!e164) return json({ blocked: false, message: null });
-  const standing = await customerStanding(env, e164);
+  const email = normaliseLoginEmail(url.searchParams.get('email'));
+  if (!email) return json({ blocked: false, message: null });
+  // ONLY ABOUT AN ADDRESS THE CALLER HAS PROVED.
+  //
+  // This answered for ANY address anybody typed, which turned a courtesy into
+  // a lookup service: walk a list of mailboxes and learn which of those named
+  // people have been reported for missing appointments. That is a fact about
+  // them, published by us, to a stranger. The sign-in route two screens away
+  // deliberately answers identically whether an account exists; this one gave
+  // the game away for free.
+  //
+  // A caller who has not signed in now gets the same answer a clean address
+  // gets. Nothing is weakened: the real gate is customerStanding inside the
+  // checkout and inside createInstantRequest, both of which run against the
+  // account the person actually proved.
+  const me = await currentCustomer(req, env);
+  const standing = await provedCustomerStanding(env, email, me?.login_email ?? null);
   return json({ blocked: standing.blocked, message: standing.message });
 });
 
@@ -2795,6 +3805,15 @@ route('POST', '/api/bookings/:id/proof', async ({ req, env, params }) => {
   // Before, during and after, on every job of a full day, with retries for the
   // ones that came out blurred. That is what the ceiling has to clear, so it
   // is set at roughly ten jobs an hour's worth and no tighter.
+  //
+  // The highest of the three photo ceilings, and the one worth checking
+  // against the store underneath: the photo store is a Workers KV namespace
+  // whose free allowance is 1,000 writes a day for the whole account, and one
+  // upload is one write. What keeps this number honest is MAX_PER_ITEM in
+  // lib/proof.ts — twenty-four photographs per booking, enforced on the row —
+  // so the real daily total is bounded by how many jobs happened rather than
+  // by this. lib/photostore.ts has the full argument for why there is no
+  // account-wide counter on top of these.
   await enforceRateLimit(env, `photo-proof:${op.id}`, 120, 3600);
   assertBodyWithin(req, MAX_PROOF_BYTES);
   const form = await req.formData();
@@ -2808,20 +3827,24 @@ route('POST', '/api/bookings/:id/proof', async ({ req, env, params }) => {
   return json({ photo }, 201);
 });
 
-route('GET', '/api/public/threads/:token/proof/:id', async ({ env, params }) => {
-  return json(await proofSummary(env, { token: params.token! }, params.id!));
+route('GET', '/api/public/threads/:token/proof/:id', async ({ env, params, ref }) => {
+  return json(await proofSummary(env, { token: ref }, params.id!));
 });
 
-route('POST', '/api/public/threads/:token/proof/:id', async ({ req, env, params }) => {
+route('POST', '/api/public/threads/:token/proof/:id', async ({ req, env, params, ref }) => {
   // The customer's own photos of the work, from a phone, on their link. Forty
   // an hour is well past documenting one job and stops a leaked link being
-  // used to fill a bucket somebody else pays for.
+  // used to fill a photo store somebody else is accountable for. Nobody pays
+  // for it in money any more — it is Workers KV on the free allowance — which
+  // makes it worse rather than better: what a leaked link can spend is the
+  // 1 GB the whole account gets and the 1,000 writes a day it shares with
+  // every other operator, and none of that can be topped up.
   await enforceRateLimit(env, `photo-guest:${params.token!}`, 40, 3600);
   assertBodyWithin(req, MAX_PROOF_BYTES);
   const form = await req.formData();
   const stage = form.get('stage');
   if (!isStage(stage)) throw badRequest('Say whether this is before, during or after.');
-  const photo = await addJobPhoto(env, { token: params.token! }, {
+  const photo = await addJobPhoto(env, { token: ref }, {
     order_item_id: params.id!, stage, file: form.get('file') as File,
     caption: str(form.get('caption')),
     width: int(form.get('width')), height: int(form.get('height')),
@@ -2834,8 +3857,8 @@ route('GET', '/api/proof/:id', async ({ req, env, params }) => {
   return readJobPhoto(env, { operator_id: op.id }, params.id!);
 });
 
-route('GET', '/api/public/threads/:token/photo/:id', async ({ env, params }) => {
-  return readJobPhoto(env, { token: params.token! }, params.id!);
+route('GET', '/api/public/threads/:token/photo/:id', async ({ env, params, ref }) => {
+  return readJobPhoto(env, { token: ref }, params.id!);
 });
 
 route('DELETE', '/api/proof/:id', async ({ req, env, params }) => {
@@ -2844,8 +3867,8 @@ route('DELETE', '/api/proof/:id', async ({ req, env, params }) => {
   return json({ ok: true });
 });
 
-route('DELETE', '/api/public/threads/:token/photo/:id', async ({ env, params }) => {
-  await deleteJobPhoto(env, { token: params.token! }, params.id!);
+route('DELETE', '/api/public/threads/:token/photo/:id', async ({ env, params, ref }) => {
+  await deleteJobPhoto(env, { token: ref }, params.id!);
   return json({ ok: true });
 });
 
@@ -2853,25 +3876,47 @@ route('DELETE', '/api/public/threads/:token/photo/:id', async ({ env, params }) 
 // Two-sided arrival, and settling what was frozen
 // ---------------------------------------------------------------------------
 
-route('POST', '/api/public/threads/:token/arrived/:id', async ({ env, params }) => {
+route('POST', '/api/public/threads/:token/arrived/:id', async ({ env, params, ref }) => {
   // The customer's half of arrival. Never required to start the job -- a phone
   // left indoors must not be able to strand an appointment -- but it is what
   // turns one person's claim that they were there into a fact.
-  return json(await confirmArrival(env, params.token!, params.id!));
+  return json(await confirmArrival(env, ref, params.id!));
 });
 
-route('GET', '/api/public/threads/:token/pending', async ({ env, params }) => {
+route('GET', '/api/public/threads/:token/pending', async ({ env, params, ref }) => {
   // The one question, if there is one waiting: did they do the work anyway?
-  return json({ question: await pendingQuestion(env, params.token!) });
+  return json({ question: await pendingQuestion(env, ref) });
 });
 
-route('POST', '/api/public/threads/:token/answer/:id', async ({ req, env, params }) => {
+route('POST', '/api/public/threads/:token/answer/:id', async ({ req, env, params, ref }) => {
   const b = await body(req);
   const answer = str(b.answer);
   if (answer !== 'done' && answer !== 'not_done') {
     throw badRequest('Tell us whether the work happened.', 'bad_answer');
   }
-  return json(await answerWork(env, params.token!, params.id!, answer));
+  const settled = await answerWork(env, ref, params.id!, answer);
+
+  // The answer is what unfreezes the money, so the refund goes out here rather
+  // than waiting up to a quarter of an hour for the sweep to notice. Somebody
+  // who has just told us their van never turned up should not then watch a
+  // screen that says they are owed three hundred dollars do nothing until the
+  // next cron tick.
+  //
+  // Never allowed to fail the request, and this is the important half. The
+  // answer is already committed and cannot be given again — answerWork refuses
+  // a second one — so a 500 raised by Stripe here would tell the customer
+  // their answer did not register when it did, and leave them with no way to
+  // send it. The failure is written onto the row instead and the sweep that
+  // runs every fifteen minutes picks it up.
+  if (settled.settlement === 'released' && settled.refund_cents > 0) {
+    try {
+      await refundItem(env, params.id!);
+    } catch (err) {
+      console.error('refund on answer failed', params.id, (err as Error).message);
+    }
+  }
+
+  return json(settled);
 });
 
 route('GET', '/api/flags', async ({ req, env }) => {
@@ -2920,9 +3965,28 @@ route('PUT', '/api/vehicle', async ({ req, env }) => {
     vehicle: await saveVehicle(env, op.id, {
       make: str(b.make), model: str(b.model),
       color: str(b.color), plate: str(b.plate),
+      // Validated inside saveVehicle rather than here: this string ends up
+      // drawn on a public map, and the one place that decides what is a real
+      // kind should be the one place that writes it.
+      kind: str(b.kind) as never,
     }),
   });
 });
+
+/**
+ * The list of vehicle shapes, served rather than compiled into the bundle.
+ *
+ * Same rule as /api/public/metros: the Worker holds the list, the browser
+ * reads it. The operator's form and the labels beside it are then built from
+ * whatever the Worker actually accepts, so adding a shape is one edit in
+ * src/lib/vehicles.ts and a redeploy — not an edit there plus a matching edit
+ * in a form that will be forgotten and drift.
+ */
+route('GET', '/api/public/vehicle-kinds', async () =>
+  json({ kinds: VEHICLE_KINDS }, 200, {
+    // It changes when the code changes, which is when the bundle changes.
+    'cache-control': 'public, max-age=3600, s-maxage=3600',
+  }));
 
 route('POST', '/api/bookings/:id/code', async ({ req, env, params }) => {
   const op = await requireOperator(req, env);
@@ -2930,14 +3994,14 @@ route('POST', '/api/bookings/:id/code', async ({ req, env, params }) => {
   return json(await verifyStartCode(env, op.id, params.id!, str(b.code) ?? ''));
 });
 
-route('GET', '/api/public/threads/:token/code', async ({ env, params }) => {
+route('GET', '/api/public/threads/:token/code', async ({ env, params, ref }) => {
   // The customer's copy, plus the van to look for. Withheld once used.
-  return json({ job: await jobCodeForGuest(env, params.token!) });
+  return json({ job: await jobCodeForGuest(env, ref) });
 });
 
-route('POST', '/api/public/threads/:token/vehicle/:id', async ({ req, env, params }) => {
+route('POST', '/api/public/threads/:token/vehicle/:id', async ({ req, env, params, ref }) => {
   const b = await body(req);
-  await reportVehicle(env, params.token!, params.id!, str(b.note));
+  await reportVehicle(env, ref, params.id!, str(b.note));
   return json({ ok: true });
 });
 
@@ -2966,18 +4030,18 @@ route('GET', '/api/public/reviews/:operatorId', async ({ req, env, params, url }
   }, 200, { 'cache-control': 'public, max-age=120' });
 });
 
-route('GET', '/api/public/threads/:token/reviewable', async ({ env, params }) => {
-  return json({ bookings: await reviewableFor(env, params.token!) });
+route('GET', '/api/public/threads/:token/reviewable', async ({ env, params, ref }) => {
+  return json({ bookings: await reviewableFor(env, ref) });
 });
 
-route('POST', '/api/public/threads/:token/review', async ({ req, env, params }) => {
+route('POST', '/api/public/threads/:token/review', async ({ req, env, params, ref }) => {
   // A review is public and permanent, and the rules about who may leave one
   // live in leaveReview. This is only the volume ceiling: ten an hour is more
   // than a customer with several jobs on one link will ever write.
   await enforceRateLimit(env, `review:${params.token!}`, 10, 3600);
   const b = await body(req);
   return json({
-    review: await leaveReview(env, params.token!, {
+    review: await leaveReview(env, ref, {
       order_item_id: str(b.order_item_id) ?? '',
       rating: int(b.rating) ?? 0,
       body: str(b.body),
@@ -2995,19 +4059,26 @@ route('GET', '/api/public/review-photo/:id', async ({ env, params }) => {
   ).bind(params.id).first<{ r2_key: string; content_type: string | null }>();
   if (!photo) throw notFound('No such photo.');
 
-  const object = await env.PHOTOS.get(photo.r2_key);
-  if (!object) throw notFound('No such photo.');
-  return new Response(object.body, {
+  // `r2_key` names a key in the KV photo store, not an R2 object; see the top
+  // of lib/photostore.ts for why the column kept the name.
+  const stored = await getPhoto(env.PHOTOS, photo.r2_key);
+  if (!stored) throw notFound('No such photo.');
+  return new Response(stored.body, {
     headers: {
+      // The row's own content_type, exactly as before. It is the same sniffed
+      // value putPhoto stored in the KV metadata -- both are written from the
+      // one cleanImageUpload result -- and this route already holds the row,
+      // so there is no reason to prefer the copy that travelled with the
+      // bytes. Neither one is anything the uploader declared.
       'content-type': photo.content_type ?? 'image/jpeg',
       'cache-control': 'public, max-age=86400',
     },
   });
 });
 
-route('POST', '/api/public/threads/:token/review-photo/:id', async ({ req, env, params }) => {
+route('POST', '/api/public/threads/:token/review-photo/:id', async ({ req, env, params, ref }) => {
   const b = await body(req);
-  await releasePhoto(env, params.token!, params.id!, b.public !== false);
+  await releasePhoto(env, ref, params.id!, b.public !== false);
   return json({ ok: true });
 });
 
@@ -3077,11 +4148,20 @@ route('DELETE', '/api/online', async ({ req, env }) => {
  * fields), so this is only closing the leak. See redact.ts for why holding a
  * number once is holding it forever.
  */
-const maskRequest = <T extends { phone_e164?: unknown; email?: unknown }>(r: T): T => ({
-  ...r,
-  phone_e164: maskPhone(r.phone_e164 as string | null),
-  email: maskEmail(r.email as string | null),
-});
+/**
+ * THE DOORSTEP IS NOT HANDED OUT BEFORE SOMEBODY HAS TAKEN THE JOB.
+ *
+ * This used to mask the number and the mailbox and leave the street line, the
+ * postcode and the coordinates untouched on a request NOBODY HAS ACCEPTED --
+ * so every operator who happened to be switched on received a stranger's exact
+ * address for a job they were about to decline. The release model that governs
+ * every other doorstep in this product did not apply here at all, because a
+ * pending request has no order item and therefore no address_released_at.
+ *
+ * The rule now lives in lib/online.ts beside the request itself, so a second
+ * route returning one cannot forget it.
+ */
+const maskRequest = maskInstantRequest;
 
 route('GET', '/api/online/requests', async ({ req, env }) => {
   const op = await requireOperator(req, env);
@@ -3145,6 +4225,7 @@ route('POST', '/api/public/online/requests', async ({ req, env }) => {
     service_id: str(b.service_id),
     guest_name: str(b.guest_name) ?? account.first_name ?? '',
     phone: account.phone_e164 ?? '',
+    login_email: account.login_email ?? '',
     email: str(b.email),
     address_line: str(b.address_line),
     postcode: str(b.postcode),
@@ -3180,20 +4261,48 @@ route('DELETE', '/api/public/online/requests/:token', async ({ req, env, params 
 // Thursday. They ask in the conversation they already have; the business
 // answers with a price and a time; accepting makes it an ordinary booking.
 
-route('POST', '/api/public/threads/:token/estimates', async ({ req, env, params }) => {
+route('POST', '/api/public/threads/:token/estimates', async ({ req, env, params, ref }) => {
   // Each of these is a job of work for the business at the other end. Twenty
   // an hour is far past asking about a second vehicle or a rewritten
   // description, and stops one link generating a day's admin in a minute.
   await enforceRateLimit(env, `estimate-ask:${params.token!}`, 20, 3600);
   const b = await body(req);
-  return json({ estimate: await askForEstimate(env, params.token!, str(b.request) ?? '') }, 201);
+  return json({ estimate: await askForEstimate(env, ref, str(b.request) ?? '') }, 201);
 });
 
-route('GET', '/api/public/threads/:token/estimates', async ({ env, params }) => {
-  return json({ estimates: await estimatesForGuest(env, params.token!) });
+route('GET', '/api/public/threads/:token/estimates', async ({ env, params, ref }) => {
+  return json({ estimates: await estimatesForGuest(env, ref) });
 });
 
-route('POST', '/api/public/threads/:token/estimates/:id', async ({ req, env, params }) => {
+/**
+ * The customer's yes or no, and — since the payment seam was closed — the
+ * booking their yes became.
+ *
+ * WHAT THE BROWSER GETS BACK, because the guest page is written against
+ * exactly this and it must not move underneath it:
+ *
+ *   { estimate: { …the estimate row…, order_id, order } }
+ *
+ * `order` is `{ id, total_cents, currency }` on a successful accept and NULL
+ * on a decline. It is never NULL on a 200 for an accept: decideEstimate books
+ * and returns an order, or it throws, so the page has two cases and not three.
+ * `order.id` is what the card form is opened against — POST
+ * /api/public/orders/:id/pay — and `total_cents`/`currency` are the figures
+ * the customer already agreed to, repeated so the page can show what it is
+ * about to charge without a second round trip.
+ *
+ * A refused accept is a 409 with a sentence in `error`: the quoted time has
+ * been taken since ('slot_taken'), the estimate was already answered
+ * ('estimate_decided'), its start has passed ('estimate_expired'), or the
+ * business cannot be paid ('operator_cannot_be_paid'). Nothing is written on
+ * any of them, so the customer can be shown the message and left where they
+ * are.
+ *
+ * `order` is mirrored at the top level as well as inside `estimate`. It is the
+ * same object; the duplication is so a page reaching for either spelling finds
+ * it, rather than tapping pay against `undefined`.
+ */
+route('POST', '/api/public/threads/:token/estimates/:id', async ({ req, env, params, ref }) => {
   // Accepting turns into a booking; declining is cheap. Thirty an hour on the
   // link covers a customer changing their mind about several quotes.
   await enforceRateLimit(env, `estimate-decide:${params.token!}`, 30, 3600);
@@ -3202,7 +4311,8 @@ route('POST', '/api/public/threads/:token/estimates/:id', async ({ req, env, par
   if (decision !== 'accepted' && decision !== 'declined') {
     throw badRequest('Accept it or decline it.', 'bad_decision');
   }
-  return json({ estimate: await decideEstimate(env, params.token!, params.id!, decision) });
+  const estimate = await decideEstimate(env, ref, params.id!, decision);
+  return json({ estimate, order: estimate.order });
 });
 
 route('GET', '/api/estimates', async ({ req, env, url }) => {
@@ -3255,8 +4365,8 @@ route('DELETE', '/api/estimates/:id', async ({ req, env, params }) => {
  *
  * Two ways in and no third. Either this device is already signed in — which is
  * the ordinary case, because a customer's session lasts a year and is extended
- * on use — or the request carries a number and the code that was texted to it,
- * and verifying the code creates the account and the session in the same
+ * on use — or the request carries an email address and the code that was sent
+ * to it, and verifying the code creates the account and the session in the same
  * breath. Anything else is refused with `account_required`, which is a 401 the
  * front end turns into the two-field step rather than a dead end.
  *
@@ -3270,21 +4380,26 @@ async function checkoutAccount(
   const existing = await currentCustomer(req, env);
   if (existing) return { account: existing, cookie: null };
 
+  const email = normaliseLoginEmail(str(b.email));
+  const code = str(b.code);
+  if (!email || !code) throw new HttpError(401, ACCOUNT_REQUIRED, 'account_required');
+
+  // Taken on trust and used for nothing but filling in the account's contact
+  // detail. It is not looked up, nothing is claimed by it, and no standing
+  // hangs on it — see migration 0038.
   const country = (str(b.country) ?? 'US').toUpperCase();
   const phone = toE164(str(b.phone), country);
-  const code = str(b.code);
-  if (!phone || !code) throw new HttpError(401, ACCOUNT_REQUIRED, 'account_required');
 
   // The same two ceilings the standalone verify route applies, because this is
   // the same act and a second door onto it must not be the cheap one.
-  await enforceRateLimit(env, `otp-verify:${phone}`, 10, 900);
+  await enforceRateLimit(env, `otp-verify:${email}`, 10, 900);
   await enforceRateLimit(env, `otp-verify-ip:${clientIp(req)}`, 30, 900);
 
   const signed = await signInWithCode(env, {
-    phone, code,
+    email, code,
     userAgent: req.headers.get('user-agent'),
     first_name: firstNameOnly(str(b.guest_name) ?? str(b.first_name)) || null,
-    email: str(b.email),
+    phone,
   });
   return { account: signed.account, cookie: signed.cookie };
 }
@@ -3298,26 +4413,95 @@ const CARD_REQUIRED =
 /**
  * The card this order would be charged to, saved onto the account on the way.
  *
- * PAYMENT SEAM, and the honest state of it is that the third branch is the
- * only one anything reaches today: nothing in this product produces a
- * processor reference, because Stripe is not wired, so `card_ref` is never
- * sent and no account has one. paymentsLive() is false in every environment,
- * so a booking without a card is placed exactly as it is now and the order
- * says 'pending'. The day the seam lands, the same three branches start
- * refusing a booking that has no card — which is the point of writing them
- * now rather than discovering the requirement on the day money moves.
+ * Stripe IS wired now — keys, webhook, connected accounts, all of it. What is
+ * still missing is the one thing this function needs: a field a customer can
+ * type a card into. So the third branch is the only one anything reaches, and
+ * it lets the booking through.
+ *
+ * It let the booking through by accident for about an hour, which is the
+ * reason customerCardRequired exists rather than paymentsLive alone here. See
+ * CARD_CAPTURE_SHIPPED in lib/payments.ts before touching this line.
  */
 async function checkoutCard(
   env: Env, account: CustomerAccount, b: Record<string, unknown>,
 ): Promise<{ ref: string; brand: string | null; last4: string | null } | null> {
   const ref = str(b.card_ref);
   if (ref) {
-    // Validated and stored before the order, so that a customer who adds a
-    // card and then loses the race for a slot still has the card they added.
-    await saveCustomerCard(env, account.id, {
-      ref, brand: str(b.card_brand), last4: str(b.card_last4),
-    });
-    return { ref: assertPaymentRef(ref), brand: safeBrand(str(b.card_brand)), last4: safeLast4(str(b.card_last4)) };
+    // THE BROWSER IS NOT ASKED WHAT CARD IT JUST SAVED.
+    //
+    // It sends a reference, and the brand and last four are read back from
+    // Stripe against that reference. The browser has no reason to lie, but it
+    // is the one part of this exchange a person can edit, and "Visa ending
+    // 4242" is what a customer later reads to decide whether the charge they
+    // are looking at is theirs. That sentence has to come from the processor.
+    //
+    // Failing to read them is not failing to book: a card whose brand we could
+    // not fetch is still a valid card, and refusing the whole booking over a
+    // cosmetic label would be the worse trade.
+    let brand = safeBrand(str(b.card_brand));
+    let last4 = safeLast4(str(b.card_last4));
+    try {
+      const pm = await getPaymentMethod(env, assertPaymentRef(ref));
+
+      /*
+        AND WHOSE CARD IT IS, WHICH NOTHING WAS ASKING.
+
+        `card_ref` arrived off the request body, was checked for the shape of a
+        processor reference, and was then saved onto whichever account was
+        making the call. A payment-method id is not a secret: Stripe's own form
+        hands it to the browser, and any account can read its own back out of
+        GET /api/customer/payment-method. So the shape check was the whole of
+        the check, and it does not establish the one thing that matters — that
+        this card belongs to this customer.
+
+        NO MONEY MOVED, AND THAT IS NOT THE PROBLEM. A payment intent naming a
+        payment method attached to a different customer is refused by Stripe,
+        so the charge never happens. What did happen is that the real brand and
+        real last four of any 'pm_...' in this Stripe account were fetched here
+        and written onto the caller's own row, and that row is readable back:
+        an attacker who could guess or collect somebody else's payment-method
+        id got "Visa ending 4242" confirmed for it, on demand, from our own
+        API. An oracle that turns a reference into a real card's identifying
+        digits is the leak; the declined charge is just what stopped it being
+        worse.
+
+        `pm.customer` is null for a payment method attached to nobody yet,
+        which is the ordinary state for a card the customer typed a second ago
+        and is explicitly allowed — a setup intent attaches it and the check
+        below has nothing to compare. The refusal is only for one that is
+        attached to a DIFFERENT customer, which no honest browser can produce.
+      */
+      if (pm.customer && pm.customer !== account.stripe_customer_id) {
+        throw new HttpError(400, 'That card is not on this account.', 'not_your_card');
+      }
+
+      brand = safeBrand(pm.card?.brand ?? null) ?? brand;
+      last4 = safeLast4(pm.card?.last4 ?? null) ?? last4;
+    } catch (e) {
+      /*
+        THE REFUSAL IS NOT A LOOKUP FAILURE AND MUST NOT BE SWALLOWED WITH ONE.
+
+        This catch exists for the reason given above — a card whose brand we
+        could not read is still a valid card, and Stripe being slow or down is
+        not a reason to refuse somebody's booking. It swallows everything, on
+        purpose, and the check above is thrown from inside it. Left as it was,
+        the one error that means "this card is somebody else's" would have been
+        caught, discarded, and the booking would have gone on to save the
+        stranger's card onto this account exactly as before: the fix would have
+        read as applied and done nothing.
+
+        So this one code is re-thrown by name and every other failure keeps the
+        old behaviour. Named rather than matched on the message, because the
+        message is a sentence shown to a customer and will be reworded.
+      */
+      if (e instanceof HttpError && e.code === 'not_your_card') throw e;
+      /* otherwise keep whatever the browser offered; see above */
+    }
+
+    // Stored before the order, so that a customer who adds a card and then
+    // loses the race for a slot still has the card they added.
+    await saveCustomerCard(env, account.id, { ref, brand, last4 });
+    return { ref: assertPaymentRef(ref), brand, last4 };
   }
   if (account.payment_ref) {
     return {
@@ -3326,7 +4510,11 @@ async function checkoutCard(
       last4: account.payment_last4,
     };
   }
-  if (paymentsLive(env)) throw new HttpError(402, CARD_REQUIRED, 'card_required');
+  // BOTH HALVES, not just "can money move". See CARD_CAPTURE_SHIPPED in
+  // payments.ts: this line used to read paymentsLive(env) alone, and the day
+  // the webhook secret was set it began refusing every booking on the site for
+  // want of a card no page could take.
+  if (customerCardRequired(env)) throw new HttpError(402, CARD_REQUIRED, 'card_required');
   return null;
 }
 /**
@@ -3334,14 +4522,14 @@ async function checkoutCard(
  *
  * THE POINT OF THIS ROUTE IS THAT THE ANSWER IS NOT A CONSTANT IN A BUNDLE.
  * Whether a card is needed depends on a Worker secret, and whether an account
- * can be created at all depends on whether a text message can be delivered —
+ * can be created at all depends on whether an email can be delivered —
  * neither of which the browser can know, and both of which a page has to state
  * correctly or it is lying to somebody about to spend money. A build with a
  * hard-coded "no account needed" is exactly how the whole site came to say a
  * thing that was never the model.
  *
  * `sms_ready` false is the honest description of every deployment today: no
- * text-message provider is configured, so no account can be created and
+ * email provider is configured, so no account can be created and
  * nothing can be booked. That is a refusal rather than a fallback — see
  * sendSignInCode — and a page that knows it can say so before somebody fills
  * in a basket.
@@ -3352,13 +4540,32 @@ route('GET', '/api/public/booking-state', async ({ env }) => {
     account_required: true,
     /** Reading a booking you already have never needs one. */
     guest_link_works: true,
-    sms_ready: smsConfigured(env),
+    /**
+     * WHETHER THE DOOR OPENS, asked of the provider that actually opens it.
+     *
+     * This read smsConfigured() until 0038 moved the code to email, and the
+     * answer was then false on every correctly-configured deployment: no
+     * Telnyx key exists anywhere any more. The page told every visitor that
+     * nothing could be booked, with a note saying no email provider was set
+     * up, while booking worked perfectly. A readiness flag that is wrong in
+     * the safe-looking direction is worse than none — it turns people away
+     * from a working checkout.
+     *
+     * The name is kept because the front end reads it, and because what it
+     * answers is unchanged: can a sign-in code be delivered at all.
+     */
+    sms_ready: emailConfigured(env),
     payments_live: paymentsLive(env),
-    /** A card is asked for at checkout only once payment is switched on. */
-    card_required: paymentsLive(env),
+    /**
+     * A card is asked for once money can move AND there is a field to type one
+     * into. The browser is told the same thing the Worker enforces, because
+     * the two disagreeing is how a booking form asks for nothing and then gets
+     * a 402 back.
+     */
+    card_required: customerCardRequired(env),
     account_note: ACCOUNT_REQUIRED,
     card_note: CARD_NOTE_CUSTOMER,
-    sms_note: smsConfigured(env) ? null : SMS_NOT_CONFIGURED,
+    sms_note: emailConfigured(env) ? null : EMAIL_NOT_CONFIGURED,
   }, 200, { 'cache-control': 'no-store' });
 });
 
@@ -3399,7 +4606,11 @@ route('POST', '/api/public/orders', async ({ req, env }) => {
     address_line: str(b.address_line) ?? undefined,
     postcode: str(b.postcode) ?? undefined,
     thread_token: str(b.thread_token) ?? undefined,
-    account: { id: account.id, phone: account.phone_e164 ?? '' },
+    account: {
+      id: account.id,
+      phone: account.phone_e164 ?? '',
+      login_email: account.login_email ?? '',
+    },
     card,
   });
   const base = env.APP_URL.replace(/\/$/, '');
@@ -3411,6 +4622,164 @@ route('POST', '/api/public/orders', async ({ req, env }) => {
     // replaced by a shorter one on every booking.
     cookie ? { 'set-cookie': cookie } : {},
   );
+});
+
+// ---------------------------------------------------------------------------
+// Paying, and being paid
+// ---------------------------------------------------------------------------
+
+/**
+ * What the browser needs to draw the card form ON THIS SITE.
+ *
+ * The publishable key is served rather than baked into the bundle so rotating
+ * it is a secret change and not a rebuild. It is public by design — it
+ * identifies the account to Stripe's own script and can do nothing on its own.
+ */
+route('GET', '/api/public/payment-config', async ({ env }) => {
+  return json({
+    enabled: stripeConfigured(env) && !!env.STRIPE_PUBLISHABLE_KEY,
+    publishable_key: env.STRIPE_PUBLISHABLE_KEY ?? null,
+    fee_note: feeSentence(),
+  }, 200, { 'cache-control': 'public, max-age=300' });
+});
+
+/**
+ * A BUSINESS STEPPING OVER TO THE CUSTOMER SIDE.
+ *
+ * A detailer needs a locksmith. A junk hauler needs a mobile mechanic. Solo
+ * trades are each other's customers, and until now a business that wanted to
+ * book one had to make a second account by hand with a second mailbox.
+ *
+ * ONE DIRECTION ONLY. There is no matching route the other way, deliberately.
+ * Becoming a business means a bank account, a vehicle, location sharing and
+ * working hours — minutes of real onboarding — and a control that calls that a
+ * toggle promises instant and delivers a form.
+ *
+ * WHY THIS IS NOT A HOLE. It looks like a way into a customer account without
+ * the six-digit code, and it is the opposite: the caller is holding a live
+ * operator session, which was itself opened by proving that same mailbox. The
+ * proof is the same, arriving through a different door — and customerSideOf
+ * refuses outright if the mailbox already belongs to a different business.
+ *
+ * BOTH COOKIES LIVE AT ONCE, which is the whole reason this is cheap. They
+ * have different names and different digests, so setting the customer one
+ * leaves the operator session untouched: switching back is a link, not a
+ * sign-in. See the comment above the customer's routes for why the two
+ * identities are disjoint in the first place.
+ */
+route('POST', '/api/operator/customer-mode', async ({ req, env }) => {
+  const op = await requireOperator(req, env);
+  await enforceRateLimit(env, `customer-mode:${op.id}`, 20, 600);
+  const { account, token, created } = await customerSideOf(env, op);
+  return json(
+    { account: publicAccount(account), created },
+    200,
+    { 'set-cookie': customerCookie(token), 'cache-control': 'no-store' },
+  );
+});
+
+/**
+ * Opens a card-on-file setup for the signed-in customer.
+ *
+ * NO CHARGE. A SetupIntent only stores a card for later; the amount for the
+ * job is taken separately at /api/public/orders/:id/pay. The two are different
+ * on purpose — a customer agrees to keep a card on file once, and is charged
+ * per booking.
+ *
+ * SIGNED IN, unlike the pay route below. A card saved against the wrong
+ * account is a card charged to the wrong person later, and there is no
+ * one-time id here standing in for a session the way an order id does.
+ *
+ * The publishable key rides along so the browser makes one request rather than
+ * two — it is public by definition and is already served by payment-config.
+ */
+route('POST', '/api/public/setup-intent', async ({ req, env }) => {
+  const account = await requireCustomer(req, env);
+  await enforceRateLimit(env, `setup:${account.id}`, 10, 600);
+  const customerId = await ensureStripeCustomer(env, account);
+  const intent = await createSetupIntent(env, customerId);
+  return json({
+    client_secret: intent.client_secret,
+    publishable_key: env.STRIPE_PUBLISHABLE_KEY ?? null,
+  }, 200, { 'cache-control': 'no-store' });
+});
+
+/**
+ * Opens the charge for an order and returns the secret the embedded form uses.
+ *
+ * NO REDIRECT ANYWHERE. This hands back a client secret; the payment happens
+ * inside our own page. See lib/stripe.ts for why there is no Checkout Session.
+ *
+ * Deliberately reachable without a session. The order id was minted seconds
+ * ago by the checkout that created it and is a random id nobody can guess, the
+ * amount comes off the stored order rather than the request, and the only
+ * thing this can do is open a charge against a basket that already exists.
+ * Requiring a sign-in here would break the one case that matters most: a
+ * customer coming back to a half-finished payment from their own link.
+ */
+route('POST', '/api/public/orders/:id/pay', async ({ req, env, params }) => {
+  await enforceRateLimit(env, `pay:${clientIp(req)}`, 20, 600);
+  return json(await startPayment(env, params.id ?? ''), 200,
+    { 'cache-control': 'no-store' });
+});
+
+/** Where a business stands on getting paid. */
+route('GET', '/api/stripe/account', async ({ req, env }) => {
+  const op = await requireOperator(req, env);
+  return json({ connect: await connectStatus(env, op.id) }, 200,
+    { 'cache-control': 'no-store' });
+});
+
+/** Asks Stripe directly rather than reading the cache. */
+route('POST', '/api/stripe/account/refresh', async ({ req, env }) => {
+  const op = await requireOperator(req, env);
+  return json({ connect: await refreshConnectAccount(env, op.id) }, 200,
+    { 'cache-control': 'no-store' });
+});
+
+/**
+ * Starts or resumes onboarding and returns the link to send them to.
+ *
+ * The one redirect in the product, and it is the right one: a self-employed
+ * person hands their identity and bank details to the regulated company that
+ * needs them, on that company's own page. See lib/connect.ts.
+ */
+route('POST', '/api/stripe/onboard', async ({ req, env }) => {
+  const op = await requireOperator(req, env);
+  await enforceRateLimit(env, `onboard:${op.id}`, 10, 600);
+  return json(await startOnboarding(env, op.id), 200, { 'cache-control': 'no-store' });
+});
+
+/**
+ * Where Stripe sends somebody whose onboarding link expired mid-way.
+ *
+ * Mints a fresh one and bounces them straight back in, so an expired link is
+ * something the operator never sees rather than a dead end for the person most
+ * likely to have stopped halfway through.
+ *
+ * IT RESUMES, IT DOES NOT START. Stripe sends the browser here itself, which
+ * is a cross-site top-level navigation carrying the operator's cookie — so any
+ * page on the internet can do the same. When this called startOnboarding
+ * unconditionally, that meant a link on an attacker's page could make a
+ * signed-in operator's browser open a real connected account at Stripe and
+ * land them in an identity-verification flow they never asked for.
+ *
+ * An operator who has already begun has an account id on their row, and
+ * minting a link against it creates nothing. One who has not is sent to their
+ * own settings page to press the button themselves, which is the only place
+ * starting should ever begin.
+ */
+route('GET', '/api/stripe/onboard/refresh', async ({ req, env }) => {
+  const op = await requireOperator(req, env);
+  const { account_id } = await connectStatus(env, op.id);
+  if (!account_id) {
+    return new Response(null, {
+      status: 302,
+      headers: { location: '/app/settings?payouts=start', 'cache-control': 'no-store' },
+    });
+  }
+  const { url } = await startOnboarding(env, op.id);
+  return new Response(null, { status: 302, headers: { location: url } });
 });
 
 // ---------------------------------------------------------------------------
@@ -3427,7 +4796,14 @@ route('GET', '/api/trade-catalog', async () => {
   // The whole catalogue, grouped, for the sign-up picker. Served rather than
   // duplicated in the browser so the two can never drift -- which is exactly
   // how a trade ended up pickable at sign-up and invisible to customers.
-  return json({ categories: TRADE_CATEGORIES },
+  //
+  // `catalogPayload` is the same rule applied to the tile drawings: every trade
+  // and every category goes out carrying the path of its own picture, computed
+  // by the one function in lib/seo.ts that the server-rendered pages also call.
+  // The React pages read the field off this payload rather than building a
+  // path of their own, so a browse row drawn by React and the same row drawn
+  // by the Worker cannot point at different files. See the note over `tradeArt`.
+  return json(catalogPayload(TRADE_CATEGORIES),
     200, { 'cache-control': 'public, max-age=3600' });
 });
 
@@ -3441,12 +4817,15 @@ route('GET', '/api/public/trade-catalog', async ({ env }) => {
       WHERE o.trade IS NOT NULL AND o.trade <> ''
         AND o.accept_public_bookings = 1 AND o.plan IN ('trial','active')`,
   ).all<{ trade: string }>();
-  return json({ categories: catalogFor((rows.results ?? []).map((r) => r.trade)) },
+  // The same payload shape as the full catalogue above, tile art and all: one
+  // mapping, in lib/seo.ts, read by both trees. Two endpoints serving the same
+  // thing in two shapes is how a page that switches between them breaks.
+  return json(catalogPayload(catalogFor((rows.results ?? []).map((r) => r.trade))),
     200, { 'cache-control': 'public, max-age=300' });
 });
 
 /**
- * The places Slotfill serves, so the front end renders a metro list and a
+ * The places Round The Way serves, so the front end renders a metro list and a
  * metro page from data rather than from a name compiled into the bundle.
  *
  * Static: the record in lib/metros.ts and nothing counted. What is OPEN in a
@@ -3537,9 +4916,15 @@ route('POST', '/api/public/watches', async ({ req, env }) => {
   // A watch is not one email, it is a standing instruction to keep sending
   // them to an address the sender never had to prove they own. That is a
   // mail-bombing primitive, and the per-address bucket above only slows the
-  // setting-up of it. PATCH and DELETE on the same watch are deliberately not
-  // challenged: those need the token, which means holding the link this
-  // response is the only place to get it.
+  // setting-up of it.
+  //
+  // DELETE on the same watch is deliberately not challenged: it needs the
+  // token, which means holding the link this response is the only place to
+  // get, and it sends nothing. PATCH used to be excused on that same reasoning
+  // AND THE REASONING WAS WRONG — a token is something the attacker mints, and
+  // moving the email on a watch they own re-sends a confirmation to whatever
+  // address they name. It now carries both of these guards for exactly that
+  // edit; see the note on the PATCH route.
   await requireTurnstile(env, req, tokenFromBody(b));
   const { watch, token } = await createWatch(env, {
     postcode: String(b.postcode ?? ''),
@@ -3602,6 +4987,58 @@ route('GET', '/a/stop/:token', async ({ req, env, params }) => {
     <a href="/" class="note">See what is open</a>`));
 });
 
+/**
+ * One-click "stop offering me your spare hours", straight from an offer email.
+ *
+ * THE REPLACEMENT FOR SMS CONSENT, which was the permission and the way to
+ * withdraw it in one column and is gone from the candidate queries along with
+ * the texts nobody could send. Same shape as the watch unsubscribe above and
+ * for the same reasons: a GET on a link in an email, working with no session,
+ * no JavaScript and no form, answering identically whether or not the token
+ * matched so that a stranger poking at it learns nothing and the person who
+ * clicked gets the outcome they wanted either way.
+ *
+ * A DIFFERENT SPACE FROM /a/stop, and not merely a different token. That one
+ * switches off a `watches` row — a standing request somebody made for
+ * themselves — and this one sets `clients.opted_out_at`, which is one
+ * business's list. Sharing the route would mean one link that could do either
+ * depending on which table happened to match, and the rate-limit bucket is
+ * named separately for the same reason.
+ */
+route('GET', '/a/stop-offers/:token', async ({ req, env, params }) => {
+  await guardTokenGuessing(env, req, 'offer-stop');
+  await stopOffersByToken(env, params.token ?? '');
+  return html(page('Offers stopped', `<p class="big">✅</p>
+    <h1>Offers stopped</h1>
+    <p class="meta">They will not offer you any more of their spare hours.
+    Your bookings and your conversation with them are not affected.</p>
+    <a href="/" class="note">See what is open</a>`));
+});
+
+/**
+ * The click that turns an alert on.
+ *
+ * NOTHING IS SENT TO AN ADDRESS UNTIL SOMEBODY AT IT PRESSES THIS. Creating a
+ * watch used to be enough on its own, so anyone could type a stranger's
+ * address into a public form and buy them five emails a day, from our domain,
+ * for as long as they cared to ignore it. Now creation sends exactly one
+ * message — this link — and an address that never confirms never hears from
+ * us again.
+ *
+ * Answers identically for a good token, an unknown one and one that was
+ * already used, for the same reason /a/stop does: a stranger poking at it
+ * learns nothing about whose address is on file, and the person who actually
+ * clicked gets the outcome they wanted either way.
+ */
+route('GET', '/a/confirm/:token', async ({ req, env, params }) => {
+  await guardTokenGuessing(env, req, 'watch');
+  await confirmWatchEmail(env, params.token ?? '');
+  return html(page('Alerts on', `<p class="big">✅</p>
+    <h1>Alerts on</h1>
+    <p class="meta">We will email you when a trade has an opening near here.</p>
+    <a href="/" class="note">See what is open</a>`));
+});
+
 route('GET', '/api/public/watches/:token', async ({ req, env, params }) => {
   // The answer carries the postcode and the mailbox behind this alert.
   await guardTokenGuessing(env, req, 'watch');
@@ -3620,6 +5057,64 @@ route('PATCH', '/api/public/watches/:token', async ({ req, env, params }) => {
   // hour is a person fiddling with the filters for as long as anyone ever does.
   await enforceRateLimit(env, `watch-edit:${params.token ?? ''}`, 60, 3600);
   const b = await body(req);
+
+  /*
+    POINTING A WATCH AT A NEW ADDRESS IS A SEND, AND IT WAS THE CHEAPEST SEND
+    ON THE SITE.
+
+    Creating a watch is guarded twice over: POST /api/public/watches carries a
+    per-mailbox ceiling of five an hour and a Turnstile challenge, both for the
+    reason written out beside them — a watch is a standing instruction to email
+    somebody at an address the sender never had to prove they own, so creating
+    one is a mail-bombing primitive and is treated as one.
+
+    Changing the email on an existing watch does exactly the same thing.
+    updateWatch clears email_verified_at and calls sendConfirmation, so the new
+    address gets a message from our domain, and nobody at it agreed to
+    anything. This route had neither of the creation guards: the only ceiling
+    was `watch-edit:<token>` at sixty an hour, bucketed on the token, and the
+    token is the one thing an attacker can mint more of — one POST buys a watch
+    and then sixty PATCHes an hour aimed at any address they like. Ten watches
+    is six hundred messages an hour at one mailbox, and they leave on the bulk
+    lane, which is the lane the opening alerts share: the sender's reputation
+    that gets burned is the one the product depends on.
+
+    So the two guards that protect creation now protect this, and only in the
+    case that actually sends: a new address that is not the one already on the
+    row. The narrower condition matters in both directions.
+
+      NOT EVERY PATCH. Editing the trades, the detour, the price ceiling or the
+      label sends nothing, and the person doing it is the holder of the link.
+      Challenging those would put a CAPTCHA in front of a settings toggle for
+      no gain.
+
+      NOT CLEARING IT EITHER, and not merely because it is harmless. The
+      per-mailbox bucket is keyed on the address being mailed; a clear has no
+      address, so it would either need a key of its own or would share one
+      global "null" bucket — which would mean the fifth person to switch their
+      alert emails off in an hour could not. Clearing sends nothing at all
+      (updateWatch guards sendConfirmation on `addressChanged && next.email`),
+      so it is left exactly as open as it was.
+
+    Lower-cased before the comparison because cleanEmail in alerts.ts
+    lower-cases before its own, so the same mailbox typed two ways is one
+    address here too — otherwise re-saving your own address with a capital
+    letter would spend a challenge and a fifth of the hour's allowance on a
+    write that sends nothing.
+  */
+  const target = 'email' in b ? str(b.email)?.toLowerCase() ?? null : null;
+  if (target) {
+    // Unknown tokens are deliberately not distinguished here: watchByToken
+    // gives null, nothing is charged, and updateWatch below throws the same
+    // 404 it always did. The walk that would look for those is what
+    // guardTokenGuessing above is for.
+    const current = await watchByToken(env, params.token ?? '');
+    if (current && current.email !== target) {
+      await enforceRateLimit(env, `watch-email:${target}`, 5, 3600);
+      await requireTurnstile(env, req, tokenFromBody(b));
+    }
+  }
+
   const patch: Record<string, unknown> = {};
   if ('postcode' in b) patch.postcode = String(b.postcode ?? '');
   if ('trades' in b) patch.trades = Array.isArray(b.trades) ? b.trades.map(String) : null;
@@ -3681,6 +5176,19 @@ route('POST', '/api/public/watches/:token/subscriptions', async ({ req, env, par
 });
 
 route('DELETE', '/api/public/watches/:token/subscriptions', async ({ req, env, params }) => {
+  // THE ONE DOOR IN THIS TOKEN SPACE THAT WAS NOT WATCHED.
+  //
+  // Every other route on /api/public/watches/:token and on /a/* runs this
+  // first, and a walk through the token space only has to find the cheapest
+  // one: an attacker guessing tokens does not care which verb tells them a
+  // token is real, only that something does. This route answers a 404 from
+  // removeSubscription for a token that does not exist and a 200 for one that
+  // does, so it distinguishes them exactly as the GET beside it does — and it
+  // was the only member of the space with no ceiling at all, which made the
+  // sibling routes' ceilings decorative. Bucketed on the address rather than
+  // the token, for the reason written out over guardTokenGuessing: every guess
+  // carries a different token, so a per-token bucket never fills.
+  await guardTokenGuessing(env, req, 'watch');
   const b = await body(req);
   await removeSubscription(env, params.token ?? '', String(b.endpoint ?? ''));
   return json({ ok: true });
@@ -3732,8 +5240,37 @@ route('POST', '/api/track/share', async ({ req, env }) => {
   return json({ ok: true });
 });
 
-route('GET', '/api/public/threads/:token/track', async ({ env, params }) => {
-  return json(await customerView(env, params.token ?? ''), 200, { 'cache-control': 'no-store' });
+/**
+ * WHO IS ACTUALLY OUT, for the map on the front page.
+ *
+ * Real fixes from real phones, coarsened to about a kilometre and carrying no
+ * identity at all -- no operator id, no business name, no link. See
+ * livePositions: the four gates are consent, being listed, being switched on,
+ * and the fix being fresh, and every one of them closes by itself.
+ *
+ * NOT CACHED AT THE EDGE. The whole value of this response is that it is true
+ * right now; a cached copy is a van drawn where it was rather than where it
+ * is, which is the one thing this endpoint must never be. The cost of that is
+ * one fan-out of memory reads per request, which is why the ceiling below is
+ * per-IP and low: a person watching the map polls this every twenty seconds.
+ */
+route('GET', '/api/public/live', async ({ req, env }) => {
+  await enforceRateLimit(env, `live:${clientIp(req)}`, 30, 60);
+  return json({
+    vans: await livePositions(env),
+    // Whether this deployment is still showing sample businesses. The map uses
+    // it to decide what an EMPTY list means: with real businesses on the site,
+    // nobody out right now is the truth and the map shows no vehicles. In the
+    // sample deployment there are no phones to ping, so an empty list means
+    // "this part cannot work yet" -- and the map draws its illustrated fleet
+    // instead, with the line that says so. One flag, so the browser never has
+    // to guess which silence it is looking at.
+    demo: env.DEMO_MODE === 'on',
+  }, 200, { 'cache-control': 'no-store' });
+});
+
+route('GET', '/api/public/threads/:token/track', async ({ env, params, ref }) => {
+  return json(await customerView(env, ref), 200, { 'cache-control': 'no-store' });
 });
 
 route('GET', '/api/notifications', async ({ req, env }) => {
@@ -3837,6 +5374,49 @@ route('GET', '/api/public/gaps/:gapId/services', async ({ req, env, params }) =>
 });
 
 /**
+ * ONE PAGE, ONE ADDRESS — the 301 that makes that true.
+ *
+ * Several of the pages below answer on more than one spelling of their own
+ * URL, and every one of those spellings used to be a 200. The router's pattern
+ * ends `/?$`, so a trailing slash is a second address; `resolvePlace` accepts a
+ * business's own area slug as well as the shared neighbourhood key, so
+ * /near/sherman-oaks-2 is a third and /near/sherman-oaks-2/ a fourth — times
+ * every trade open there. Mixed case is another, and the escaped spelling of a
+ * trade slug another still.
+ *
+ * A canonical tag was the only thing pointing at the right one, and a canonical
+ * is a hint. Until it is believed the crawl budget is being spent several times
+ * over on one page and the signals are split between the copies. A 301 is not a
+ * hint.
+ *
+ * The query string is carried across, because `?ref=` on a link somebody
+ * shared is not a reason to drop them somewhere different from where they were
+ * going.
+ */
+function toCanonical(url: URL, want: string): Response | null {
+  if (url.pathname === want) return null;
+  return new Response(null, {
+    status: 301,
+    headers: {
+      location: `${want}${url.search}`,
+      'cache-control': 'public, max-age=3600',
+    },
+  });
+}
+
+/**
+ * An address with nothing behind it, as a page rather than as JSON.
+ *
+ * `throw notFound('No such area.')` goes out through `json()`, so a person who
+ * mistyped one character of a neighbourhood name was shown
+ * `{"error":"No such area."}` with an application/json content type. These are
+ * the pages strangers arrive on from a search engine; an unknown one has to be
+ * a page they can leave by.
+ */
+const htmlNotFound = (env: Env, what: string) =>
+  html(notFoundPage(env, what), 404, { 'cache-control': 'public, max-age=300, s-maxage=300' });
+
+/**
  * The pages a stranger arrives on from a search engine.
  *
  * A neighbourhood page, and a page per trade in that neighbourhood — which is
@@ -3844,15 +5424,31 @@ route('GET', '/api/public/gaps/:gapId/services', async ({ req, env, params }) =>
  * that query with a lead form; this answers it with what is open, when, and
  * what it costs. That is the only advantage here that compounds.
  */
-route('GET', '/near/:slug', async ({ env, params }) => {
-  const body = await neighbourhoodPage(env, params.slug ?? '');
-  if (!body) throw notFound('No such area.');
+route('GET', '/near/:slug', async ({ env, params, url }) => {
+  const place = await canonicalPlaceSlug(env, params.slug ?? '');
+  if (!place) return htmlNotFound(env, 'No business has listed that neighbourhood.');
+  const moved = toCanonical(url, `/near/${place}`);
+  if (moved) return moved;
+  const body = await neighbourhoodPage(env, place);
+  if (!body) return htmlNotFound(env, 'No business has listed that neighbourhood.');
   return html(body, 200, { 'cache-control': 'public, max-age=120, s-maxage=300' });
 });
 
-route('GET', '/near/:slug/:trade', async ({ env, params }) => {
-  const body = await tradeInPlacePage(env, params.slug ?? '', params.trade ?? '');
-  if (!body) throw notFound('No such area or trade.');
+route('GET', '/near/:slug/:trade', async ({ env, params, url }) => {
+  // Both halves are canonicalised before anything is rendered: the place to
+  // the shared neighbourhood key, and the trade to the hyphenated slug, so
+  // /near/sherman-oaks-2/junk%20removal lands on one address rather than
+  // being a fifth live copy of it.
+  const trade = tradeFromSlug(tradeSlug(params.trade ?? ''));
+  const place = await canonicalPlaceSlug(env, params.slug ?? '');
+  if (!trade || !place) {
+    return htmlNotFound(env, 'That is not a trade, or nobody has listed that neighbourhood.');
+  }
+  const slug = tradeSlug(trade);
+  const moved = toCanonical(url, `/near/${place}/${slug}`);
+  if (moved) return moved;
+  const body = await tradeInPlacePage(env, place, slug);
+  if (!body) return htmlNotFound(env, 'Nobody has listed that neighbourhood.');
   return html(body, 200, { 'cache-control': 'public, max-age=120, s-maxage=300' });
 });
 
@@ -3860,7 +5456,7 @@ route('GET', '/near/:slug/:trade', async ({ env, params }) => {
  * Everything above enumerated, so that the geographic layer is reachable
  * rather than only linkable from whichever page happens to be nearby.
  */
-route('GET', '/near', async ({ env }) => html(
+route('GET', '/near', async ({ env, url }) => toCanonical(url, '/near') ?? html(
   await areaIndexPage(env), 200, { 'cache-control': 'public, max-age=300, s-maxage=600' },
 ));
 
@@ -3873,9 +5469,10 @@ route('GET', '/near', async ({ env }) => html(
  * adding a third city touches lib/metros.ts and nothing here.
  */
 for (const metro of METROS) {
-  route('GET', metroPath(metro), async ({ env }) => html(
-    await metroPage(env, metro), 200, { 'cache-control': 'public, max-age=300, s-maxage=600' },
-  ));
+  route('GET', metroPath(metro), async ({ env, url }) =>
+    toCanonical(url, metroPath(metro)) ?? html(
+      await metroPage(env, metro), 200, { 'cache-control': 'public, max-age=300, s-maxage=600' },
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -3922,47 +5519,80 @@ async function spaShell(req: Request, env: Env): Promise<string | null> {
   }
 }
 
-/** Hands the request back to the SPA, exactly as the fallback in handle does. */
-async function toSpa(req: Request, env: Env): Promise<Response> {
+/**
+ * The SPA shell, with the status the address deserves on it.
+ *
+ * A 200 FOR A URL THAT NAMES NOTHING IS THE DEFECT THIS EXISTS TO CLOSE. This
+ * used to be `assets.fetch(req)` returned verbatim, and the assets binding is
+ * configured single-page-application, so "no such trade", "no such cost
+ * guide", "no such category" and "no such business" all answered 200 with the
+ * app in them — and the app then drew its not-found page. Google documents
+ * exactly that as a soft 404: a successful response for an address that does
+ * not exist. The namespaces are unbounded — anybody can ask for /p/<anything>
+ * — so it is an unbounded supply of them, each one judged as a thin duplicate
+ * of everything else that answers the same way.
+ *
+ * The bytes are unchanged: the same shell, the same React app, the same
+ * not-found page drawn over it. Only the status line is different, which is
+ * the half a crawler reads and the half a person never sees.
+ */
+async function toSpa(req: Request, env: Env, status = 404): Promise<Response> {
   const assets = (env as unknown as {
     ASSETS?: { fetch: (r: Request) => Promise<Response> };
   }).ASSETS;
   if (!assets) throw notFound('No such page.');
-  return assets.fetch(req);
+  const res = await assets.fetch(req);
+  if (res.status !== 200 || status === 200) return res;
+  return new Response(res.body, { status, headers: res.headers });
 }
 
-route('GET', '/s/:trade', async ({ req, env, params }) => {
+route('GET', '/s/:trade', async ({ req, env, params, url }) => {
   const segment = params.trade ?? '';
   const entry = tradeFromPathSegment(segment);
   if (!entry) return toSpa(req, env);
-  // /s/junk-removal and /s/junk%20removal are the same page, and the React app
-  // only understands the second. One 301 rather than two indexable copies of
-  // one page, one of which the app cannot render.
-  if (segment !== entry.slug) {
-    return new Response(null, {
-      status: 301,
-      headers: { location: `/s/${canonicalTradeSegment(entry)}` },
-    });
-  }
+  /*
+    THE REDIRECT USED TO POINT THE OTHER WAY, AND THAT WAS THE BUG.
+
+    `canonicalTradeSegment` was `encodeURIComponent(entry.slug)`, so this sent
+    the readable /s/junk-removal to /s/junk%20removal — an escaped space in the
+    canonical, in the sitemap, in every internal link and in every result
+    snippet, on the highest-intent pages the site has. It is the hyphenated
+    form now (see `tradePath` in lib/seo.ts) and the escaped spelling is what
+    moves. Comparing the whole pathname rather than just the segment also
+    catches the trailing slash and the mixed-case spelling in the same 301.
+  */
+  const moved = toCanonical(url, `/s/${canonicalTradeSegment(entry)}`);
+  if (moved) return moved;
   const body = await tradePage(env, segment, { shell: await spaShell(req, env) });
   if (!body) return toSpa(req, env);
   return html(body, 200, { 'cache-control': 'public, max-age=120, s-maxage=300' });
 });
 
-route('GET', '/cost/:trade', async ({ req, env, params }) => {
+route('GET', '/cost/:trade', async ({ req, env, params, url }) => {
   const segment = params.trade ?? '';
   const entry = tradeFromPathSegment(segment);
   if (!entry) return toSpa(req, env);
-  if (segment !== entry.slug) {
-    return new Response(null, {
-      status: 301,
-      headers: { location: `/cost/${canonicalTradeSegment(entry)}` },
-    });
-  }
+  const moved = toCanonical(url, `/cost/${canonicalTradeSegment(entry)}`);
+  if (moved) return moved;
   const body = await costGuidePage(env, segment, { shell: await spaShell(req, env) });
   if (!body) return toSpa(req, env);
   return html(body, 200, { 'cache-control': 'public, max-age=120, s-maxage=300' });
 });
+
+/**
+ * The front door, server-rendered like everything else here.
+ *
+ * IT WAS THE ONE PAGE THE WORKER NEVER SAW. `/` matched nothing in
+ * WORKER_PATHS and had no route, so the assets binding answered it with the
+ * SPA shell — an empty #root, no canonical, no heading and no link — which is
+ * what a crawler that runs no JavaScript found at the address every external
+ * link to this site points at. See `homePage` in lib/seo.ts for what that cost
+ * beyond the one page.
+ */
+route('GET', '/', async ({ req, env, url }) => toCanonical(url, '/') ?? html(
+  await homePage(env, { shell: await spaShell(req, env) }),
+  200, { 'cache-control': 'public, max-age=120, s-maxage=300' },
+));
 
 /**
  * The two hubs those pages link up to.
@@ -3972,40 +5602,64 @@ route('GET', '/cost/:trade', async ({ req, env, params }) => {
  * "no such thing" branch to fall through to the SPA with — every trade has a
  * row on both of them, quiet or not.
  */
-route('GET', '/browse', async ({ req, env }) => html(
+route('GET', '/browse', async ({ req, env, url }) => toCanonical(url, '/browse') ?? html(
   await browseIndexPage(env, { shell: await spaShell(req, env) }),
   200, { 'cache-control': 'public, max-age=300, s-maxage=600' },
 ));
 
-route('GET', '/cost', async ({ req, env }) => html(
+route('GET', '/cost', async ({ req, env, url }) => toCanonical(url, '/cost') ?? html(
   await costIndexPage(env, { shell: await spaShell(req, env) }),
   200, { 'cache-control': 'public, max-age=300, s-maxage=600' },
 ));
 
-route('GET', '/browse/:category', async ({ req, env, params }) => {
-  const body = await categoryPage(env, params.category ?? '', { shell: await spaShell(req, env) });
+route('GET', '/browse/:category', async ({ req, env, params, url }) => {
+  const key = (params.category ?? '').trim().toLowerCase();
+  const moved = toCanonical(url, `/browse/${key}`);
+  if (moved) return moved;
+  const body = await categoryPage(env, key, { shell: await spaShell(req, env) });
   if (!body) return toSpa(req, env);
   return html(body, 200, { 'cache-control': 'public, max-age=300, s-maxage=600' });
 });
 
-route('GET', '/p/:slug', async ({ req, env, params }) => {
-  const body = await profilePage(env, params.slug ?? '', { shell: await spaShell(req, env) });
+route('GET', '/p/:slug', async ({ req, env, params, url }) => {
+  // Profile slugs are minted lower case by `slugify`, so an upper-case one in
+  // a URL is the same business asked for in a different spelling.
+  const slug = (params.slug ?? '').trim().toLowerCase();
+  const moved = toCanonical(url, `/p/${slug}`);
+  if (moved) return moved;
+  const body = await profilePage(env, slug, { shell: await spaShell(req, env) });
   if (!body) return toSpa(req, env);
   return html(body, 200, { 'cache-control': 'public, max-age=300, s-maxage=600' });
 });
 
 route('GET', '/sitemap.xml', async ({ env }) => {
-  const xml = await sitemapXml(env, (env.APP_URL ?? '').replace(/\/$/, ''));
+  const xml = await sitemapXml(env, siteBase(env));
   return new Response(xml, {
     headers: {
       'content-type': 'application/xml; charset=utf-8',
-      'cache-control': 'public, max-age=600, s-maxage=3600',
+      /*
+        THE SAME LIFETIME AS THE PAGES IT ADVERTISES, which it was twelve times
+        longer than.
+
+        This file was cached for an hour while /near/<place>/<trade> is cached
+        for five minutes — and that page goes noindex the moment its last
+        opening is booked. So for up to an hour a crawler could be handed a
+        sitemap promising URLs that had already stopped asking to be indexed,
+        which is the same file-level contradiction the noindex rules above
+        exist to avoid, arriving by a slower route. A sitemap of openings is
+        worth exactly as much as the openings are fresh.
+      */
+      'cache-control': 'public, max-age=120, s-maxage=300',
     },
   });
 });
 
 route('GET', '/robots.txt', async ({ env }) => {
-  return new Response(robotsTxt((env.APP_URL ?? '').replace(/\/$/, '')), {
+  // `siteBase` falls back to the request's own origin, because
+  // `Sitemap: /sitemap.xml` — which is what an unset APP_URL used to emit — is
+  // a relative URL, and the sitemap protocol requires an absolute one.
+  // Consumers discard the line rather than resolving it.
+  return new Response(robotsTxt(siteBase(env)), {
     headers: {
       'content-type': 'text/plain; charset=utf-8',
       'cache-control': 'public, max-age=3600, s-maxage=86400',
@@ -4068,6 +5722,13 @@ route('POST', '/book/:gapId', async ({ req, env, params }) => {
         `SELECT o.country FROM gaps g JOIN operators o ON o.id = g.operator_id
           WHERE g.id = ?`,
       ).bind(params.gapId ?? '').first<{ country: string }>();
+      const email = normaliseLoginEmail(str(b.email));
+      if (!email) {
+        throw badRequest('Enter an email address we can send a code to.', 'bad_email');
+      }
+      // Still asked for, still written to the account, still never proved: the
+      // operator is driving to a stranger's address and needs something to ring
+      // on arrival. It unlocks nothing. See migration 0038.
       const phone = toE164(str(b.phone), gap?.country ?? 'US');
       if (!phone) {
         throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
@@ -4077,12 +5738,13 @@ route('POST', '/book/:gapId', async ({ req, env, params }) => {
       if (!code) {
         // Step one. Nothing is booked and nothing is written except the code
         // row; the opening is still there for this person to come back to.
+        await enforceDailyIntake(env, 'customer');
         const sent = await sendSignInCode(env, {
-          phone, ip: clientIp(req), lang: str(b.language),
+          email, ip: clientIp(req), lang: str(b.language),
           echo: mayEchoSignInLink(env, req.headers.get('x-auth-debug')),
         });
-        return html(page('Confirm your mobile', `<h1>Confirm your mobile</h1>
-<p class="meta">We have texted a six-digit code to ${escapeHtml(phone)}. It lasts
+        return html(page('Confirm your email', `<h1>Confirm your email</h1>
+<p class="meta">We have emailed a six-digit code to ${escapeHtml(email)}. It lasts
 ${Math.round(sent.expires_in / 60)} minutes and works once. Typing it in creates your
 account and books the slot — there is nothing else to fill in.</p>
 <form method="post" action="/book/${encodeURIComponent(params.gapId ?? '')}">
@@ -4091,17 +5753,18 @@ ${rebookFields(b, ['first_name', 'phone', 'email', 'address_line', 'postcode', '
  pattern="[0-9]*" maxlength="6" required></label></div>
 <button class="yes" type="submit">Confirm and book</button>
 </form>
+<p class="note">Nothing there? Look in spam or promotions first.</p>
 <p class="note">Already have a booking? The link in your confirmation opens it without
 signing in.</p>`));
       }
 
-      await enforceRateLimit(env, `otp-verify:${phone}`, 10, 900);
+      await enforceRateLimit(env, `otp-verify:${email}`, 10, 900);
       await enforceRateLimit(env, `otp-verify-ip:${clientIp(req)}`, 30, 900);
       const signed = await signInWithCode(env, {
-        phone, code,
+        email, code,
         userAgent: req.headers.get('user-agent'),
         first_name: firstNameOnly(str(b.first_name)) || null,
-        email: str(b.email),
+        phone,
       });
       account = signed.account;
       cookie = signed.cookie;
@@ -4115,7 +5778,11 @@ signing in.</p>`));
       address_line: str(b.address_line),
       postcode: str(b.postcode),
       thread_token: str(b.thread_token),
-      account: { id: account.id, phone: account.phone_e164 ?? '' },
+      account: {
+        id: account.id,
+        phone: account.phone_e164 ?? '',
+        login_email: account.login_email ?? '',
+      },
     });
     // Straight to their conversation. That page is the confirmation and the
     // way to reach the business, and it keeps working on any phone with the
@@ -4145,76 +5812,14 @@ signing in.</p>`));
 });
 
 // ---------------------------------------------------------------------------
-// Twilio webhooks (only used when an operator sets sms_mode = 'twilio')
+// No inbound SMS webhooks.
 // ---------------------------------------------------------------------------
-route('POST', '/webhooks/twilio/inbound', async ({ req, env }) => {
-  const form = await req.formData();
-  if (!(await verifyTwilioSignature(req, env, form))) {
-    // Unsigned means anyone could opt a client out by guessing this URL.
-    throw new HttpError(403, 'Invalid signature.', 'bad_signature');
-  }
-  const from = String(form.get('From') ?? '');
-  const text = String(form.get('Body') ?? '').trim().toUpperCase();
-  const t = now();
-
-  if (STOP_WORDS.has(text)) {
-    await env.DB.prepare(
-      `UPDATE clients SET opted_out_at = ?, sms_consent = 0, updated_at = ? WHERE phone_e164 = ?`,
-    ).bind(t, t, from).run();
-  } else if (START_WORDS.has(text)) {
-    await env.DB.prepare(
-      `UPDATE clients SET opted_out_at = NULL, sms_consent = 1, sms_consent_at = ?, updated_at = ?
-        WHERE phone_e164 = ?`,
-    ).bind(t, t, from).run();
-  }
-
-  await env.DB.prepare(
-    `INSERT INTO messages (id, operator_id, client_id, direction, channel, to_address,
-                           from_address, body, status, provider, created_at, updated_at)
-     SELECT ?, c.operator_id, c.id, 'in', 'sms', '', ?, ?, 'received', 'twilio', ?, ?
-       FROM clients c WHERE c.phone_e164 = ? LIMIT 1`,
-  ).bind(newId(), from, String(form.get('Body') ?? ''), t, t, from).run();
-
-  return new Response('<Response></Response>', { headers: { 'content-type': 'text/xml' } });
-});
-
-route('POST', '/webhooks/twilio/status', async ({ req, env }) => {
-  const form = await req.formData();
-  if (!(await verifyTwilioSignature(req, env, form))) {
-    throw new HttpError(403, 'Invalid signature.', 'bad_signature');
-  }
-  const sid = String(form.get('MessageSid') ?? '');
-  const status = String(form.get('MessageStatus') ?? '');
-  const map: Record<string, string> = {
-    sent: 'sent', delivered: 'delivered', undelivered: 'failed', failed: 'failed',
-  };
-  if (sid && map[status]) {
-    // Twilio only sends ErrorCode on a failure, and it is the whole difference
-    // between "this number is unreachable, stop offering to them" (30003,
-    // 30005) and "we are rate limited, it will go next time" (30001). The
-    // column has been there since the first migration and nothing was writing
-    // it, so every failed offer looked identical in the log. Stored as text
-    // because the column is TEXT and the code is an identifier, not a number
-    // anything does arithmetic on.
-    const errorCode = map[status] === 'failed'
-      ? String(form.get('ErrorCode') ?? '').trim() || null
-      : null;
-    await env.DB.prepare(
-      `UPDATE messages SET status=?, error_code=?, updated_at=? WHERE provider_sid=?`,
-    ).bind(map[status], errorCode, now(), sid).run();
-    if (map[status] === 'delivered') {
-      await env.DB.prepare(
-        `UPDATE gap_offers SET status='delivered', updated_at=?
-          WHERE id = (SELECT offer_id FROM messages WHERE provider_sid=?) AND status='sent'`,
-      ).bind(now(), sid).run();
-    }
-  }
-  // null, not ''. 204 is a null-body status, and constructing a Response with
-  // any body at all — the empty string included — throws in workerd and in
-  // undici alike. This route therefore answered 500 to every status callback
-  // Twilio ever sent it, which Twilio treats as a failure and retries.
-  return new Response(null, { status: 204 });
-});
+// /webhooks/twilio/inbound (STOP and START from a client's handset) and
+// /webhooks/twilio/status (delivery receipts) used to sit here. Both existed
+// only to serve Twilio and both are gone with it. sms_mode is 'device': the
+// app hands the operator a message to send from their own handset, which needs
+// no carrier account and no webhook. The site's own texts -- the sign-in code
+// -- go out through src/lib/sms.ts, which is a separate path and always was.
 
 // ---------------------------------------------------------------------------
 // Getting rid of things
@@ -4246,13 +5851,14 @@ route('POST', '/webhooks/twilio/status', async ({ req, env }) => {
  * holding the data in case they change their mind. The front end must say so
  * before it calls this.
  */
-route('DELETE', '/api/public/threads/:token/data', async ({ req, env, params }) => {
-  // Each call walks several tables and deletes objects out of R2. Three in an
+route('DELETE', '/api/public/threads/:token/data', async ({ req, env, params, ref }) => {
+  // Each call walks several tables and deletes photographs out of the photo
+  // store. Three in an
   // hour covers somebody tapping twice because the first response was slow;
   // nothing legitimate needs more.
   await enforceRateLimit(env, `erase:${params.token!}`, 3, 3600);
   await enforceRateLimit(env, `erase-ip:${clientIp(req)}`, 10, 3600);
-  const result = await eraseCustomerByToken(env, params.token!);
+  const result = await eraseCustomerByToken(env, ref);
   return json(result, 200, { 'cache-control': 'no-store' });
 });
 
@@ -4333,8 +5939,94 @@ const cardSafe = (env: Env): Env => ({ ...env, DB: cardSafeDb(env.DB) });
 async function respond(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(req.url);
 
+  /*
+    THE ORIGIN THE PAGES MAY FALL BACK TO, AND WHY IT IS NOT A DEFAULT FOR
+    APP_URL.
+
+    A deploy with no APP_URL used to publish `Sitemap: /sitemap.xml` — which
+    the sitemap protocol forbids and consumers discard — and a path-only
+    canonical on every page. The request knows its own origin, so lib/seo.ts
+    falls back to it.
+
+    It is a separate field rather than `env.APP_URL ??= url.origin` because
+    APP_URL is what a sign-in link, an offer link, a guest-thread link and the
+    email gate in lib/email.ts are all built from. Those must never be
+    assembled out of a Host header the caller typed: that turns a mistyped host
+    into a sign-in link pointing at somebody else's domain. Only the canonical
+    and the sitemap line read this, and neither is a credential.
+  */
+  const site: Env = { ...env, REQUEST_ORIGIN: url.origin } as Env & { REQUEST_ORIGIN: string };
+
   const pre = preflight(req, env);
   if (pre) return pre;
+
+  /*
+    THE SECOND COPY OF THIS ENTIRE SITE, AND THE ONE HEADER THAT SAYS WHICH
+    COPY IS THE REAL ONE.
+
+    wrangler.toml routes roundtheway.app and never sets `workers_dev`, which
+    defaults to true — so this same Worker also answers on its
+    <name>.<subdomain>.workers.dev address, off the same database, with the
+    same routes and the same server-rendered pages. That is not a staging copy
+    with different content; it is the same site on a second hostname, and
+    nothing about it is private: a workers.dev address is guessable from the
+    Worker's own name and turns up on its own the moment anything links to it
+    once.
+
+    WHAT IT COST. Every page lib/seo.ts renders carries a canonical built from
+    APP_URL, which is the right half of the answer and not the whole of it. A
+    canonical is a hint a search engine may disregard, and for as long as it is
+    disregarded the duplicate competes with the real site for the same queries
+    — the openings, the cost guides, the trade pages, every profile, all of it
+    twice, each copy splitting the other's standing. Worse than the ranking is
+    what happens to a person who lands on the duplicate and tries to use it:
+    lib/email.ts builds a sign-in link from APP_URL and deliberately never from
+    the Host header, so the link they are emailed points at roundtheway.app
+    while the page they were reading is on workers.dev. The cookie is set on
+    the origin they were sent to and not the one they came from, and signing in
+    appears to do nothing at all.
+
+    A HEADER, NEVER A REDIRECT, and that is the load-bearing part. POSTs arrive
+    here too: /webhooks/stripe and the whole of /api. A redirect is a request
+    the sender is not obliged to repeat, and Stripe does not repeat one — it
+    records the delivery as a 3xx and moves on, so an event that says money
+    arrived would never reach markPaid and the job would sit unpaid for a
+    payment that cleared. `x-robots-tag` is advice to a crawler and invisible
+    to every other caller, so the duplicate keeps behaving exactly as it does
+    today for anything that is not a search engine.
+
+    AN UNSET OR UNPARSEABLE APP_URL DISABLES THE CHECK INSTEAD OF STAMPING
+    EVERYTHING. There is no honest guess available at this point: the only
+    other thing this code knows about its own address is the Host header the
+    caller typed, and comparing that with itself is a test that can never fire.
+    So if the comparison cannot be made truthfully it is not made — because the
+    failure in the other direction is the live site telling every crawler not
+    to index it, which is silent, total, and invisible until the traffic has
+    already gone.
+  */
+  const canonicalHost = (() => {
+    try { return new URL(env.APP_URL).host; } catch { return null; }
+  })();
+  const offCanonical = canonicalHost !== null && url.host !== canonicalHost;
+
+  /**
+   * The stamp, applied at each of the three ways out below rather than at one
+   * of them.
+   *
+   * A fresh Response rather than `res.headers.set`, for the same reason
+   * withSecurityHeaders builds one: a response handed back by the cache or by
+   * the assets binding has immutable headers and mutating it throws. Copying
+   * the headers works on every response, whatever produced it.
+   *
+   * On the canonical host this is the identity function and allocates nothing,
+   * which is what every real request gets.
+   */
+  const stamp = (res: Response): Response => {
+    if (!offCanonical) return res;
+    const headers = new Headers(res.headers);
+    headers.set('x-robots-tag', 'noindex, nofollow');
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  };
 
   // Serve the busiest public reads from Cloudflare's cache before any
   // handler runs. Only GETs, only routes that opt in by returning a
@@ -4348,18 +6040,25 @@ async function respond(req: Request, env: Env, ctx: ExecutionContext): Promise<R
   if (cacheable) {
     const cache = (caches as unknown as { default: Cache }).default;
     const hit = await cache.match(req);
-    if (hit) return hit;
+    if (hit) return stamp(hit);
 
-    const res = await handle(req, env, url);
+    const res = await handle(req, site, url);
     const cc = res.headers.get('cache-control') ?? '';
     if (res.status === 200 && cc.includes('s-maxage')) {
       // waitUntil so the caller is not made to wait on the cache write.
+      //
+      // The UNSTAMPED response is what goes in, and the stamp is re-decided on
+      // every read above. The cache is keyed by full URL, so the two hostnames
+      // never share an entry and storing the stamped copy would work too — but
+      // it would mean the header depended on which host happened to warm the
+      // entry, which is the kind of thing that is true until somebody changes
+      // the cache key.
       ctx.waitUntil(cache.put(req, res.clone()));
     }
-    return res;
+    return stamp(res);
   }
 
-  return handle(req, env, url);
+  return stamp(await handle(req, site, url));
 }
 
 /** Public GETs whose answer is identical for everybody who asks. */
@@ -4390,6 +6089,10 @@ const CACHEABLE_PATHS = [
 const WORKER_PATHS = [
   /^\/api\//,
   /^\/o\//,
+  // THE FRONT DOOR. Without this the assets binding answered `/` with the bare
+  // SPA shell before the Worker was ever asked — no canonical, no heading and
+  // no link — at the address every external link to this site points at.
+  /^\/$/,
   /^\/near\//,
   /^\/near$/,
   // One pattern per metro, built from the same list the routes above are
@@ -4399,6 +6102,11 @@ const WORKER_PATHS = [
   /^\/book\//,
   /^\/webhooks\//,
   /^\/a\/stop\//,
+  // The confirmation click from an alert email. Left out of this list the
+  // assets binding answers it with the React shell and a 200, the address is
+  // never confirmed, and the person who did exactly what the email asked never
+  // hears from us again -- with nothing anywhere saying why.
+  /^\/a\/confirm\//,
   /^\/health$/,
   /^\/demo$/,
   /^\/sitemap\.xml$/,
@@ -4421,6 +6129,58 @@ const WORKER_PATHS = [
 ];
 
 /**
+ * THE REACT APP'S OWN ROUTES — the ones the Worker does not render but the
+ * app does draw a real page for.
+ *
+ * It exists to tell two kinds of unmatched path apart, because the fallback
+ * below used to treat them identically and answer both with 200.
+ *
+ *   /about, /help, /account…   a page. The app renders it; 200 is correct.
+ *   /aboot, /p/nobody, /xyzzy  nothing. The app renders NotFound; 404 is
+ *                              correct, and 200 is a soft 404.
+ *
+ * The second set is unbounded — `<Route path="/:metro">` in web/src/App.tsx
+ * matches ANY single segment, so every misspelling of every URL on the site
+ * landed in it — and Google judges each one as a thin duplicate of everything
+ * else answering the same way. The list below is read off App.tsx and has to
+ * be kept beside it: a route added there and missed here is a real page
+ * answering 404, which is the failure worth being loud about, and it is why
+ * /app is matched by prefix rather than by its eleven separate routes.
+ *
+ * `/` and every path the Worker renders are absent on purpose: those are in
+ * WORKER_PATHS above and never reach the fallback.
+ */
+const SPA_PATHS = [
+  /^\/join\/?$/,
+  /^\/covered\/?$/,
+  /^\/safety\/?$/,
+  /^\/pros\/?$/,
+  /^\/about\/?$/,
+  /^\/terms\/?$/,
+  /^\/privacy\/?$/,
+  /^\/help\/?$/,
+  /^\/search\/?$/,
+  /^\/signin\/?$/,
+  /^\/auth\/verify\/?$/,
+  /^\/account\/?$/,
+  // One conversation, opened on the account rather than on a link. Behind a
+  // customer session and listed nowhere public, so — exactly like /app above —
+  // which ids exist is nobody's business but that customer's. The pattern is
+  // deliberately one segment and not a prefix: /account itself is a real page
+  // above, and a bare prefix would hand the SPA shell a 200 for every
+  // misspelling of every future path under it, which is the soft-404 supply
+  // the restamping below exists to stop.
+  /^\/account\/messages\/[^/]+\/?$/,
+  /^\/c\/[^/]+\/?$/,
+  /^\/a\/?$/,
+  /^\/a\/[^/]+\/?$/,
+  // The signed-in operator app. Every path under it is behind a login wall and
+  // Disallowed in robots.txt, so which of them exist is nobody's business but
+  // the operator's and a prefix is the honest granularity.
+  /^\/app(\/|$)/,
+];
+
+/**
  * The routes a customer reaches with nothing but the secret in their link.
  *
  * `POST /api/public/threads` — starting a conversation — has no token segment
@@ -4430,9 +6190,32 @@ const GUEST_LINK_PATHS = /^\/api\/public\/threads\/[^/]+/;
 
 async function handle(req: Request, env: Env, url: URL): Promise<Response> {
   {
+    /*
+      THE SAME PATH IN LOWER CASE, TRIED SECOND.
+
+      The patterns this router builds are case-sensitive, so `/Near/Sherman-
+      Oaks` matched no route at all and fell through to the assets binding: the
+      SPA shell, with a 200 on it, for an address that is a real page one
+      capital letter away. `/near/Sherman-Oaks` was worse — it reached the
+      route, found no such area, and answered a human with
+      `{"error":"No such area."}` and a JSON content type.
+
+      Exact case is tried FIRST and only then the lowered spelling, and that
+      order is the whole safety of this. Half the path segments in this file
+      are secrets — /o/:token, /c/:token, /a/:token, a guest thread, a photo
+      store key — and lowering one of those is destroying it. A token in a URL
+      whose STATIC prefix was typed in the wrong case is already not a link
+      anybody was given, so the worst this can do to one is answer 404 where it
+      answered 404 before.
+
+      The pages then 301 to their own canonical spelling (see `toCanonical`),
+      so the lowered match is a way in rather than a second address.
+    */
+    const lowered = url.pathname.toLowerCase();
     for (const r of routes) {
       if (r.method !== req.method) continue;
-      const m = r.pattern.exec(url.pathname);
+      const m = r.pattern.exec(url.pathname)
+        ?? (lowered === url.pathname ? null : r.pattern.exec(lowered));
       if (!m) continue;
       const params = decodeParams(r.keys, m);
       // A segment that is not valid percent-encoding names no resource, so it
@@ -4456,10 +6239,28 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
         // remember to apply is a defence with a hole in it already. See
         // guestlink.ts for why the token-bucketed rate limits on these same
         // routes cannot see what this sees.
+        //
+        // IT ALSO DECIDES WHICH OF THE TWO DOORS THIS REQUEST CAME THROUGH,
+        // and that is deliberately the same one place. A conversation is
+        // reachable by the secret in the link OR, since migration 0052, by a
+        // signed-in customer who owns it — and the second of those is worth
+        // nothing if it has to be remembered on each of thirty routes. The
+        // guard already resolved the segment to answer its own question, so
+        // the answer is carried forward here instead of being recomputed.
+        //
+        // `{ via: 'link' }` is the default for every route with no token
+        // segment, which is the only honest default: no account authorised
+        // anything, so nothing downstream may claim one did.
+        let door: ThreadDoor = { via: 'link' };
         if (params.token && GUEST_LINK_PATHS.test(url.pathname)) {
-          await guardGuestLink(env, clientIp(req), params.token);
+          door = await guardGuestLink(env, req, clientIp(req), params.token);
         }
-        return withCors(await r.handler({ req, env, params, url }), req, env);
+        // The raw segment on the token door — so those handlers are unchanged,
+        // duplicate lookup and all — and the already-authorised row on the
+        // account door, which is the only thing the libraries cannot work out
+        // for themselves from a URL.
+        const ref: ThreadRef = door.via === 'account' ? door.thread : (params.token ?? '');
+        return withCors(await r.handler({ req, env, params, url, ref, door }), req, env);
       } catch (err) {
         // A rate limit knows how long the caller has to wait, and saying so is
         // the difference between a client backing off and a client retrying in
@@ -4477,12 +6278,33 @@ async function handle(req: Request, env: Env, url: URL): Promise<Response> {
       }
     }
 
-    // Not a Worker route. If it is not in the Worker's own territory either,
-    // it belongs to the React app: not_found_handling is
-    // single-page-application, so the assets binding answers a path with no
-    // file by returning index.html.
-    if (env.ASSETS && !WORKER_PATHS.some((p) => p.test(url.pathname))) {
-      return env.ASSETS.fetch(req);
+    /*
+      Not a Worker route. If it is not in the Worker's own territory either, it
+      belongs to the assets binding — either as a real file, or as the SPA
+      shell, because not_found_handling is single-page-application and a path
+      with no file behind it returns index.html.
+
+      AND THAT LAST CASE IS WHERE THE STATUS HAS TO CHANGE. This used to return
+      the assets response verbatim, so every address the site does not have
+      answered 200 with the app in it: /xyzzy, /aboot, /p/nobody, and — because
+      `<Route path="/:metro">` in App.tsx swallows any single segment — every
+      misspelling of every URL on the site. Google calls a 200 for a page that
+      does not exist a soft 404, judges each one as a thin duplicate of the
+      others, and this was an unbounded supply of them.
+
+      A real file keeps its own answer: only the SPA fallback — an HTML
+      response for a path with no file — is restamped, and only when the path
+      is not one of the app's own routes. The bytes are identical either way;
+      the React app draws its not-found page over them, as it already does.
+    */
+    if (env.ASSETS && !WORKER_PATHS.some((p) => p.test(lowered))) {
+      const res = await env.ASSETS.fetch(req);
+      const isShell = res.status === 200
+        && (res.headers.get('content-type') ?? '').includes('text/html');
+      if (isShell && !SPA_PATHS.some((p) => p.test(lowered))) {
+        return new Response(res.body, { status: 404, headers: res.headers });
+      }
+      return res;
     }
     return withCors(json({ error: 'Not found' }, 404), req, env);
   }
@@ -4535,15 +6357,51 @@ async function runScheduled(env: Env): Promise<void> {
                              AND o.status IN ('sent','delivered','viewed','queued'))`,
     ).bind(t).run());
 
+    // BEFORE the expiry below, and that order is the whole point of it. A
+    // parts charge is taken in the same request that records it, so a worker
+    // killed in between leaves a customer charged $340 against a quote that
+    // still reads 'sent'. Expiring that row makes the money unreachable, so
+    // Stripe is asked about every quote about to expire first. See parts.ts.
+    await step('reconcile parts charges', () => reconcileSentQuotes(env));
+
     // A quote left 'sent' forever is a live authorisation to charge somebody
     // for parts priced weeks ago. Expiring it costs the operator one tap to
     // resend. See parts.ts.
     await step('expire quotes', () => expireQuotes(env));
 
+    // Orders whose money arrived and whose webhook did not. markPaid was
+    // reachable from the webhook alone, so one failed delivery window — an
+    // outage, a rotated signing secret — left a real charge with paid_at NULL
+    // forever: nothing pays the business, nothing can refund the customer, and
+    // no screen anywhere says so. See reconcileUnpaidOrders in checkout.ts.
+    await step('reconcile unpaid orders', () => reconcileUnpaidOrders(env));
+
     // Money frozen by a cancellation, settled once its hold runs out. Silence
     // resolves to keeping the money and charging nobody, so that no pair of
     // people can profit by agreeing to say nothing. See settlement.ts.
     await step('settle holds', () => settleExpiredHolds(env));
+
+    // And then the money actually moves, which for most of this product's life
+    // it did not: refund_cents was decided at cancellation, shown to the
+    // customer, written down, and never sent anywhere. This runs immediately
+    // after the holds settle so a refund released on one tick is on its way
+    // back on the same tick, and it is kept as a separate step because a
+    // failure at Stripe must not be able to leave a hold unsettled.
+    await step('refund released holds', () => sweepRefunds(env));
+
+    // And the parts on those same cancellations, which are a SECOND charge
+    // against a second intent and so need a second refund — the labour sweep
+    // above works off orders.payment_intent_id and cannot reach them. Without
+    // this a customer whose operator cancelled after they had approved a $340
+    // alternator got the labour back and not the part. See sweepPartsRefunds.
+    await step('refund parts on cancelled work', () => sweepPartsRefunds(env));
+
+    // Businesses paid for work that has now happened. This used to run off the
+    // payment webhook, which paid everybody days before the job and left the
+    // platform refunding cancellations out of its own pocket. A line becomes
+    // payable once its appointment is over and the window a cancellation could
+    // still claim it in has closed. See settleDueWork in lib/checkout.ts.
+    await step('pay for finished work', () => settleDueWork(env));
 
     // The five-minute fuse on an instant request, and quotes whose start time
     // came and went. Both are also evaluated on read, so these sweeps only

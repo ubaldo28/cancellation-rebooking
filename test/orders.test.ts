@@ -3,7 +3,8 @@ import { ALL_MIGRATIONS, makeEnv } from './d1';
 import type { Env } from '../src/types';
 import { placeOrder, priceOrder } from '../src/lib/orders';
 import { postOpening } from '../src/lib/openings';
-import { newId, now } from '../src/lib/util';
+import { DEMO_OPERATOR_ID } from '../src/lib/demo';
+import { type HttpError, newId, now } from '../src/lib/util';
 
 const MIGRATIONS = ALL_MIGRATIONS;
 
@@ -35,13 +36,18 @@ async function seed() {
     [DETAILER, 'a@x.com', 'Valley Detailing'],
     [BARBER, 'b@x.com', 'Encino Barbers'],
   ] as const) {
+    // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+    // must have somewhere to be paid before its work can be sold, so priceOrder
+    // treats an opening for an operator without it as unlisted. Drop it and
+    // every booking in this file comes back slot_gone.
     await env.DB.prepare(
       `INSERT INTO operators (id,email,business_name,timezone,country,currency,language,
          location_mode,fill_model,sms_mode,max_detour_seconds,min_gap_seconds,buffer_seconds,
          offer_ttl_seconds,offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,
-         discount_percent,plan,accept_public_bookings,deposit_cents,created_at,updated_at)
+         discount_percent,plan,accept_public_bookings,deposit_cents,created_at,updated_at,
+         stripe_payouts_enabled)
        VALUES (?,?,?, 'America/Los_Angeles','US','USD','en','mobile','both','device',
-         3600,3600,900,5400,3,3600,604800,0,'active',1,1000,?,?)`,
+         3600,3600,900,5400,3,3600,604800,0,'active',1,1000,?,?,1)`,
     ).bind(id, email, name, n, n).run();
   }
 
@@ -444,18 +450,29 @@ describe('the claim row holds nothing that could reach the customer', () => {
     expect(body).not.toContain('Rosa');
 
     // The number is still on the order, which is the platform's own record and
-    // carries no operator_id. That is what the standing ladder counts no-shows
-    // against and what erasure follows, and neither may be weakened by this.
+    // carries no operator_id. It is what an operator rings on arrival, and
+    // taking it off the order would cost a business the way to reach the
+    // doorstep it is driving to. What the standing ladder counts against and
+    // what erasure follows is login_email since migration 0038 — see the test
+    // below, which erases through it — and neither may be weakened by this.
     const order = await env.DB.prepare(`SELECT phone_e164 FROM orders`)
       .first<{ phone_e164: string }>();
     expect(order?.phone_e164).toBe('+18185550142');
   });
 
-  it('can still be found and emptied by the number when somebody asks to be erased',
+  it('can still be found and emptied by the address when somebody asks to be erased',
     async () => {
       const { detailerSlot } = await seed();
       const placed = await placeOrder(env, {
-        ...BUYER, items: [{ gap_id: detailerSlot, service_ids: ['a-wash'] }],
+        ...BUYER,
+        // The account a real checkout resolves before a single row is written.
+        // The proved address on it is what the erasure below follows back to
+        // this claim; the number typed into the form reaches nothing, which
+        // since 0038 is exactly the point.
+        account: {
+          id: 'acct-rosa', phone: '+18185550142', login_email: 'rosa@mailbox.test',
+        },
+        items: [{ gap_id: detailerSlot, service_ids: ['a-wash'] }],
       });
 
       const { eraseCustomerByToken } = await import('../src/lib/retention');
@@ -471,4 +488,106 @@ describe('the claim row holds nothing that could reach the customer', () => {
       expect(claim?.address_line).toBeNull();
       expect(claim?.lat).toBeNull();
     });
+});
+
+describe('an opening with nobody to pay, refused for the right reason', () => {
+  /**
+   * One of lib/demo.ts's seeded businesses, with an opening on it.
+   *
+   * stripe_payouts_enabled is 0 and that is the honest value rather than a
+   * shortcut: not one of the sample businesses has a Stripe account, because
+   * not one of them is a business. It is also the whole reason this fixture is
+   * worth having. The sample check and the payout check both match this row, so
+   * only their ORDER decides which sentence a customer is given — and a fixture
+   * that quietly handed the sample a payout account would pass either way round
+   * and pin nothing.
+   */
+  async function sampleSlot(): Promise<string> {
+    const n = now();
+    await env.DB.prepare(
+      `INSERT INTO operators (id,email,business_name,timezone,country,currency,language,
+         location_mode,fill_model,sms_mode,max_detour_seconds,min_gap_seconds,buffer_seconds,
+         offer_ttl_seconds,offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,
+         discount_percent,plan,accept_public_bookings,deposit_cents,created_at,updated_at,
+         stripe_payouts_enabled)
+       VALUES (?,?,?, 'America/Los_Angeles','US','USD','en','mobile','both','device',
+         3600,3600,900,5400,3,3600,604800,0,'active',1,1000,?,?,0)`,
+    ).bind(DEMO_OPERATOR_ID, 'demo@roundtheway.app',
+      'Valley Shine Mobile Detailing', n, n).run();
+
+    await env.DB.prepare(
+      `INSERT INTO services (id,operator_id,name,duration_seconds,price_cents,created_at,updated_at)
+       VALUES ('sample-detail',?,'Full detail',7200,18900,?,?)`,
+    ).bind(DEMO_OPERATOR_ID, n, n).run();
+
+    const id = newId();
+    await env.DB.prepare(
+      `INSERT INTO gaps (id,operator_id,starts_at,ends_at,prev_lat,prev_lng,next_lat,next_lng,
+         baseline_drive_seconds,is_mobile,status,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?,180,1,'open',?,?)`,
+    ).bind(id, DEMO_OPERATOR_ID, n + 4 * 3600, n + 9 * 3600,
+      PREV.lat, PREV.lng, NEXT.lat, NEXT.lng, n, n).run();
+    return id;
+  }
+
+  it('says a sample business is sample data, and says whose listing it is', async () => {
+    await seed();
+    const gapId = await sampleSlot();
+
+    const priced = await priceOrder(env, [
+      { gap_id: gapId, service_ids: ['sample-detail'] },
+    ]);
+
+    // NOT slot_gone, and that is the point of the whole branch. The opening is
+    // on the map the customer is looking at as they read the answer, so "no
+    // longer listed" was false where they were standing and sent them off to
+    // wait for a relisting that is never coming. Before anybody has signed up
+    // every opening on the map is one of these, so this was the answer to the
+    // commonest tap in the product.
+    const codes = priced.items[0]!.problems.map((p) => p.code);
+    expect(codes).toEqual(['sample_listing']);
+    expect(codes).not.toContain('slot_gone');
+
+    // The name is in the sentence because a refusal that does not say WHICH of
+    // the nine lines in a basket is the seeded one cannot be acted on.
+    expect(priced.items[0]!.problems[0]!.message)
+      .toContain('Valley Shine Mobile Detailing');
+    expect(priced.ok).toBe(false);
+
+    // And the checkout refuses with the same code rather than a 409: nothing
+    // raced and nothing changed underneath anybody — this was never for sale.
+    const refused = await placeOrder(env, {
+      ...BUYER, items: [{ gap_id: gapId, service_ids: ['sample-detail'] }],
+    }).catch((e: HttpError) => e);
+    expect(refused).toBeInstanceOf(Error);
+    expect((refused as HttpError).code).toBe('sample_listing');
+    expect((refused as HttpError).status).toBe(400);
+  });
+
+  it('tells a stranger nothing about a real business with no bank account', async () => {
+    const { detailerSlot } = await seed();
+    // A real operator whose Stripe account has gone bad. Same unbookable state
+    // as the sample above, and deliberately the opposite answer.
+    await env.DB.prepare(`UPDATE operators SET stripe_payouts_enabled = 0 WHERE id = ?`)
+      .bind(DETAILER).run();
+
+    const priced = await priceOrder(env, [
+      { gap_id: detailerSlot, service_ids: ['a-detail'] },
+    ]);
+
+    const problem = priced.items[0]!.problems[0]!;
+    expect(problem.code).toBe('slot_gone');
+    expect(problem.message).toBe('That opening is no longer listed.');
+
+    // THE VAGUE ANSWER IS THE KIND ONE, and it is checked rather than assumed.
+    // There is a person behind this business whose banking is nobody else's
+    // business, least of all a stranger's who tapped an opening. A later
+    // "helpful" rewrite of this branch — "this business cannot take payments
+    // yet" — would be the platform telling the public that somebody's bank
+    // arrangements have fallen over. See the comment on `unpayable` in
+    // src/lib/orders.ts.
+    expect(problem.message).not.toMatch(/payout|bank|stripe|account/i);
+    // Nor anywhere else in what the customer is handed back.
+    expect(JSON.stringify(priced)).not.toMatch(/payout|stripe/i);
+  });
 });

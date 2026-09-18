@@ -16,7 +16,12 @@
  * first thing a visitor loads.
  */
 
-.cat-page { max-width: 640px; }
+/* 900px, the same column /browse uses, since this page is now a grid of the
+   same picture tiles rather than a narrow column of names: at 640px the grid
+   only ever fits two of them. The prose in the head keeps its own measure. */
+/* Two classes, because `.main` in styles.css caps public pages at 720px with
+   one and would otherwise win. */
+.main.cat-page { max-width: 980px; }
 
 /* --------------------------------------------------------------------------
  * Breadcrumb
@@ -48,7 +53,48 @@
   margin-bottom: 6px;
 }
 
+/* THE CATEGORY'S OWN DRAWING, OVER ITS NAME.
+   The same picture as that category's tile on the front page, which is how
+   this page confirms to somebody who pressed that tile that they landed on the
+   thing they pressed.
+
+   Full width of the column, not the 320px badge it used to be. The tiles under
+   it are pictures the same width as this one, and a banner narrower than the
+   grid below it reads as something half-finished. 5:3 is the ratio it is drawn
+   in. The element carries its own width and height attributes, so the heading
+   under it does not move when the file lands. */
+.cat-banner {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* A BAND, NOT A POSTER. Full width at the 5:3 the file is drawn in makes a
+     540px-tall picture before the page has said what it is about; 3:1 crops
+     the same picture to a header strip, and the cap stops it growing with the
+     column on a wide screen. object-fit does the cropping, from the centre. */
+  aspect-ratio: 3 / 1;
+  max-height: 240px;
+  object-fit: cover;
+  margin: 0 auto 16px;
+  border-radius: 14px;
+}
+
 .cat-head h1 { font-size: 28px; line-height: 1.15; letter-spacing: -0.02em; }
+
+/* The counted line, between the name of the category and the instruction.
+
+   It reads as evidence rather than as a subtitle, so it takes the accent and
+   the tabular figures the rest of the site gives to counted facts, and it sits
+   above .cat-head-p because "13 open appointments in this category" is the
+   answer to the question somebody arrived with while "pick the job you need
+   doing" is the instruction they follow once they have it. */
+.cat-head-n {
+  margin: 7px 0 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--accent-ink);
+  font-variant-numeric: tabular-nums;
+}
 
 .cat-head-p { margin: 8px 0 0; font-size: 14px; color: var(--muted); }
 
@@ -76,7 +122,7 @@
 
 .cat-row:hover { background: var(--accent-soft); }
 
-/* The tint alone was the whole focus indicator, and #e8f7f0 against white is
+/* The tint alone was the whole focus indicator, and #E3EFFA against white is
    1.1:1 — a keyboard user tabbing down thirteen services could not see which
    one they were on. The tint stays, so focus and hover still look related;
    the ring is what actually says where you are. */
@@ -89,7 +135,33 @@
 /* Held down on a phone, where there is no hover to tell you the tap landed. */
 .cat-row:active { background: var(--accent-soft); }
 
+/* --- the trade's drawing, at the head of the row ------------------------
+   The same 75x45 slot /browse uses for the same rows, deliberately: a reader
+   coming down one level of the browse must not find the pictures a different
+   size. 5:3, the ratio the art is drawn in, so nothing is cropped. The 45px
+   picture sits inside the row's existing 56px floor, so the thumbnails did not
+   make these rows taller.
+
+   Width and height are on the element too (TileArt.tsx) and that is what
+   reserves the box before the file arrives; without it the rows grow as the
+   pictures land and the one being reached for moves. `flex: 0 0 auto` so a
+   narrow screen takes its space out of the name rather than turning the
+   picture into a sliver. */
+.cat-row-art {
+  flex: 0 0 auto;
+  width: 75px;
+  height: 45px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
 .cat-row-text { display: grid; gap: 3px; min-width: 0; }
+
+/* `.cat-row` is `space-between`, which with three children parks the picture
+   left, the text in the middle and the chevron right — leaving a gap between a
+   picture and the name it belongs to. Letting the text take the slack closes
+   it and leaves the chevron where it was. */
+.cat-row-art + .cat-row-text { flex: 1 1 auto; }
 
 .cat-row-name { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
 
@@ -100,27 +172,234 @@
 .cat-row-go { flex: 0 0 auto; font-size: 20px; color: var(--faint); }
 
 /* --------------------------------------------------------------------------
+ * The row
+ *
+ * A ROW THAT SCROLLS SIDEWAYS, NOT A GRID THAT WRAPS. One line of tiles per
+ * category, scrolled with a thumb or a trackpad, exactly as the reference
+ * marketplace does it: the tile on the right edge is deliberately half cut
+ * off, because a half tile is what tells somebody there is more of the row to
+ * the right. A wrapping grid says the opposite — that what you can see is all
+ * there is — and buries fifteen services in four rows of white space.
+ *
+ * Tiles are a FIXED WIDTH here rather than a fraction of the row, so the tile
+ * is the same size in a row of three and a row of fifteen, and the row is as
+ * long as the category is.
+ *
+ * `scroll-snap-type: x proximity` and not `mandatory`: proximity tidies up a
+ * scroll that stopped near a tile edge and leaves a deliberate half-scroll
+ * alone, where mandatory fights the thumb.
+ * ----------------------------------------------------------------------- */
+.cat-cards {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  /* Room under the tiles for the scrollbar a trackpad shows on hover, so it
+     never draws over the name on the bottom tile of a row. */
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+}
+
+.cat-cards li {
+  flex: 0 0 200px;
+  border-bottom: 0;
+  scroll-snap-align: start;
+}
+
+.cat-cards .cat-row {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 225 / 290;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+/* The picture fills the tile. `cover` does the cropping, from the centre, so a
+   square source loses a little off each side rather than being squashed into
+   the taller box. */
+.cat-cards .cat-row-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  object-fit: cover;
+  transition: transform 0.2s ease;
+}
+
+/* The name, across the foot of the picture. The gradient starts fully
+   transparent so most of the photograph is untouched, and the padding above
+   the text is what gives the darkest part of it room to fade in. */
+.cat-cards .cat-row-text {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: block;
+  padding: 44px 13px 12px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0.42) 42%, rgba(0, 0, 0, 0));
+  color: #fff;
+}
+
+.cat-cards .cat-row-name {
+  display: block;
+  color: #fff;
+  font-size: 15.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+/* A tile is a picture, so hover shows it a little closer rather than tinting a
+   panel that is no longer there. */
+.cat-cards .cat-row:hover { background: var(--surface-2); }
+.cat-cards .cat-row:hover .cat-row-art { transform: scale(1.05); }
+.cat-cards .cat-row:active { background: var(--surface-2); }
+
+.cat-cards .cat-row:focus-visible {
+  background: var(--surface-2);
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cat-cards .cat-row-art { transition: none; }
+  .cat-cards .cat-row:hover .cat-row-art { transform: none; }
+}
+
+/* Narrower tiles on a phone, sized so two sit on screen with the third
+   showing at the edge — the peek is what says the row scrolls. */
+@media (max-width: 560px) {
+  .cat-cards { gap: 10px; }
+  .cat-cards li { flex: 0 0 43%; }
+  .cat-cards .cat-row-text { padding: 36px 11px 11px; }
+  .cat-cards .cat-row-name { font-size: 14.5px; }
+}
+
+.cat-cards .cat-row-hint,
+.cat-cards .cat-row-go { display: none; }
+
+/* --------------------------------------------------------------------------
+ * The cost band
+ *
+ * One tile, so it cannot be mistaken for a fourteenth service: the rows above
+ * are flush to the column and separated by rules, and this is a bordered card
+ * with air around it. Same shape as the cost tile on the trade page, drawn
+ * here rather than borrowed from styles-trade.css for the reason given at the
+ * top of this file — a page that reads a class out of another page's
+ * stylesheet loses its styling the day the routes are split into chunks.
+ * ----------------------------------------------------------------------- */
+.cat-cross {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 26px 0 0;
+  padding: 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+  text-align: left;
+}
+
+.cat-cross:hover { color: inherit; border-color: var(--line-strong); }
+
+.cat-cross:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+.cat-cross-t { display: grid; gap: 3px; min-width: 0; }
+
+.cat-cross-t b { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
+
+.cat-cross-t span { font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+
+.cat-cross-go { flex: 0 0 auto; font-size: 20px; color: var(--faint); }
+
+/* --------------------------------------------------------------------------
  * The way across to geography
  *
- * One line, under the list and above the other categories, because that is the
- * order somebody exhausts their options in: the job I want, then the same jobs
- * somewhere else, then the wrong category. It is 48px tall for the same reason
- * the escape-hatch links below are.
+ * Under the list and above the other categories, because that is the order
+ * somebody exhausts their options in: the job I want, then the same jobs
+ * somewhere else, then the wrong category.
+ *
+ * Two columns of tiles rather than the column of rows above them, and the
+ * difference is doing work: these are eighteen place names being scanned for
+ * one the reader recognises, which the eye does across a grid, where the
+ * services above are thirteen sentences being read down. Tiles also stop the
+ * two lists reading as one long list of the same kind of thing.
  * ----------------------------------------------------------------------- */
-.cat-geo { margin: 18px 0 0; }
+.cat-geo-sec {
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+  margin-top: 28px;
+}
 
-.cat-geo a {
-  display: inline-flex;
-  align-items: center;
+.cat-geo-sec > h2 { margin: 0 0 8px; font-size: 16px; letter-spacing: -0.01em; }
+
+.cat-geo-sub {
+  margin: 0 0 14px;
+  max-width: 46em;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.cat-geo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+}
+
+/* 48px tall like every other escape hatch on this page: somebody reaching for
+   a neighbourhood is already unsure they are in the right place, and a fiddly
+   tap target is the last thing that person needs. */
+.cat-geo-list a {
+  display: grid;
+  gap: 2px;
+  align-content: center;
   min-height: 48px;
-  padding: 0 10px;
-  font-size: 15px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.cat-geo-list a:hover { border-color: var(--line-strong); color: var(--accent-ink); }
+
+.cat-geo-list a:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+.cat-geo-name { font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em; }
+
+.cat-geo-n {
+  font-size: 12.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cat-geo-foot { margin: 14px 0 0; font-size: 13.5px; }
+
+.cat-geo-foot a {
   color: var(--accent-ink);
-  text-decoration: underline;
   text-underline-offset: 3px;
 }
 
-.cat-geo a:hover { color: var(--accent); }
+.cat-geo-foot a:hover { color: var(--accent); }
 
 /* --------------------------------------------------------------------------
  * The other categories
@@ -183,4 +462,8 @@
   .cat-head h1 { font-size: 24px; }
   .cat-row { padding: 14px 8px; }
   .cat-row-name { font-size: 16px; }
+  /* Two per row rather than one at this width: the names are short and a
+     single column of eighteen tiles is a screen and a half of scrolling
+     between the services and the way back out. */
+  .cat-geo-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

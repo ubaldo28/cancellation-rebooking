@@ -153,6 +153,84 @@
 }
 
 /* ==========================================================================
+   The count and the sort, on one line above the cards
+   ========================================================================== */
+
+/*
+ * A row on a laptop and two lines on a phone, which is what `flex-wrap` buys.
+ * The count is a <p> and not an inline span for exactly that reason: wrapped,
+ * it has to take its own line rather than trail off the end of the control.
+ *
+ * `space-between` rather than a gap, so the sort sits at the right-hand edge
+ * of the grid it governs. That alignment is the only thing on the page saying
+ * WHICH list the control belongs to — there are two lists here — and it stops
+ * saying it the moment the pair is centred or left-packed.
+ */
+.sr-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin: 0 0 12px;
+}
+
+.sr-count {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/*
+ * The word and the control are one <label>, so "Sort" names the select rather
+ * than floating beside it. In a row rather than stacked: a label above a 44px
+ * select doubles the height of a bar that is otherwise one line of text.
+ */
+.sr-sort {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/*
+ * styles.css gives every select the full-width 48px form treatment, which is
+ * right inside a form and much too heavy on a results bar. This one shrinks to
+ * its content and keeps a 40px target: comfortably above the minimum, and
+ * still small enough not to read as the main thing to press on the page, which
+ * it very much is not.
+ */
+.sr-sort select {
+  width: auto;
+  min-height: 40px;
+  padding: 6px 30px 6px 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/*
+ * Drawn only while a non-default sort is on. Muted body colour and not the
+ * alert palette: nothing has gone wrong, the page is doing something other
+ * than its default and is saying so.
+ */
+.sr-sorted {
+  margin: -4px 0 12px;
+  max-width: 60ch;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* It is in the document on every render so that it can be announced when it
+   fills — see the note over it in Search.tsx — and an empty live region must
+   not open a gap above the grid while it waits. */
+.sr-sorted:empty { display: none; }
+
+/* ==========================================================================
    Nothing matched, and nothing was typed
    ========================================================================== */
 
@@ -164,6 +242,14 @@
  * one of these people made a search that failed and the other has not searched
  * yet, and telling the second one that their search found nothing would be a
  * lie about something they did not do.
+ *
+ * THEY ARE ALSO THE MOST-READ SCREENS ON THE PAGE. Nothing has launched, so a
+ * search finding nothing is the ordinary outcome. That is why the two answers
+ * below are panels with headings and a sentence each rather than a row of
+ * buttons: they are not the same kind of thing — one is an act you finish now,
+ * the other is something you set up and walk away from — and two equal buttons
+ * under one paragraph says they are, which leaves the reader choosing between
+ * two words instead of between two ideas.
  */
 .sr-none { padding: 26px 0 8px; }
 
@@ -197,6 +283,143 @@
   gap: 10px;
 }
 
+/* ==========================================================================
+   The two doors
+   ========================================================================== */
+
+/*
+ * Side by side from 640px and stacked below it. `1fr 1fr` and not `auto auto`:
+ * the two panels hold different amounts of text and unequal columns would make
+ * the shorter one read as the lesser option, when the whole point is that they
+ * are two equally real answers to the same dead end.
+ *
+ * Which one comes first is a decision and not an accident. Widening is put on
+ * the left because it is the one that can still work today; the alert is the
+ * answer for somebody who has accepted that today is not going to work. Read
+ * in the other order, the page gives up on the visitor's behalf before they
+ * have tried the cheap thing.
+ */
+.sr-doors {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  margin: 0 0 22px;
+}
+
+@media (min-width: 640px) {
+  .sr-doors { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/*
+ * A solid hairline box and not the dashed `.blank` treatment. Dashed is this
+ * site's mark for a space where something is missing — the card seam on the
+ * account page uses it — and these are not missing anything. They are the two
+ * things there are to do.
+ */
+.sr-door {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.sr-door h2,
+.sr-door h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  /* Reset: `.sr-h2` above is the small grey label used for section headings,
+     and these are ordinary headings inside a panel. */
+  text-transform: none;
+  color: var(--ink);
+}
+
+.sr-door p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.sr-door .sug { margin-top: 2px; }
+
+/* The chips here are links rather than buttons, and styles.css only removes
+   underlines — it does not stop an anchor pill sitting a pixel off the
+   baseline of the row it is in. */
+.sr-door .sug-chip {
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.sr-widen-lede,
+.sr-door-note {
+  font-size: 13px !important;
+  color: var(--muted) !important;
+}
+
+/* ==========================================================================
+   The query, back in a box
+   ========================================================================== */
+
+/*
+ * Field and button on one line, the field taking whatever is left. It wraps
+ * rather than shrinking below a usable width: at 320px a 90px button beside an
+ * input leaves about fourteen characters of query visible, which is not enough
+ * to edit the thing you are here to edit.
+ */
+.sr-refine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  width: 100%;
+  margin: 2px 0;
+}
+
+.sr-refine .grow { flex: 1 1 12rem; }
+.sr-refine .btn { flex: 0 0 auto; }
+
+/* The chrome the browser adds to a type="search" field — a clear cross that
+   sits on top of our own border in Safari — undone, so the box matches every
+   other input on the site. */
+.sr-refine input::-webkit-search-decoration,
+.sr-refine input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* ==========================================================================
+   The quiet offer at the foot of a list
+   ========================================================================== */
+
+/*
+ * The same alert, offered to somebody who has just read a full page of results
+ * and not found the hour they wanted. It is a sentence rather than a panel on
+ * purpose: this reader is not stuck, and interrupting a successful page with
+ * the empty state's furniture would tell them that they are.
+ */
+.sr-quiet {
+  margin: 22px 0 0;
+  max-width: 62ch;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* Every link here sits inside a sentence, and --accent-ink against this grey
+   is nowhere near the 3:1 WCAG 1.4.1 wants between a link and its surrounding
+   text. Colour alone is therefore not a signal; the underline is. */
+.sr-quiet a,
+.sr-door p a {
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
 @media (max-width: 420px) {
   .sr-head h1, .sr-blank h1 { font-size: 22px; }
   .sr-trade { padding: 12px 8px; }
@@ -205,4 +428,6 @@
      row, so it drops under the name instead and the row stays scannable. */
   .sr-trade { flex-wrap: wrap; }
   .sr-trade-n { margin-left: auto; }
+  /* The button goes full width under the field rather than squeezing it. */
+  .sr-refine .btn { flex: 1 1 100%; }
 }

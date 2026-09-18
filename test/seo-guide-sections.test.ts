@@ -41,14 +41,18 @@ async function addOperator(opts: {
 }) {
   const n = t();
   await env.DB.prepare(
+    // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+    // must have somewhere to be paid before its work can be sold, so slotsNear
+    // leaves an opening for an operator without it off the public list. Drop it
+    // and every page built here renders as "nothing open".
     `INSERT INTO operators (id,email,business_name,trade,timezone,country,currency,language,
        location_mode,fill_model,sms_mode,max_detour_seconds,min_gap_seconds,buffer_seconds,
        offer_ttl_seconds,offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,
        discount_percent,plan,accept_public_bookings,deposit_cents,
        profile_slug,is_published,tagline,hired_count,employees,years_in_business,
-       created_at,updated_at)
+       created_at,updated_at,stripe_payouts_enabled)
      VALUES (?,?,?,?, 'America/Los_Angeles','US','USD','en','mobile','both','device',
-       900,3600,900,5400,3,3600,604800,0,'active',1,1000,NULL,0,NULL,7,2,4,?,?)`,
+       900,3600,900,5400,3,3600,604800,0,'active',1,1000,NULL,0,NULL,7,2,4,?,?,1)`,
   ).bind(opts.id, `${opts.id}@x.com`, opts.name, opts.trade, n, n).run();
 
   await env.DB.prepare(
@@ -128,7 +132,9 @@ describe('the trade page’s onward blocks', () => {
     const page = flat((await tradePage(env, DETAILING))!);
     expect(page).toContain('Most appointments open right now');
     expect(page).toContain('not a measure of what is popular');
-    expect(page).toContain('href="/s/mobile%20oil%20change%20and%20mechanics"');
+    // Hyphens rather than %20: the canonical spelling of a /s/ URL moved to
+    // the readable form the /near pages have always used.
+    expect(page).toContain('href="/s/mobile-oil-change-and-mechanics"');
     for (const word of ['Trending', 'trending', 'Popular services', 'most booked']) {
       expect(page).not.toContain(word);
     }
@@ -178,7 +184,7 @@ describe('the cost guide’s new sections', () => {
 
   it('tells somebody how to hire without vouching for anybody', async () => {
     const page = flat((await costGuidePage(env, DETAILING))!);
-    expect(page).toContain('How to hire car wash and detailing on Slotfill');
+    expect(page).toContain('How to hire car wash and detailing on Round The Way');
     expect(page).toContain("Nothing on a business's page is verified by us");
     for (const claim of ['vetted', 'screened', 'guaranteed', 'trusted pros']) {
       expect(page).not.toContain(claim);
@@ -189,7 +195,7 @@ describe('the cost guide’s new sections', () => {
     async () => {
       const page = flat((await costGuidePage(env, DETAILING))!);
       expect(page).toContain('Find car wash and detailing near you');
-      expect(page).toContain('href="/s/mobile%20car%20wash%20and%20detailing"');
+      expect(page).toContain('href="/s/mobile-car-wash-and-detailing"');
       expect(page).toContain('href="/near/sherman-oaks/mobile-car-wash-and-detailing"');
       expect(page).toContain('href="/near/encino/mobile-car-wash-and-detailing"');
       // Two openings in Sherman Oaks, one in Encino — counted, not written.

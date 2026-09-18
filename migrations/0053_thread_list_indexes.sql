@@ -1,0 +1,116 @@
+-- Finding one conversation among hundreds, on both sides of the market.
+--
+-- The owner's description of what this is for: "business will have more
+-- messages by customers asking questions. but also customers will be
+-- messaging multiple [businesses]. so we need to figure this out."
+--
+-- NO COLUMNS. This migration adds two partial indexes and nothing else, which
+-- is deliberate: the columns the new lists read -- operator_unread,
+-- guest_unread, status, appointment_id, customer_account_id -- have all
+-- existed since 0011 or 0052. What was missing was never a place to put
+-- information, it was a way to read it that does not get slower every time
+-- somebody sends a message.
+--
+-- ---------------------------------------------------------------------------
+-- WHAT THE QUERIES WERE, AND WHY THEY STOPPED BEING FREE
+-- ---------------------------------------------------------------------------
+-- Both conversation lists used to be one statement each:
+--
+--   WHERE operator_id = ?          ORDER BY last_message_at DESC LIMIT 50
+--   WHERE customer_account_id = ?  ORDER BY last_message_at DESC LIMIT 50
+--
+-- Those are perfect index seeks against idx_threads_operator (0011) and
+-- idx_threads_account (0052), and they stay perfect. Nothing about them is
+-- being replaced.
+--
+-- What is new is that both lists now put the conversations UNREAD BY THE
+-- READER at the top, ahead of the ones already dealt with, because ordering by
+-- recency alone is what let an unanswered customer question sink one place for
+-- every other conversation that got a message -- until it was on a page nobody
+-- opens. See pageOfThreads in src/lib/chat.ts for the full argument.
+--
+-- That ordering is read as two segments, each with the unread condition
+-- spelled out in the WHERE clause:
+--
+--   WHERE operator_id = ? AND operator_unread > 0  ORDER BY last_message_at DESC
+--   WHERE operator_id = ? AND operator_unread = 0  ORDER BY last_message_at DESC
+--
+-- The second of those is served fine by idx_threads_operator: it walks that
+-- operator's range in the right order and skips the handful of unread rows on
+-- the way, which costs almost nothing because almost every conversation a
+-- business has is one it has already read.
+--
+-- The FIRST is the one that needed help, and it is the one that runs on every
+-- poll. Without an index it reads every index entry that operator has, fetches
+-- every row to look at operator_unread, and throws away all but the few that
+-- are unread. On a business with two thousand conversations and three
+-- unanswered questions that is two thousand row lookups to find three, every
+-- fifteen seconds, on the one screen where a missed question costs the job.
+-- The same read also backs the unread badge (unreadThreadCount), so the cost
+-- was being paid twice per poll.
+--
+-- ---------------------------------------------------------------------------
+-- WHY PARTIAL, AND WHY NOT JUST ADD THE COLUMN TO THE EXISTING INDEX
+-- ---------------------------------------------------------------------------
+-- The obvious alternative is to widen idx_threads_operator to
+-- (operator_id, operator_unread, last_message_at DESC). That is rejected for
+-- two reasons.
+--
+-- It would not serve the ordering. With operator_unread in the middle the
+-- index is ordered by the COUNT of unread messages, not by "any or none", so a
+-- thread with one unread message and one with four sit in different places and
+-- neither range is "the unread ones, most recent first". The query would still
+-- sort.
+--
+-- And it would cost the common case to help the rare one. Every conversation
+-- a business has would carry the extra key, on a table that will be the
+-- biggest in this schema after chat_messages, so that an index could answer a
+-- question about the one or two per cent of rows that are unread at any moment.
+--
+-- A partial index is the right shape precisely because the interesting rows
+-- are a tiny and self-cleaning subset: a row enters the index when a message
+-- arrives and leaves it the moment the other side reads the conversation, so
+-- the index stays roughly "the current inbox" in size rather than growing with
+-- history. It is also cheap to maintain for the same reason -- the writes that
+-- touch it are the ones that were already updating the row.
+--
+-- 0045 removed redundant indexes from this schema, so it is worth saying that
+-- neither of these is redundant with the two they sit beside: an index over
+-- 2% of a table cannot be derived from one over all of it, and the queries
+-- above cannot use the full ones for the unread segment at all.
+--
+-- ---------------------------------------------------------------------------
+-- WHY `id` IS THE LAST KEY
+-- ---------------------------------------------------------------------------
+-- Both lists are paged with a keyset cursor, and the cursor's tie-break is
+-- `id` because last_message_at has one-second resolution and two conversations
+-- can easily share a second -- one operator answering two people, one batch
+-- writing into two threads. The ORDER BY is therefore
+-- `last_message_at DESC, id DESC`, and putting id in the index means the
+-- unread segment is satisfied entirely by the index with no sort step at all,
+-- which is the whole point of reading it as its own segment.
+--
+-- idx_threads_operator and idx_threads_account are deliberately NOT rebuilt to
+-- add it. They already order by last_message_at, SQLite sorts only within
+-- groups of rows sharing a second, and those groups are almost always one row
+-- -- so the gain would be nil and the cost is a rebuild of two indexes on the
+-- biggest table in the schema on a live database.
+
+-- The operator's unanswered questions: theirs, most recent first.
+--
+-- operator_id leads because it is the tenant boundary and no query against
+-- this table is ever allowed to omit it -- the same sentence 0011 wrote above
+-- idx_threads_operator, and it is no less true of an index that only holds
+-- part of the table.
+CREATE INDEX idx_threads_operator_waiting
+  ON threads (operator_id, last_message_at DESC, id DESC)
+  WHERE operator_unread > 0;
+
+-- The customer's side of the same thing: the businesses that have replied to
+-- them and not yet been read. Drives both the ordering of /account's
+-- conversation list and its unread total, which is a badge that did not exist
+-- before -- a customer with five trades out had no way to tell which of the
+-- five had answered without opening all five.
+CREATE INDEX idx_threads_account_waiting
+  ON threads (customer_account_id, last_message_at DESC, id DESC)
+  WHERE guest_unread > 0;

@@ -1,7 +1,7 @@
 import type { Env } from '../types';
 import { notify } from './feed';
-import { maskPhone } from './redact';
-import { badRequest, conflict, newId, notFound, now } from './util';
+import { maskEmail, maskPhone } from './redact';
+import { DAY, badRequest, conflict, newId, notFound, now } from './util';
 
 /**
  * No-shows, suspensions, and whether somebody is allowed to transact.
@@ -27,8 +27,6 @@ import { badRequest, conflict, newId, notFound, now } from './util';
 /** Days of suspension per strike. Past the end of this list, it is a ban. */
 export const STRIKE_DAYS = [3, 7, 30] as const;
 
-const DAY = 86_400;
-
 export type Subject = 'operator' | 'customer';
 
 export interface Standing {
@@ -52,7 +50,7 @@ function describe(kind: Subject, until: number | null, banned: number | null): s
     return kind === 'operator'
       ? 'This account is closed to new bookings after repeated no-shows. '
         + 'Reply to any email from us if you think that is wrong.'
-      : 'This number cannot book here after repeated no-shows.';
+      : 'This account cannot book here after repeated no-shows.';
   }
   if (!until || until <= now()) return null;
 
@@ -62,7 +60,27 @@ function describe(kind: Subject, until: number | null, banned: number | null): s
   return kind === 'operator'
     ? `Your openings are paused after a missed appointment. They go back up ${left}. `
       + 'Anything already booked is unaffected — those customers still get their appointment.'
-    : `This number cannot book new appointments after a missed one. That lifts ${left}.`;
+    : `This account cannot book new appointments after a missed one. That lifts ${left}.`;
+}
+
+/**
+ * What a customer is told when it is their own BUSINESS that is suspended.
+ *
+ * Separate wording rather than the sentence above, because being told "this
+ * account cannot book" while the account looks spotless is a support ticket
+ * that nobody can answer from the screen in front of them. Naming the business
+ * account says where to look and, for a suspension, when it lifts.
+ */
+function describeLinkedBusiness(until: number | null, banned: number | null): string {
+  if (banned) {
+    return 'This account cannot book here because the business account on the '
+      + 'same email address is closed to new bookings after repeated no-shows. '
+      + 'Reply to any email from us if you think that is wrong.';
+  }
+  const days = Math.max(1, Math.ceil(((until ?? now()) - now()) / DAY));
+  const left = days === 1 ? 'tomorrow' : `in ${days} days`;
+  return 'This account cannot book new appointments while the business account '
+    + `on the same email address is suspended. That lifts ${left}.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,26 +128,123 @@ export async function operatorStanding(env: Env, operatorId: string): Promise<St
  *
  * The old limitation is genuinely narrower now rather than gone: a new SIM is
  * still a clean record, and it costs whoever wants one a new SIM.
+ *
+ * A SUSPENDED BUSINESS IS ALSO A SUSPENDED CUSTOMER, since migration 0042. A
+ * business may open the customer side of the product and book other trades, and
+ * if a sanction stopped at that boundary then stepping across it would be the
+ * way out of every suspension this product issues: struck off as a business on
+ * Monday, booking as a customer on Monday afternoon. So the business's own
+ * suspension is read through customer_accounts.operator_id and applied here as
+ * well. Nothing writes anything: this is the one row's sanction being seen from
+ * the other row, which is also why it lifts on the business side only.
  */
-export async function customerStanding(env: Env, phone: string): Promise<Standing> {
+export async function customerStanding(env: Env, loginEmail: string): Promise<Standing> {
+  const id = (loginEmail ?? '').trim().toLowerCase();
   const row = await env.DB.prepare(
     `SELECT no_show_strikes, suspended_until, banned_at
-       FROM customer_standing WHERE phone_e164 = ?`,
-  ).bind(phone).first<{
+       FROM customer_standing WHERE login_email = ?`,
+  ).bind(id).first<{
     no_show_strikes: number; suspended_until: number | null; banned_at: number | null;
   }>();
 
-  const until = row?.suspended_until ?? null;
-  const banned = row?.banned_at ?? null;
+  // The business behind this mailbox, if there is one. Almost every customer
+  // has none, so this is one indexed lookup that finds nothing.
+  const business = id ? await env.DB.prepare(
+    `SELECT o.suspended_until, o.banned_at
+       FROM customer_accounts a JOIN operators o ON o.id = a.operator_id
+      WHERE a.login_email = ? AND a.closed_at IS NULL`,
+  ).bind(id).first<{ suspended_until: number | null; banned_at: number | null }>() : null;
+
+  const ownUntil = row?.suspended_until ?? null;
+  const ownBanned = row?.banned_at ?? null;
+  const businessUntil = business?.suspended_until ?? null;
+  const businessBanned = business?.banned_at ?? null;
+  const businessBlocks =
+    !!businessBanned || (!!businessUntil && businessUntil > now());
+
+  // WHICHEVER SANCTION IS HEAVIER, never the newer one and never the shorter
+  // one -- the same rule confirmNoShow applies when two rungs land on one
+  // account. A three-day suspension on the business must not be able to cut
+  // short a thirty-day one this mailbox is already serving as a customer.
+  const until = businessBlocks && (businessUntil ?? 0) > (ownUntil ?? 0)
+    ? businessUntil : ownUntil;
+  const banned = ownBanned ?? businessBanned;
+
+  // Which of the two the sentence should be about: the business, when it is the
+  // heavier of the two, and their own record whenever that alone would stop
+  // them anyway. Somebody banned in their own right is not told to go and look
+  // at their business account, because fixing that would change nothing.
+  const businessIsWhatBlocks = businessBlocks && !ownBanned
+    && (!!businessBanned || (businessUntil ?? 0) >= (ownUntil ?? 0));
+
   return {
     kind: 'customer',
-    id: phone,
+    id,
+    // THE CUSTOMER'S OWN COUNT, and deliberately not a sum of the two. This is
+    // what confirmNoShow reads to work out what the next strike costs, so
+    // folding the business's strikes in would have a customer's first no-show
+    // priced as their fourth.
     no_show_strikes: row?.no_show_strikes ?? 0,
     suspended_until: until,
     banned_at: banned,
     blocked: !!banned || (!!until && until > now()),
-    message: describe('customer', until, banned),
+    message: businessIsWhatBlocks
+      ? describeLinkedBusiness(until, banned)
+      : describe('customer', until, banned),
   };
+}
+
+/**
+ * The standing of an address the CALLER HAS PROVED THEY OWN, and nobody else's.
+ *
+ * WHY THIS EXISTS AT ALL. `GET /api/public/standing?email=` is anonymous. It
+ * took any address anybody cared to type and answered `blocked` with a sentence
+ * saying why, behind nothing but 30 requests per five minutes per IP. A list of
+ * addresses and an afternoon therefore turns it into "which of these named
+ * people has been reported for not being in when a tradesperson came" — a fact
+ * about them, not about us, published by a site whose section 8 says there is
+ * no profile and no inference here. The sign-in route two hundred lines away
+ * deliberately answers identically whether or not an account exists; this one
+ * was answering the harder question for free.
+ *
+ * THE RULE: an unproved address gets the same answer a clean one gets, which is
+ * the only answer that leaks nothing. `proved` is the address on the caller's
+ * own signed-in customer session — a value the Worker read out of a session
+ * row, never out of a query string or a body — so the endpoint keeps working
+ * for the one person it was built for, the customer looking at their own
+ * checkout, and stops working as a lookup on everybody else.
+ *
+ * It is written as a separate export rather than as a flag on customerStanding
+ * because the internal callers -- the checkout, createInstantRequest,
+ * confirmNoShow -- are asking about a subject they have already established,
+ * and a boolean they all have to pass correctly is a boolean somebody
+ * eventually passes wrong. Here there is nothing to get wrong: the caller
+ * cannot answer for an address it cannot produce proof of.
+ */
+export async function provedCustomerStanding(
+  env: Env, asked: string | null | undefined, proved: string | null | undefined,
+): Promise<Standing> {
+  const want = (asked ?? '').trim().toLowerCase();
+  const have = (proved ?? '').trim().toLowerCase();
+
+  if (!want || !have || want !== have) {
+    // Not an error, and deliberately not a different shape of answer either. A
+    // 401 here would still separate "this address is under a sanction" from
+    // "this address is not", because the prober would learn which addresses are
+    // worth signing in to ask about. Clear is what an address we will not
+    // answer for looks like.
+    return {
+      kind: 'customer',
+      id: want,
+      no_show_strikes: 0,
+      suspended_until: null,
+      banned_at: null,
+      blocked: false,
+      message: null,
+    };
+  }
+
+  return customerStanding(env, have);
 }
 
 // ---------------------------------------------------------------------------
@@ -161,12 +276,13 @@ export async function reportNoShow(
   }
 
   const item = await env.DB.prepare(
-    `SELECT oi.id, oi.operator_id, oi.starts_at, oi.ends_at, oi.cancelled_at, o.phone_e164
+    `SELECT oi.id, oi.operator_id, oi.starts_at, oi.ends_at, oi.cancelled_at,
+            o.phone_e164, o.login_email
        FROM order_items oi JOIN orders o ON o.id = oi.order_id
       WHERE oi.id = ?`,
   ).bind(itemId).first<{
     id: string; operator_id: string; starts_at: number; ends_at: number;
-    cancelled_at: number | null; phone_e164: string | null;
+    cancelled_at: number | null; phone_e164: string | null; login_email: string | null;
   }>();
   if (!item) throw notFound('No such booking.');
 
@@ -183,11 +299,15 @@ export async function reportNoShow(
   const id = newId();
   const t = now();
   try {
+    // BOTH ARE COPIED ONTO THE REPORT, and they are not the same job. The
+    // number is what the operator saw on the booking and is what makes a
+    // decided report legible months later; login_email is what the LADDER
+    // counts on, because it is the only one of the two anybody has proved.
     await env.DB.prepare(
       `INSERT INTO no_show_reports (id, order_item_id, against, operator_id, phone_e164,
-         note, status, decided_at, strike_number, created_at, updated_at)
-       VALUES (?,?,?,?,?,?, 'open', NULL, NULL, ?,?)`,
-    ).bind(id, itemId, against, item.operator_id, item.phone_e164,
+         login_email, note, status, decided_at, strike_number, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?, 'open', NULL, NULL, ?,?)`,
+    ).bind(id, itemId, against, item.operator_id, item.phone_e164, item.login_email,
       (input.note ?? '').trim().slice(0, 500) || null, t, t).run();
   } catch (e) {
     if (String(e).includes('UNIQUE')) {
@@ -234,11 +354,12 @@ export async function confirmNoShow(
 ): Promise<Applied> {
   const t = now();
   const report = await env.DB.prepare(
-    `SELECT id, order_item_id, against, operator_id, phone_e164, status
+    `SELECT id, order_item_id, against, operator_id, phone_e164, login_email, status
        FROM no_show_reports WHERE id = ?`,
   ).bind(reportId).first<{
     id: string; order_item_id: string; against: Subject;
-    operator_id: string; phone_e164: string | null; status: string;
+    operator_id: string; phone_e164: string | null; login_email: string | null;
+    status: string;
   }>();
   if (!report) throw notFound('No such report.');
   if (report.status !== 'open') {
@@ -246,7 +367,7 @@ export async function confirmNoShow(
   }
 
   const kind = report.against;
-  const subjectId = kind === 'operator' ? report.operator_id : (report.phone_e164 ?? '');
+  const subjectId = kind === 'operator' ? report.operator_id : (report.login_email ?? '');
   if (!subjectId) {
     throw badRequest('That report has nobody to apply to.', 'no_subject');
   }
@@ -303,9 +424,9 @@ export async function confirmNoShow(
     // used the site for no reason.
     writes.push(env.DB.prepare(
       `INSERT INTO customer_standing
-         (phone_e164, no_show_strikes, suspended_until, banned_at, created_at, updated_at)
+         (login_email, no_show_strikes, suspended_until, banned_at, created_at, updated_at)
        VALUES (?,?,?,?,?,?)
-       ON CONFLICT(phone_e164) DO UPDATE SET
+       ON CONFLICT(login_email) DO UPDATE SET
          no_show_strikes = MAX(customer_standing.no_show_strikes, ?),
          suspended_until = NULLIF(MAX(COALESCE(customer_standing.suspended_until, 0),
                                       COALESCE(?, 0)), 0),
@@ -360,14 +481,24 @@ export async function rejectNoShow(
  * has happened before; that last one is what the number was standing in for,
  * so it is answered directly instead.
  *
+ * AND THE MAILBOX, WHICH IS NOW THE IDENTITY. `SELECT r.*` picks up every
+ * column on the table, and since migration 0038 that includes `login_email` —
+ * the address a customer proved, which is what ties their bookings together
+ * across every business on the site. Masking the number and serving the
+ * address beside it left the screen exactly as revealing as it was before the
+ * number was masked, only about a different column: a queue of every reported
+ * customer's mailbox. The ladder is counted on `login_email` inside
+ * confirmNoShow, which reads the report row itself, so nothing here needs the
+ * real value.
+ *
  * Applying the strike does not go through this payload: confirmNoShow reads
- * the report row itself, where the number still is.
+ * the report row itself, where both still are.
  */
 export async function openReports(env: Env, limit = 100) {
   const rows = await env.DB.prepare(
     `SELECT r.*, oi.starts_at, oi.ends_at, oi.arrived_at, o.guest_name, op.business_name,
             (SELECT cs.no_show_strikes FROM customer_standing cs
-              WHERE cs.phone_e164 = r.phone_e164) AS customer_strikes
+              WHERE cs.login_email = r.login_email) AS customer_strikes
        FROM no_show_reports r
        LEFT JOIN order_items oi ON oi.id = r.order_item_id
        LEFT JOIN orders o ON o.id = oi.order_id
@@ -380,6 +511,7 @@ export async function openReports(env: Env, limit = 100) {
   return (rows.results ?? []).map((r) => ({
     ...r,
     phone_e164: maskPhone(r.phone_e164 as string | null),
+    login_email: maskEmail(r.login_email as string | null),
     customer_strikes: (r.customer_strikes as number | null) ?? 0,
   }));
 }
@@ -412,13 +544,40 @@ export const NEEDS_LOCATION_OPERATOR =
   + 'honest cancellation from a job done off the books, so we cannot list you.';
 
 /** A customer is opening their door to a stranger; they get to know the van. */
+/**
+ * The sentence an operator sees when they have no way to be paid.
+ *
+ * THIS IS A HARD GATE AND IT HAS TO BE. Every booking on this site is paid for
+ * up front, by card, and the business's share is transferred to their own
+ * account afterwards. A business with no account to transfer to can still be
+ * BOOKED — and then the money sits in the platform's balance with nowhere to
+ * go, the customer has paid for work the business is owed for, and nothing in
+ * the product resolves it until somebody happens to open a settings page.
+ *
+ * Blocking the listing removes that state entirely. There is no held money
+ * because there is no booking, and the operator finds out at the only moment
+ * it is cheap to find out: before anybody has paid them.
+ */
+export const NEEDS_PAYOUTS_OPERATOR =
+  'Add a bank account before your openings go up. Customers pay on the site '
+  + 'and your share is sent straight to you, so there has to be somewhere to '
+  + 'send it. Our payment processor takes the details directly — we never see '
+  + 'them — and it takes a couple of minutes.';
+
 export const NEEDS_VEHICLE_OPERATOR =
   'Add your vehicle before your openings go up — make, colour and plate. It is '
   + 'what a customer checks before they open the door to somebody they have '
   + 'never met, and it takes about twenty seconds.';
 
 /**
- * The sentence an operator sees when they have not added a card.
+ * The sentence inviting an operator to add a card.
+ *
+ * AN INVITATION, NOT A GATE. This used to be NEEDS_CARD_OPERATOR and it used
+ * to be the first refusal in listingBlock, which meant a self-employed person
+ * had to hand over a payment instrument before earning a penny, against a late
+ * cancellation they had not made. That is the step people leave at. What a
+ * business genuinely must have is somewhere to be PAID, and that gate is still
+ * there.
  *
  * Every amount in it is the ladder leadFeeCents() computes and none of it can
  * move a penny today, so it is written as the design rather than as something
@@ -426,13 +585,14 @@ export const NEEDS_VEHICLE_OPERATOR =
  * Stating the rules at all is still right: somebody is being asked for a card
  * and is entitled to know what it is for before they hand one over.
  */
-export const NEEDS_CARD_OPERATOR =
-  'Add a card before your openings go up. Nothing is charged to it, and no '
-  + 'money moves through Slotfill yet. It is there for one thing, once payment '
-  + 'is switched on: cancelling a job late. Inside 48 hours that will be a '
-  + 'quarter of the job, inside 12 hours three quarters, and the whole job '
-  + 'once you have said you arrived — the same amounts the customer forfeits '
-  + 'if they are the one who cancels. More than 48 hours out costs nothing.';
+export const CARD_INVITE_OPERATOR =
+  'Adding a card is optional, and it does not hold up your openings — a bank '
+  + 'account is the only thing that does. Nothing is charged to it for using '
+  + 'the site. It is there for one thing: cancelling a job late. Inside 48 '
+  + 'hours that costs a quarter of the job, inside 12 hours three quarters, '
+  + 'and the whole job once you have said you arrived — the same amounts the '
+  + 'customer forfeits if they are the one who cancels. More than 48 hours out '
+  + 'costs nothing.';
 
 /**
  * Records the processor's reference to a card. Never the card.

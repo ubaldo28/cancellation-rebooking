@@ -24,7 +24,7 @@
 -- 2. ESTIMATES IN THE CHAT. A customer who wants something that is not on the
 --    price list, or wants it a week on Tuesday, had nowhere to ask. They can
 --    now ask in the conversation they already have, and the business answers
---    with a price and a time. Accepting turns it into an ordinary Slotfill
+--    with a price and a time. Accepting turns it into an ordinary Roundtheway
 --    booking -- paid up front, start code, photos, settlement, all of it.
 --    This is not a different business model bolted on; it is the front door
 --    to the same one.

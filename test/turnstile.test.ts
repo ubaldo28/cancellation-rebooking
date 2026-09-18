@@ -92,13 +92,18 @@ const HERE = { lat: 34.1510, lng: -118.4450 };
 
 async function seed() {
   const t = now();
+  // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+  // must have somewhere to be paid before its work can be sold, so priceOrder
+  // treats an opening for an operator without it as unlisted. Drop it and every
+  // booking below is refused as slot_gone before Turnstile is ever consulted.
   await env.DB.prepare(
     `INSERT INTO operators (id,email,business_name,timezone,country,currency,language,
        location_mode,fill_model,sms_mode,max_detour_seconds,min_gap_seconds,buffer_seconds,
        offer_ttl_seconds,offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,
-       discount_percent,plan,accept_public_bookings,created_at,updated_at)
+       discount_percent,plan,accept_public_bookings,created_at,updated_at,
+       stripe_payouts_enabled)
      VALUES (?,?,?, 'America/Los_Angeles','US','USD','en','mobile','both','device',
-       3600,3600,900,5400,3,3600,604800,0,'active',1,?,?)`,
+       3600,3600,900,5400,3,3600,604800,0,'active',1,?,?,1)`,
   ).bind(OP, 'turnstile@example.com', 'Valley Detailing', t, t).run();
 
   await env.DB.prepare(
@@ -139,7 +144,7 @@ describe('with no secret set, nothing about these endpoints has changed', () => 
     // and this file is about the challenge rather than about the account. The
     // sign-in happens with the challenge switched off and makes no siteverify
     // call, so `calls` still counts only what the booking itself asked for.
-    const me = await signInCustomer(env, '(818) 555-0142');
+    const me = await signInCustomer(env, 'rosa@mailbox.test');
     const res = await call('POST', '/api/public/orders', {
       ip: '203.0.113.10', cookie: me.cookie, body: orderBody(gapId),
     });
@@ -172,7 +177,7 @@ describe('with no secret set, nothing about these endpoints has changed', () => 
     // A bundle built with a site key against a Worker whose secret has not
     // been set yet. The token is meaningless here and must not become an error.
     const { gapId } = await seed();
-    const me = await signInCustomer(env, '(818) 555-0142');
+    const me = await signInCustomer(env, 'rosa@mailbox.test');
     const res = await call('POST', '/api/public/orders', {
       ip: '203.0.113.13', cookie: me.cookie,
       body: orderBody(gapId, { turnstile_token: 'whatever' }),
@@ -183,7 +188,7 @@ describe('with no secret set, nothing about these endpoints has changed', () => 
 
   it('is off for an empty or whitespace secret, not just an absent one', async () => {
     const { gapId } = await seed();
-    const me = await signInCustomer(env, '(818) 555-0142');
+    const me = await signInCustomer(env, 'rosa@mailbox.test');
     env.TURNSTILE_SECRET = '   ';
     const res = await call('POST', '/api/public/orders', {
       ip: '203.0.113.14', cookie: me.cookie, body: orderBody(gapId),
@@ -270,7 +275,7 @@ describe('with the secret set, Cloudflare decides', () => {
 
   it('lets a token Cloudflare accepts straight through to the booking', async () => {
     const { gapId } = await seed();
-    const me = await signInCustomer(env, '(818) 555-0142');
+    const me = await signInCustomer(env, 'rosa@mailbox.test');
     const res = await call('POST', '/api/public/orders', {
       ip: '203.0.113.31', cookie: me.cookie,
       body: orderBody(gapId, { turnstile_token: 'solved' }),
@@ -297,7 +302,7 @@ describe('with the secret set, Cloudflare decides', () => {
     // What arrives if a form is ever posted the way Turnstile's own hidden
     // input names it, rather than as the JSON body the SPA sends.
     const { gapId } = await seed();
-    const me = await signInCustomer(env, '(818) 555-0142');
+    const me = await signInCustomer(env, 'rosa@mailbox.test');
     const res = await call('POST', '/api/public/orders', {
       ip: '203.0.113.33', cookie: me.cookie,
       body: orderBody(gapId, { 'cf-turnstile-response': 'solved' }),

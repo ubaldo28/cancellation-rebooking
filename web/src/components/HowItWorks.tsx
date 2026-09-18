@@ -11,7 +11,7 @@ import '../styles-home.css';
  *
  * The shape is borrowed. The claims are not, and this is the line that matters:
  * the reference is a lead board — you describe a job, businesses bid, you pick.
- * Slotfill sells a specific hour of a specific person's real calendar, paid for
+ * Round The Way sells a specific hour of a specific person's real calendar, paid for
  * in full at the moment you take it. So nothing in this file may say estimate,
  * bid, lead, or "compare prices" — every one of those would describe a product
  * this site does not have, and the first thing a visitor would notice is that
@@ -45,28 +45,27 @@ const STEPS = [
     title: 'Find an hour that is genuinely free',
     body:
       'Search your neighbourhood and see the appointments local trades have '
-      + 'open this week. Every time on Slotfill is a real gap in someone\'s '
+      + 'open this week. Every time on Round The Way is a real gap in someone\'s '
       + 'day at a price they have already set.',
   },
   {
-    // Paying here is the design and is not built — see PaymentState.tsx — and
-    // this step is the front page's own description of what the Book button
-    // does, so it is the step that would have been caught out first.
+    // Paying here is what the Book button does — see PaymentState.tsx — and
+    // this step is the front page's own description of that button, so it is
+    // the step that would be caught out first.
     //
-    // It also said no card was asked for and left the account out entirely,
+    // It once said no card was asked for and left the account out entirely,
     // which was the front page repeating the site's central mistake in the one
     // place a stranger reads before deciding whether to start. Booking needs
-    // an account; the honest thing is that making one is the same press as
-    // booking, which is what this step now describes.
+    // both an account and a card; the honest thing is that making the account
+    // is the same press as booking, which is what this step now describes.
     title: 'Book it in the same press you sign up in',
     body:
       'Take the opening and say what the job is. Making an account is part of '
-      + 'that press and not a screen before it: you give a mobile number, type '
-      + 'the six digits we text back, and the time is yours from that moment. '
-      + 'No password, and nothing to confirm afterwards. A card is what you '
-      + 'will pay with once paying on the site is switched on; until then '
-      + 'nobody is asked for one and you settle the listed price with the '
-      + 'business directly.',
+      + 'that press and not a screen before it: you give an email address, type '
+      + 'the six digits we send to it, and add a card on the same screen. No '
+      + 'password, and nothing to confirm afterwards. You pay the listed price '
+      + 'by card there and then — nothing is added at checkout — and the time '
+      + 'is yours from that moment.',
   },
   {
     title: 'They turn up, you approve anything extra',
@@ -89,7 +88,7 @@ export function HowItWorks() {
             the top of this file is the reason not to. The bands above and
             below this one name them from the data they already hold. */}
         <p className="hiw-lede">
-          Slotfill lists the appointments solo trades have not filled yet. You
+          Round The Way lists the appointments solo trades have not filled yet. You
           book one the way you would book a table.
         </p>
 
@@ -129,8 +128,8 @@ export function HowItWorks() {
  * goes the same way until every operator is checked. What is left is three
  * things the product actually enforces in code: the parts approval, the
  * relayed messages, and reviews that only a completed booking can create.
- * Those three survive the test because none of them depends on money having
- * moved, which nothing on this site does yet — see PaymentState.tsx.
+ * What the site says about the money itself is kept in one place rather than
+ * repeated here — see PaymentState.tsx.
  *
  * No prop takes an argument. If one of these ever needs a number in it, the
  * number belongs in a prop rather than in this file.
@@ -146,7 +145,7 @@ const REASONS = [
   {
     title: 'Your number stays private',
     body:
-      'Messages and photos go through Slotfill, so you can sort out the '
+      'Messages and photos go through Round The Way, so you can sort out the '
       + 'details of the job — the gate code, the make of the boiler — without '
       + 'either of you handing over a phone number.',
   },
@@ -164,7 +163,7 @@ export function WhyBook() {
     <section className="why-book" aria-labelledby="why-book-title">
       <div className="why-book-wrap">
         <h2 className="why-book-title" id="why-book-title">
-          Why book on Slotfill?
+          Why book on Round The Way?
         </h2>
 
         {/*

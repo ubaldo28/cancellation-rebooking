@@ -20,9 +20,14 @@
  * profile stylesheets, which are loaded on other routes but share a document.
  */
 
-/* Wider than the category page (640px) because these carry grids of tiles and
-   counts, and the same width as the trade page so the two read as one site. */
-.ix-page { max-width: 900px; }
+/* 1080px: four picture tiles across with the 210px floor and the 14px gap the
+   card grid below uses. It was 900, which fit three and left a tile's worth of
+   empty column beside them on any laptop. Prose on these pages keeps its own
+   62ch measure, so widening the page does not widen a line of reading. */
+/* `.main` in styles.css caps every public page at 720px with one class, so a
+   single-class rule here never won — which is why this page was 680px wide of
+   content whatever this number said. Two classes beat one. */
+.main.ix-page { max-width: 1080px; }
 
 /* --------------------------------------------------------------------------
  * Head
@@ -195,7 +200,37 @@
 /* Held down on a phone, where there is no hover to tell you the tap landed. */
 .ix-row:active { background: var(--accent-soft); }
 
+/* --- the trade's drawing, at the head of the row ------------------------
+   75x45, which is 5:3 — the ratio the art is drawn in, so nothing is cropped
+   off an edge. The row's floor is 56px and a 45px picture inside 14px of
+   padding fits within it, so the thumbnails did not make these rows taller:
+   they filled space the row already had.
+
+   The element carries width and height ATTRIBUTES as well, set in TileArt.tsx,
+   and those are what reserve the box before the file arrives. Without them
+   thirty-nine rows grow one after another as the pictures land and the row
+   somebody is reaching for moves out from under their thumb mid-tap.
+
+   `flex: 0 0 auto` because a narrow screen has to come out of the name and the
+   counts, never out of the picture: below about 340px a shrinkable thumbnail
+   turns into a coloured sliver, which is worse than either a full one or none. */
+.ix-row-art {
+  flex: 0 0 auto;
+  width: 75px;
+  height: 45px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
 .ix-row-text { display: grid; gap: 3px; min-width: 0; }
+
+/* `.ix-row` is `space-between`, which with three children would park the
+   picture at the left, the text in the middle and the chevron at the right —
+   with a gap between the picture and the name it belongs to. Letting the text
+   take the slack puts the name against its own picture and leaves the chevron
+   where it was. Scoped to rows that actually have a picture, because the same
+   class draws the priced rows on /cost, whose wrapping was tuned without one. */
+.ix-row-art + .ix-row-text { flex: 1 1 auto; }
 
 .ix-row-name { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
 
@@ -212,6 +247,123 @@
 }
 
 .ix-row-go { flex: 0 0 auto; font-size: 20px; color: var(--faint); }
+
+/* --------------------------------------------------------------------------
+ * The row
+ *
+ * A ROW THAT SCROLLS SIDEWAYS, NOT A GRID THAT WRAPS. One line of tiles per
+ * category, scrolled with a thumb or a trackpad, exactly as the reference
+ * marketplace does it: the tile on the right edge is deliberately half cut
+ * off, because a half tile is what tells somebody there is more of the row to
+ * the right. A wrapping grid says the opposite — that what you can see is all
+ * there is — and buries fifteen services in four rows of white space.
+ *
+ * Tiles are a FIXED WIDTH here rather than a fraction of the row, so the tile
+ * is the same size in a row of three and a row of fifteen, and the row is as
+ * long as the category is.
+ *
+ * `scroll-snap-type: x proximity` and not `mandatory`: proximity tidies up a
+ * scroll that stopped near a tile edge and leaves a deliberate half-scroll
+ * alone, where mandatory fights the thumb.
+ * ----------------------------------------------------------------------- */
+.ix-cards {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  /* Room under the tiles for the scrollbar a trackpad shows on hover, so it
+     never draws over the name on the bottom tile of a row. */
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+}
+
+.ix-cards li {
+  flex: 0 0 200px;
+  border-bottom: 0;
+  scroll-snap-align: start;
+}
+
+.ix-cards .ix-row {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 225 / 290;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+/* The picture fills the tile. `cover` does the cropping, from the centre, so a
+   square source loses a little off each side rather than being squashed into
+   the taller box. */
+.ix-cards .ix-row-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  object-fit: cover;
+  transition: transform 0.2s ease;
+}
+
+/* The name, across the foot of the picture. The gradient starts fully
+   transparent so most of the photograph is untouched, and the padding above
+   the text is what gives the darkest part of it room to fade in. */
+.ix-cards .ix-row-text {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: block;
+  padding: 44px 13px 12px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0.42) 42%, rgba(0, 0, 0, 0));
+  color: #fff;
+}
+
+.ix-cards .ix-row-name {
+  display: block;
+  color: #fff;
+  font-size: 15.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+/* A tile is a picture, so hover shows it a little closer rather than tinting a
+   panel that is no longer there. */
+.ix-cards .ix-row:hover { background: var(--surface-2); }
+.ix-cards .ix-row:hover .ix-row-art { transform: scale(1.05); }
+.ix-cards .ix-row:active { background: var(--surface-2); }
+
+.ix-cards .ix-row:focus-visible {
+  background: var(--surface-2);
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ix-cards .ix-row-art { transition: none; }
+  .ix-cards .ix-row:hover .ix-row-art { transform: none; }
+}
+
+/* Narrower tiles on a phone, sized so two sit on screen with the third
+   showing at the edge — the peek is what says the row scrolls. */
+@media (max-width: 560px) {
+  .ix-cards { gap: 10px; }
+  .ix-cards li { flex: 0 0 43%; }
+  .ix-cards .ix-row-text { padding: 36px 11px 11px; }
+  .ix-cards .ix-row-name { font-size: 14.5px; }
+}
+
+/* The chevron and the sub-line are not rendered on a tile any more (see
+   BrowseIndex.tsx); these keep a stale bundle from painting them over the
+   picture if one is still in a browser cache. */
+.ix-cards .ix-row-sub,
+.ix-cards .ix-row-n,
+.ix-cards .ix-row-go { display: none; }
 
 /* --------------------------------------------------------------------------
  * A grid of tiles
@@ -423,6 +575,123 @@
 }
 
 .ix-else a:hover { color: var(--accent-ink); }
+
+/* --------------------------------------------------------------------------
+ * How booking one works
+ *
+ * A real <ol>, because these are three steps in an order, and the number is
+ * the list's own rather than a character typed into the markup — a screen
+ * reader is then told "3 items" instead of reading the digit as part of the
+ * first word of every heading.
+ *
+ * Deliberately identical to .tr-steps in styles-trade.css, which the cost
+ * guide and the trade page both draw. It is copied rather than shared for the
+ * reason the category page's breadcrumb is: a page that reads a class out of
+ * another page's stylesheet loses its styling the day somebody splits the
+ * routes into lazy chunks, and /browse is a page a stranger loads first.
+ * ----------------------------------------------------------------------- */
+.ix-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: step;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.ix-steps li {
+  counter-increment: step;
+  display: grid;
+  gap: 5px;
+}
+
+.ix-steps li h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* The number is decoration in front of a heading whose list already carries
+   the order, so it is drawn by CSS rather than typed into the words. */
+.ix-steps li h3::before {
+  content: counter(step);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 700;
+  vertical-align: 2px;
+}
+
+.ix-steps li span { font-size: 14.5px; line-height: 1.6; color: var(--ink-3); }
+
+/* --------------------------------------------------------------------------
+ * The questions
+ *
+ * Native <details>, so the block works before the bundle has run and keeps its
+ * own keyboard and screen-reader behaviour rather than borrowing an imitation
+ * of it. Same shape as the trade page's .tr-faq and copied for the same reason
+ * .ix-steps is.
+ * ----------------------------------------------------------------------- */
+.ix-faq { border-top: 1px solid var(--line); }
+
+.ix-q { border-bottom: 1px solid var(--line); }
+
+.ix-q > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 56px;
+  padding: 14px 4px;
+  font-size: 15.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  list-style: none;
+  cursor: pointer;
+}
+
+.ix-q > summary::-webkit-details-marker { display: none; }
+
+/* A plus that becomes a minus. Drawn in CSS and marked aria-hidden by being
+   generated content, because the disclosure state is already on the <details>
+   and a screen reader announcing "plus" after "expanded" is noise. */
+.ix-q > summary::after {
+  content: '+';
+  flex: 0 0 auto;
+  font-size: 19px;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--faint);
+}
+
+.ix-q[open] > summary::after { content: '–'; }
+
+.ix-q > summary:hover { color: var(--accent-ink); }
+
+.ix-q > summary:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+.ix-a {
+  margin: 0;
+  padding: 0 4px 18px;
+  max-width: 62ch;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--ink-3);
+}
 
 /* --------------------------------------------------------------------------
  * Prose

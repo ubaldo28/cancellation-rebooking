@@ -2,8 +2,9 @@ import type { Env, Point } from '../types';
 import { discounted, formatMoney, getCountry, localeFor, normalisePostcode } from './countries';
 import { driveSeconds, geocode } from './geo';
 import { notify } from './feed';
-import { isDemoOperator } from './demo';
+import { demoOperatorSql, isDemoOperator } from './demo';
 import { metroForPlace } from './metros';
+import { vehicleKindOr } from './vehicles';
 import { attachBooking, startThread, threadByToken } from './chat';
 import { claimPhoneHash, firstNameOnly } from './redact';
 import { displayName } from './reviews';
@@ -120,9 +121,9 @@ export interface PublicSlot {
   // -------------------------------------------------------------------------
   // The two pictures a card can show
   // -------------------------------------------------------------------------
-  // Both are R2 object keys, not URLs, because the route that serves them
+  // Both are photo-store keys, not URLs, because the route that serves them
   // (/api/public/photo/:key) is the one place that decides what may leave the
-  // bucket, and it keeps its own prefix allowlist. Null is a real answer here:
+  // store, and it keeps its own prefix allowlist. Null is a real answer here:
   // most businesses have uploaded neither, and a card must show the absence
   // rather than a stock photograph of somebody else's work.
 
@@ -343,6 +344,11 @@ export async function slotsNear(
 ): Promise<PublicSlot[]> {
   const t = now();
 
+  // The sample businesses, spelled for the WHERE clause below. See the payout
+  // condition there for why this listing has to be able to tell them apart from
+  // everybody else before it has read a single row.
+  const sample = demoOperatorSql('o.id');
+
   // Areas are fetched separately, not joined.
   //
   // Joining them returned one row per gap per area the operator covers — up to
@@ -388,6 +394,30 @@ export async function slotsNear(
           -- already booked -- those customers keep their appointment.
           AND o.banned_at IS NULL
           AND (o.suspended_until IS NULL OR o.suspended_until <= ?)
+          -- A REAL BUSINESS WITH NOWHERE TO BE PAID IS NOT ADVERTISED HERE.
+          --
+          -- Every booking is paid up front and the business's share is
+          -- transferred afterwards, so an opening sold for a business with no
+          -- connected account takes a customer's money into the platform
+          -- balance with nowhere to send it and nothing in the product to
+          -- resolve it. bypass.ts refuses to let such a business PUBLISH an
+          -- opening, but that gate is only consulted when somebody posts one --
+          -- and the cron detects gaps for every operator on a live plan, so an
+          -- opening reached this list without ever passing it. priceOrder then
+          -- refused the booking at the last step, which is the right answer to
+          -- the wrong question: by then a stranger has picked a time, filled in
+          -- an address and been told the opening is gone.
+          --
+          -- THE SAMPLE BUSINESSES ARE EXEMPT ON PURPOSE, and this is not a
+          -- loophole in the rule above -- it is the rule not applying. None of
+          -- them has a Stripe account because none of them is a business; they
+          -- are lib/demo.ts's seed, they carry a SAMPLE LISTING badge wherever
+          -- they appear, and they exist so the map is not a blank page before
+          -- anybody has signed up. Filtering on the flag alone would have taken
+          -- every one of them off the map and left the product with nothing to
+          -- show. What stops them being SOLD is priceOrder's sample_listing
+          -- refusal, which says what they are instead of pretending they left.
+          AND (o.stripe_payouts_enabled = 1 OR ${sample.sql})
           AND (? IS NULL OR g.id = ?)
           AND EXISTS (SELECT 1 FROM service_areas a
                        WHERE a.operator_id = o.id AND a.is_active = 1
@@ -398,7 +428,10 @@ export async function slotsNear(
         LIMIT 600`,
       // Ten days. Beyond that every row is an untouched working day and the
       // list becomes the same entry printed over and over.
-    ).bind(t + 3600, t + 10 * 86400, t, gapId, gapId, slug, slug).all<any>(),
+      // The sample ids sit between the suspension check and the gap filter,
+      // because that is where their fragment sits in the WHERE clause above.
+    ).bind(t + 3600, t + 10 * 86400, t, ...sample.binds, gapId, gapId, slug, slug)
+      .all<any>(),
 
     env.DB.prepare(
       `SELECT operator_id, lat, lng, radius_meters FROM service_areas
@@ -527,6 +560,20 @@ export interface MapArea {
   metro: string;
   /** Which trades actually have something open here, for the map label. */
   trades: string[];
+  /**
+   * WHAT THE BUSINESSES WORKING HERE DRIVE, as slugs from lib/vehicles.ts.
+   *
+   * The front page draws vehicles crossing the map, and this is what decides
+   * whether the one leaving this neighbourhood is a van, a car or a pickup
+   * towing a trailer. Distinct kinds rather than one per business: the map
+   * draws a couple of vehicles per area, not a fleet, and what it has to get
+   * right is that a place served by junk removal shows a trailer.
+   *
+   * Never empty. An operator who has not been asked yet falls back to
+   * DEFAULT_VEHICLE_KIND, in one place, rather than to a guess written into
+   * their row -- see migration 0039.
+   */
+  vehicles: string[];
   slot_count: number;
   /** Cheapest open slot in this area, already formatted. */
   from_price: string | null;
@@ -544,18 +591,29 @@ export interface MapArea {
 export async function mapData(
   env: Env, at: Point | null = null,
 ): Promise<{ areas: MapArea[]; slots: Array<PublicSlot & { area_slug: string }> }> {
+  const sample = demoOperatorSql('o.id');
   const [areaRows, slots] = await Promise.all([
     env.DB.prepare(
-      `SELECT a.name, a.slug, a.place_slug, a.lat, a.lng, a.operator_id
+      // The payout condition is the same one slotsNear applies, with the same
+      // exemption for the sample businesses, and it is repeated here because
+      // these two halves have to agree about who is on the map. This query
+      // decides which pins exist and what is drawn driving out of them; the
+      // other decides what is open. Filtering only the openings would leave a
+      // pin on a neighbourhood for a business nobody can book, with a van
+      // crossing the map on its behalf and nothing behind it.
+      `SELECT a.name, a.slug, a.place_slug, a.lat, a.lng, a.operator_id,
+              o.vehicle_kind
          FROM service_areas a
          JOIN operators o ON o.id = a.operator_id
         WHERE a.is_active = 1
           AND o.accept_public_bookings = 1
           AND o.plan IN ('trial','active')
+          AND (o.stripe_payouts_enabled = 1 OR ${sample.sql})
         ORDER BY a.name`,
-    ).all<{
+    ).bind(...sample.binds).all<{
       name: string; slug: string; place_slug: string;
       lat: number; lng: number; operator_id: string;
+      vehicle_kind: string | null;
     }>(),
     slotsNear(env, at, null, 200),
   ]);
@@ -615,6 +673,10 @@ export async function mapData(
       name: first.name, slug: place, lat: first.lat, lng: first.lng,
       metro: metroForPlace(place, { lat: first.lat, lng: first.lng }).slug,
       trades: [...new Set(mine.map((s) => s.trade).filter(Boolean))] as string[],
+      // From the businesses that COVER this neighbourhood, not from the open
+      // slots. A place with nothing open today is still a place these vehicles
+      // drive to, and the map keeps moving on a quiet day.
+      vehicles: [...new Set(rows.map((r) => vehicleKindOr(r.vehicle_kind)))],
       slot_count: mine.length,
       from_price: cheapest?.price ?? null,
       next_when: soonest?.when ?? null,
@@ -655,6 +717,38 @@ export async function slotById(env: Env, gapId: string): Promise<PublicSlot | nu
 }
 
 /**
+ * The business behind a customer account, or null when there is none.
+ *
+ * Almost every customer has none: signing up as a customer leaves
+ * customer_accounts.operator_id NULL and nothing on the customer side ever
+ * fills it in. It holds a business only when somebody who already runs one here
+ * opened the customer side of the product — see migration 0042 — and the two
+ * booking paths use it to tell when the person paying for an opening is the
+ * business selling it.
+ *
+ * READ OFF THE ROW, AND NEVER TAKEN FROM WHOEVER IS CALLING. Both paths are
+ * handed an account by the route that resolved the session, and if this came
+ * down with it then a caller that simply forgot to pass it along would be a
+ * caller that lets a business book itself — silently, and looking exactly like
+ * an ordinary booking afterwards. One read by primary key is a small price for
+ * a refusal nobody can leave out by accident.
+ *
+ * A closed account is deliberately not excluded. Closing the customer side does
+ * not close the business, so the row still names the same person, and the safe
+ * direction when in doubt is to refuse a booking rather than to sell one.
+ */
+export async function businessBehindAccount(
+  env: Env, accountId: string | null | undefined,
+): Promise<string | null> {
+  const id = String(accountId ?? '').trim();
+  if (!id) return null;
+  const row = await env.DB.prepare(
+    `SELECT operator_id FROM customer_accounts WHERE id = ?`,
+  ).bind(id).first<{ operator_id: string | null }>();
+  return row?.operator_id ?? null;
+}
+
+/**
  * A stranger takes a slot.
  *
  * Creates the client and the appointment in one batch, and leans on the same
@@ -674,7 +768,7 @@ export async function claimSlot(env: Env, input: {
    * customer cannot book by typing somebody else's mobile. Whether an account
    * is required is decided at the route, which is where the cookie is.
    */
-  account?: { id: string; phone: string } | null;
+  account?: { id: string; phone: string; login_email: string } | null;
 }): Promise<{ appointment_id: string; slot: PublicSlot; thread_token: string }> {
   const t = now();
 
@@ -682,7 +776,7 @@ export async function claimSlot(env: Env, input: {
     `SELECT g.*, o.country, o.currency, o.timezone, o.language, o.deposit_cents,
             o.max_detour_seconds, o.discount_percent, o.business_name,
             o.trade, o.profile_slug, o.accept_public_bookings,
-            o.banned_at, o.suspended_until,
+            o.banned_at, o.suspended_until, o.stripe_payouts_enabled,
             ${CARD_COLUMNS}
        FROM gaps g JOIN operators o ON o.id = g.operator_id
       WHERE g.id = ?`,
@@ -690,6 +784,39 @@ export async function claimSlot(env: Env, input: {
 
   if (!row) throw notFound('That opening is no longer listed.');
   if (row.accept_public_bookings !== 1) throw notFound('That opening is no longer listed.');
+
+  // A SAMPLE BUSINESS CANNOT BE BOOKED HERE EITHER, AND IT SAYS SO.
+  //
+  // This is the no-JavaScript booking form, and it is a second front door onto
+  // the same act: the basket goes through priceOrder, which refuses a sample
+  // with `sample_listing`, and this path went through neither. It would happily
+  // have written an appointment and a client row against a business invented in
+  // lib/demo.ts -- rows the next reseed deletes underneath the customer, for
+  // work nobody was ever going to turn up and do.
+  //
+  // Word for word the message priceOrder gives, because it is the same fact
+  // and a customer who tries both doors should not be told two things. Placed
+  // before the payout check below for the same reason it is placed first there:
+  // no sample business has a Stripe account, so the vaguer answer would catch
+  // every one of them and tell a stranger nothing they can act on.
+  if (isDemoOperator(row.operator_id)) {
+    throw badRequest(
+      `${row.business_name} is sample data, not a real business, so it `
+      + 'cannot be booked. It is listed so the map is not blank before anyone '
+      + 'has signed up.',
+      'sample_listing');
+  }
+
+  // Somewhere to send the money, checked on this path as well. The listing
+  // query now hides an unpayable business, but a gap id in the URL of a page
+  // cached before their account went bad still posts here, and every booking is
+  // paid up front: selling one for a business with no connected account leaves
+  // a customer's money in the platform balance with nowhere to go. Same answer
+  // as an unlisted opening, and for the same reason priceOrder gives it —
+  // somebody's bank arrangements are not a stranger's business.
+  if (row.stripe_payouts_enabled !== 1) {
+    throw notFound('That opening is no longer listed.');
+  }
   // The listing query already hides these, but the gap id travels in the URL
   // of the no-JavaScript form and a page cached before the suspension still
   // posts to it, so the check has to be here too and not only in the query
@@ -723,13 +850,40 @@ export async function claimSlot(env: Env, input: {
   const phone = input.account?.phone ?? toE164(input.phone, row.country);
   if (!phone) throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
 
-  // The same check placeOrder and createInstantRequest make, after the number
-  // is normalised so a suspension cannot be stepped around by typing the same
-  // number a different way. This path is the no-JavaScript booking form, and
-  // without the check it was simply the way round the whole ladder: a customer
-  // suspended for missing appointments could keep booking through it.
-  const standing = await customerStanding(env, phone);
+  // The same check placeOrder and createInstantRequest make, against the same
+  // key: the account's proved address, not the number typed into the form. This
+  // path is the no-JavaScript booking form, and without the check it was simply
+  // the way round the whole ladder — a customer suspended for missing
+  // appointments could keep booking through it. Keying it on the number would
+  // have left it exactly as open, more quietly. See migration 0038.
+  const standing = await customerStanding(env, input.account?.login_email ?? '');
   if (standing.blocked) throw conflict(standing.message!, 'suspended');
+
+  // NOBODY BOOKS THEIR OWN OPENING, and it has to be refused here rather than
+  // left off a page.
+  //
+  // Since migration 0042 a business can open the customer side and book other
+  // trades, so for the first time the person taking a slot may be the business
+  // selling it. Hiding their own openings from their own map would not be this
+  // check: the gap id is in the URL of this very form, this path takes a POST
+  // from anything at all, and that is exactly how the customer card check came
+  // to be enforced on the checkout and not here.
+  //
+  // It looks like money going round in a circle and nothing worse, but the
+  // circle is not closed. A job booked against yourself is a completed job and
+  // a review, on a marketplace young enough for a handful of either to change
+  // what a stranger sees; the platform's fee is paid by the person who
+  // receives it; and the cancellation, refund and no-show rules all become
+  // rules with the same person on both sides of them.
+  //
+  // The same refusal is made in placeOrder, for the basket. Two front doors
+  // onto one act need the lock on both of them.
+  const ownBusiness = await businessBehindAccount(env, input.account?.id);
+  if (ownBusiness && ownBusiness === row.operator_id) {
+    throw conflict(
+      'That is your own opening — you cannot book yourself. '
+      + 'Openings from other businesses book as normal.', 'own_opening');
+  }
 
   const postcode = input.postcode ? normalisePostcode(input.postcode) : null;
   if (row.is_mobile === 1 && !postcode && !input.address_line) {
@@ -883,12 +1037,22 @@ export async function claimSlot(env: Env, input: {
   // that has never been signed in — which is what /c/:token is for and why
   // migration 0037 adding accounts deliberately did not put a sign-in in front
   // of it.
+  //
+  // AND, SINCE MIGRATION 0052, ONTO THE ACCOUNT THAT BOOKED IT — the same
+  // `input.account` the number and the address were taken off above, on both
+  // branches, so a claim that continued an existing enquiry and one that
+  // started fresh are equally findable afterwards. Null when the caller had no
+  // account: the link is then the only way to this conversation, which is the
+  // honest state rather than something to paper over.
+  const accountId = input.account?.id ?? null;
   let threadToken = '';
   const existing = input.thread_token
     ? await threadByToken(env, input.thread_token)
     : null;
   if (existing && existing.operator_id === row.operator_id) {
-    await attachBooking(env, existing.id, { appointment_id: apptId, client_id: clientId });
+    await attachBooking(env, existing.id, {
+      appointment_id: apptId, client_id: clientId, customer_account_id: accountId,
+    });
     threadToken = input.thread_token ?? '';
   } else {
     const started = await startThread(env, {
@@ -896,6 +1060,7 @@ export async function claimSlot(env: Env, input: {
       gap_id: input.gapId,
       appointment_id: apptId,
       client_id: clientId,
+      customer_account_id: accountId,
       guest_name: firstName,
       subject: service.name,
     });

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, type Metro } from '../api';
 
 /**
- * The places Slotfill serves, on the browser side.
+ * The places Round The Way serves, on the browser side.
  *
  * The Worker holds the list in src/lib/metros.ts and every server-rendered
  * page reads it from there. The browser cannot import that file — it is
@@ -64,7 +64,7 @@ export const metroBySlug = (metros: Metro[], slug: string | null | undefined): M
 /**
  * "Los Angeles and Santa Maria" — the site's footprint in a phrase.
  *
- * Only for a sentence about Slotfill as a whole. A page about one place uses
+ * Only for a sentence about Round The Way as a whole. A page about one place uses
  * that place's name and never this. Built from the list rather than written
  * out, so it is a list of two today and reads correctly at three.
  */

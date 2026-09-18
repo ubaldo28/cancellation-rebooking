@@ -5,8 +5,12 @@ import Crumbs from '../components/Crumbs';
 import PublicPage from '../components/PublicPage';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-index.css';
+// The modules this page shares with /cost/<trade>. See the header of
+// styles-cost.css for why they are not in either page's base stylesheet.
+import '../styles-cost.css';
 import { ENOUGH, formatMoney as money, median, plural } from '../lib/format';
 import { useMetros } from '../lib/metros';
+import { costHref } from '../lib/seo';
 import { useDocumentTitle } from '../lib/title';
 
 /**
@@ -19,7 +23,7 @@ import { useDocumentTitle } from '../lib/title';
  * the least reachable ones.
  *
  * IT IS HELD TO THE COST GUIDE'S RULE, because it is the same numbers on one
- * page instead of forty. Every figure is a price a business on Slotfill is
+ * page instead of forty. Every figure is a price a business on Round The Way is
  * asking right now, counted from the rows fetched in this render. There is no
  * national average here, no typical cost and no "expect to pay", because there
  * is no survey behind any of those and we are not going to estimate one.
@@ -146,6 +150,39 @@ export default function CostIndex() {
   const listings = rows.reduce((sum, r) => sum + r.n, 0);
   const samples = rows.reduce((sum, r) => sum + r.samples, 0);
 
+  /**
+   * THE SAME GUIDES, GROUPED THE WAY A PERSON LOOKS FOR ONE.
+   *
+   * The reference marketplace's price index is grouped entirely under headings
+   * a reader recognises — the things you would want done to a car, to a house,
+   * to yourself — and never by how much data sits behind each guide. That is
+   * the better way in for somebody who knows the kind of thing they want
+   * without knowing what this catalogue calls it.
+   *
+   * It is the SECOND way in here rather than the first, and that ordering is
+   * the whole argument of these pages. The three groups above are cut by how
+   * much is actually listed, which is the cut that decides whether a figure on
+   * this page can be trusted at all; burying that under eight friendly
+   * category headings would let a trade with two listings sit in a tidy row
+   * beside one with thirty and look identical. So the honest cut leads, and
+   * this repeats the same guides underneath it for browsing.
+   *
+   * Every trade appears here exactly once and every one is a link, including
+   * the ones with nothing listed — their pages say so plainly, which is the
+   * honest answer to "what does this cost" on a quiet afternoon.
+   */
+  const bySlug = new Map(rows.map((r) => [r.trade.slug, r] as const));
+  const grouped = cats
+    .map((c) => ({
+      key: c.key,
+      label: c.label,
+      trades: c.trades.flatMap((t) => {
+        const row = bySlug.get(t.slug);
+        return row ? [row] : [];
+      }),
+    }))
+    .filter((c) => c.trades.length > 0);
+
   if (loading) {
     return (
       <PublicPage className="ix-page">
@@ -167,7 +204,7 @@ export default function CostIndex() {
 
       <header className="ix-head">
         <h1>
-          What things cost on Slotfill
+          What things cost on Round The Way
           <span className="ix-count">
             {rows.length} {plural(rows.length, 'cost guide', 'cost guides')},{' '}
             {ranged.length} of them with a listed range, {listings}{' '}
@@ -184,13 +221,13 @@ export default function CostIndex() {
         <p className="ix-flag">
           {listings === 0 ? (
             <>
-              Nothing is listed on Slotfill at the moment, so there is no price
+              Nothing is listed on Round The Way at the moment, so there is no price
               for us to report in any trade. We do not have national survey
               figures and we are not going to estimate any.
             </>
           ) : (
             <>
-              These are the prices <strong>businesses on Slotfill are asking
+              These are the prices <strong>businesses on Round The Way are asking
               right now</strong> — {listings}{' '}
               {plural(listings, 'listing', 'listings')} counted the moment this
               page loaded. They are not a national average and they are not a
@@ -224,7 +261,7 @@ export default function CostIndex() {
         */}
         {rows.length > 0 && (
           <p className="ix-lede">
-            One guide for every trade Slotfill lists, {rows.length} in all,
+            One guide for every trade Round The Way lists, {rows.length} in all,
             grouped by how much is behind the figures rather than
             alphabetically. The quiet trades are here too: their pages say
             nothing is listed today rather than estimating a price.
@@ -248,6 +285,12 @@ export default function CostIndex() {
             {bare.length > 0 && (
               <li><a href="#ix-bare">Nothing listed right now ({bare.length})</a></li>
             )}
+            {grouped.length > 0 && (
+              <li><a href="#ix-cats">Every guide by category ({grouped.length})</a></li>
+            )}
+            {listings > 0 && (
+              <li><a href="#ix-method">How these figures are worked out</a></li>
+            )}
           </ul>
         </nav>
       )}
@@ -263,8 +306,7 @@ export default function CostIndex() {
           <ul className="ix-list">
             {ranged.map((r) => (
               <li key={r.trade.slug}>
-                <Link className="ix-row ix-row-priced"
-                  to={`/cost/${encodeURIComponent(r.trade.slug)}`}>
+                <Link className="ix-row ix-row-priced" to={costHref(r.trade.slug)}>
                   <span className="ix-row-text">
                     <span className="ix-row-name">{r.trade.label}</span>
                     <span className="ix-row-sub">
@@ -312,7 +354,7 @@ export default function CostIndex() {
           <ul className="ix-list">
             {thin.map((r) => (
               <li key={r.trade.slug}>
-                <Link className="ix-row" to={`/cost/${encodeURIComponent(r.trade.slug)}`}>
+                <Link className="ix-row" to={costHref(r.trade.slug)}>
                   <span className="ix-row-text">
                     <span className="ix-row-name">{r.trade.label}</span>
                     <span className="ix-row-sub">
@@ -340,12 +382,120 @@ export default function CostIndex() {
           <ul className="ix-else">
             {bare.map((r) => (
               <li key={r.trade.slug}>
-                <Link to={`/cost/${encodeURIComponent(r.trade.slug)}`}>
+                <Link to={costHref(r.trade.slug)}>
                   What {r.trade.label.toLowerCase()} costs
                 </Link>
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {/* --- every guide, by category ------------------------------------
+          The browsing cut, underneath the honest one. See `grouped` above for
+          why it is second rather than first. */}
+      {grouped.length > 0 && (
+        <section className="ix-sec" aria-labelledby="ix-cats">
+          <h2 id="ix-cats">Every guide by category</h2>
+          <p className="ix-sec-sub">
+            The same {rows.length} guides again, grouped the way somebody looks
+            for one rather than by how much is behind the figures. The price
+            beside a trade is the range listed in it right now; a trade with too
+            little listed for a range, or with nothing listed, says so instead.
+          </p>
+          <div className="cg-cats">
+            {grouped.map((c) => {
+              // Counted per category so the line under the heading is a fact
+              // about this render rather than a fixed description of the
+              // catalogue. A category where nothing is listed says that
+              // plainly instead of printing "0 with a listed range".
+              const withRange = c.trades.filter((t) => t.n >= ENOUGH).length;
+              return (
+                <div className="cg-cat" key={c.key}>
+                  <h3>
+                    {/* Plain heading, not a link: /browse/<key> is a page of
+                        appointments rather than of cost guides, and a heading
+                        that navigates somewhere other than where its own list
+                        goes is the sort of link people learn not to press. */}
+                    {c.label}
+                  </h3>
+                  <p className="cg-cat-n">
+                    {c.trades.length} {plural(c.trades.length, 'guide', 'guides')}
+                    {withRange > 0
+                      ? `, ${withRange} with a listed range today`
+                      : ', none with enough listed for a range today'}
+                  </p>
+                  <ul>
+                    {c.trades.map((t) => (
+                      <li key={t.trade.slug}>
+                        <Link to={costHref(t.trade.slug)}>
+                          {t.trade.label}
+                          <span className="cg-cat-price">
+                            {t.n >= ENOUGH && t.currency && t.low !== null && t.high !== null
+                              ? (t.low === t.high
+                                ? money(t.low, t.currency)
+                                : `${money(t.low, t.currency)} – ${money(t.high, t.currency)}`)
+                              : t.n > 0
+                                ? `${t.n} listed, no range`
+                                : 'nothing listed'}
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* --- how the figures were arrived at ------------------------------
+          THE METHOD, ON THE HUB AS WELL AS ON EACH GUIDE.
+
+          The reference marketplace's price index opens by telling you where its
+          numbers come from — millions of estimates, hundreds of thousands of
+          professionals — because a page of prices that never says where they
+          came from is asking to be trusted on its typography. It is the right
+          module to carry and the wrong figures to carry it with: we have no
+          survey and no estimates database, so what goes here is the arithmetic
+          this render actually performed and the plain statement of what it does
+          not cover. Each guide repeats this for its own trade in more detail;
+          this is the version for the page that links to all of them. */}
+      {listings > 0 && (
+        <section className="ix-sec" aria-labelledby="ix-method">
+          <h2 id="ix-method">How these figures are worked out</h2>
+          <p className="ix-sec-sub">
+            There is no survey behind this page and no editor. Here is the whole
+            method.
+          </p>
+          <p className="ix-note">
+            Every figure above is a price a business on Round The Way set on an
+            appointment it has free right now. When you opened this page we read{' '}
+            {listings} of them across {ranged.length + thin.length}{' '}
+            {plural(ranged.length + thin.length, 'trade', 'trades')} that have
+            something listed. Nothing is stored or carried over: open it again
+            tomorrow and a business that has since filled its Tuesday is no
+            longer in the count. A business that covers five neighbourhoods
+            offers the same free hour in all five, and this page counts that hour
+            once.
+          </p>
+          <p className="ix-note">
+            The middle figure on a row is the median — line that trade's prices
+            up in order and it is the one in the centre, or the midpoint of the
+            two in the centre. It is not an average, which one unusually large
+            job would drag. Below {ENOUGH} listed prices there is no middle worth
+            reporting and no range, so those trades are grouped separately above
+            rather than given one.
+          </p>
+          <p className="ix-note">
+            What this does not tell you is what any of these trades costs in
+            general. It is the part of each trade that is on Round The Way and has
+            an hour free this week, which is not the same thing — so there is no
+            typical price anywhere on this page and no average for any of the
+            work at large. If that is the figure you came for, this is not the
+            page that has it.
+          </p>
         </section>
       )}
 

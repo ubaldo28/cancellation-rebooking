@@ -1,9 +1,15 @@
 import type { Env } from '../types';
-import { threadByToken, threadForOperator } from './chat';
+import { threadByToken, threadForOperator, type ThreadRef } from './chat';
 import { formatMoney, localeFor } from './countries';
 import { notify } from './feed';
 import { redactContact } from './redact';
-import { badRequest, conflict, newId, notFound, now } from './util';
+import {
+  chargeIdOf, createPaymentIntent, paymentIntentsByMetadata, stripeConfigured,
+  StripeError, stripeRefused,
+} from './stripe';
+import {
+  HttpError, MAX_NOTE_CHARS, badRequest, conflict, newId, notFound, now,
+} from './util';
 
 /**
  * Parts.
@@ -38,10 +44,17 @@ export type PartsPolicy = (typeof PARTS_POLICIES)[number];
 export const isPartsPolicy = (v: unknown): v is PartsPolicy =>
   typeof v === 'string' && (PARTS_POLICIES as readonly string[]).includes(v);
 
-/** A note longer than this is a contract, and it sits in a booking summary. */
-const MAX_NOTE_CHARS = 300;
-/** "Front pads and rotors, ceramic" is the job here. A parts list is not. */
-const MAX_DESCRIPTION_CHARS = 300;
+/*
+ * The two short free-text boxes in this file: the parts note, which sits in a
+ * booking summary and is a contract if it runs longer than this, and the quote
+ * description, where "front pads and rotors, ceramic" is the job and a parts
+ * list is not.
+ *
+ * Both were declared here at 300, estimates.ts declared its description at 300,
+ * online.ts declared its note at 300, and none of the four knew about the
+ * others. They are MAX_NOTE_CHARS in ./util now — one number, one decision:
+ * a sentence or two of context, not a document.
+ */
 
 /**
  * How long a quote stays approvable: three days.
@@ -53,7 +66,10 @@ const MAX_DESCRIPTION_CHARS = 300;
  */
 const QUOTE_TTL_SECONDS = 3 * 24 * 60 * 60;
 
-/** Nobody quotes a part costing more than this on a mobile job. It is a typo guard. */
+/**
+ * Nobody quotes a part costing more than this on a mobile job. It is a typo
+ * guard, and it is a guard on THE WHOLE QUOTE — see sendQuote.
+ */
 const MAX_QUOTE_CENTS = 5_000_00;
 
 export interface PartsFields {
@@ -76,14 +92,35 @@ export interface PartsQuote {
   status: 'sent' | 'approved' | 'declined' | 'withdrawn' | 'expired';
   expires_at: number | null;
   decided_at: number | null;
+  /** When the card was actually charged for it. NULL means no money has moved. */
   charged_at: number | null;
+  /**
+   * How many times Stripe has received this charge and refused it, and what it
+   * said the last time. Both are on the row both sides read, because the
+   * alternative is a quote stuck at 'sent' that looks exactly like one the
+   * customer has not got round to answering — while the operator stands next to
+   * the car wondering whether to fit the part. See migration 0046.
+   */
+  charge_attempts: number;
+  charge_error: string | null;
+  /**
+   * The Refund that gave this part's money back: 're_...'. A part is its own
+   * charge against its own intent, so undoing one is its own refund and cannot
+   * ride along inside the booking's. See sweepPartsRefunds in checkout.ts.
+   */
+  refund_id: string | null;
+  refunded_at: number | null;
+  refund_attempts: number;
+  refund_error: string | null;
   created_at: number;
   updated_at: number;
 }
 
 const QUOTE_FIELDS =
   `id, order_item_id, operator_id, thread_id, description, parts_cents, labor_cents,
-   currency, status, expires_at, decided_at, charged_at, created_at, updated_at`;
+   currency, status, expires_at, decided_at, charged_at, charge_attempts, charge_error,
+   refund_id, refunded_at, refund_attempts, refund_error,
+   created_at, updated_at`;
 
 const withTotal = (r: Omit<PartsQuote, 'total_cents'>): PartsQuote =>
   ({ ...r, total_cents: r.parts_cents + r.labor_cents });
@@ -158,16 +195,16 @@ export function partsLine(
   // Deliberately says what the money does, not just that parts exist. "Parts
   // extra" is what every shop sign says and it is why nobody trusts one.
   //
-  // "Nothing is fitted until you approve it" is true today and will stay true.
-  // The charging half is not: paying on the site is not built yet, and the
-  // sentence used to imply that approving a quote takes money, which it does
-  // not. Every other customer-facing surface was corrected to say so, and this
-  // string reaches the customer in a message rather than on a page — a
-  // confirmation that overstates what has happened to somebody's money is
-  // worse than a web page that does.
+  // IT SAYS THE CHARGE HAPPENS, because it now does. This sentence used to end
+  // "nothing is paid on this site yet, so you settle the price with them
+  // directly" — which was the honest description of a product where approving
+  // a quote moved no money at all and the operator had to ask for cash at the
+  // door. decideQuote takes the approved amount off the card the booking was
+  // made with, so the old wording would now be the dangerous kind of wrong: a
+  // customer told they would settle up in person, whose card is then debited.
   return 'This price covers the labour. If the job needs a part, they will send you '
-    + 'the price here and nothing is fitted until you approve it. Nothing is '
-    + 'paid on this site yet, so you settle the price with them directly.'
+    + 'the price here and nothing is fitted until you approve it. Approving it '
+    + 'charges the card you booked with, for that amount and nothing else.'
     + range;
 }
 
@@ -201,8 +238,8 @@ interface ScopeItem {
  * share one conversation, and a quote raised on the second one would be
  * unanswerable.
  */
-async function guestScope(env: Env, rawToken: string) {
-  const thread = await threadByToken(env, rawToken);
+async function guestScope(env: Env, ref: ThreadRef) {
+  const thread = await threadByToken(env, ref);
   if (!thread) return null;
   if (!thread.appointment_id) return { thread, items: [] as ScopeItem[] };
 
@@ -249,7 +286,7 @@ export async function sendQuote(
   // of this product works to keep on the platform -- "the alternator is $340,
   // call me on 818 555 0199 and I'll do it cash on Saturday" arrived intact.
   const description = redactContact(
-    (input?.description ?? '').trim().slice(0, MAX_DESCRIPTION_CHARS),
+    (input?.description ?? '').trim().slice(0, MAX_NOTE_CHARS),
   ).body.trim();
   if (!description) {
     throw badRequest('Say what the parts are. A price on its own is not something '
@@ -267,6 +304,16 @@ export async function sendQuote(
   if (parts + labor <= 0) {
     throw badRequest('A quote needs an amount. If there is nothing extra to pay, '
       + 'just send them a message.', 'empty_quote');
+  }
+  // ON THE SUM, because the sum is what gets charged. Checking each field on
+  // its own made the ceiling $10,000 rather than $5,000 — a fat finger in both
+  // boxes, or a decimal point in the wrong place twice, walked straight
+  // through it. This is an off-session charge against a card nobody is looking
+  // at, so the only thing standing between a typo and a five-figure debit is
+  // this line.
+  if (parts + labor > MAX_QUOTE_CENTS) {
+    throw badRequest('That total looks like a typo. Check the figures and send '
+      + 'it again.', 'bad_amount');
   }
 
   const itemId = (input?.order_item_id ?? '').trim();
@@ -313,6 +360,12 @@ export async function sendQuote(
     expires_at: t + QUOTE_TTL_SECONDS,
     decided_at: null,
     charged_at: null,
+    charge_attempts: 0,
+    charge_error: null,
+    refund_id: null,
+    refunded_at: null,
+    refund_attempts: 0,
+    refund_error: null,
     created_at: t,
     updated_at: t,
   };
@@ -380,6 +433,176 @@ export async function withdrawQuote(
 // The customer answers it
 // ---------------------------------------------------------------------------
 
+/** Who the second charge is made against, and with what. */
+interface Payer {
+  /** The card copied onto the order at checkout: 'pm_...'. See orders.ts. */
+  payment_ref: string | null;
+  /** Who they are at Stripe: 'cus_...'. A saved card can only be used with it. */
+  stripe_customer_id: string | null;
+  email: string | null;
+}
+
+/** What the second charge produced, once it has actually taken the money. */
+interface Charged {
+  payment_intent_id: string;
+  charge_id: string | null;
+}
+
+/**
+ * Records a charge Stripe refused, so a quote that did not go through looks
+ * like one.
+ *
+ * The operator is standing next to the car deciding whether to fit the part.
+ * "Their card was declined" is the only sentence that helps them, and a quote
+ * that silently stayed 'sent' tells them nothing at all — it looks identical to
+ * a customer who has not got round to answering.
+ *
+ * THE ATTEMPT COUNTER ONLY MOVES ON A DEFINITE REFUSAL, exactly as
+ * recordRefundFailure's does and for the same reason: a refusal means Stripe
+ * read the request and created nothing, so the next attempt is safe under a
+ * fresh idempotency key — which is what stops a nine-in-the-morning decline
+ * being replayed at somebody who has since fixed their card. Anything else is
+ * an outcome nobody knows, so the counter stays put and the retry goes out
+ * under the SAME key, where Stripe deduplicates it instead of charging one
+ * alternator twice. Migration 0046 has the long version.
+ *
+ * WHICH FAILURES ARE REFUSALS IS STRIPE'S ANSWER, NOT THE STATUS CODE'S, and
+ * reading the status range got the two most dangerous cases exactly backwards.
+ * A 409 is Stripe saying the same idempotency key is STILL IN FLIGHT and a 429
+ * is a rate limit — neither is a decline, and counting either as one moves the
+ * key so the next tap is a brand new charge for money that is already moving.
+ * A customer double-tapping approve on a $340 part with one bar of signal is
+ * precisely the sequence that produces a 409, and it produced two charges. See
+ * stripeRefused in stripe.ts.
+ */
+async function recordChargeFailure(
+  env: Env, quoteId: string, err: unknown,
+): Promise<void> {
+  const refused = stripeRefused(err);
+  const message = `${(err as Error)?.message ?? 'The card was refused.'}`.slice(0, 300);
+  console.error('parts charge failed', quoteId, message);
+  await env.DB.prepare(
+    `UPDATE parts_quotes SET charge_error = ?, charge_attempts = charge_attempts + ?,
+       updated_at = ?
+      WHERE id = ? AND charged_at IS NULL AND status = 'sent'`,
+  ).bind(message, refused ? 1 : 0, now(), quoteId).run();
+}
+
+/**
+ * Takes the approved amount off the card the booking was made with.
+ *
+ * FOR EXACTLY `amount`, WHICH IS READ OFF THE ROW THE CUSTOMER TAPPED. Not a
+ * recalculated figure, not the operator's current price list, not a total with
+ * anything else folded into it. That is the one promise this whole file exists
+ * to keep, and it is the reason the amount is passed in from the row rather
+ * than worked out again here.
+ *
+ * THE CARD IS THE ORDER'S, NOT THE ACCOUNT'S. orders.payment_ref was copied at
+ * checkout precisely so a later charge cannot quietly follow whichever card is
+ * on the account today — see the note above the INSERT in placeOrder. The
+ * Stripe customer does come off the account, because that is the only place it
+ * lives and it is the filing cabinet the card sits in rather than the card.
+ *
+ * RETURNS NULL WHEN THIS DEPLOYMENT CANNOT CHARGE AT ALL. With no Stripe key
+ * nothing on the site takes money — the booking itself cannot be paid for
+ * either — so refusing the approval would break the flow for a deployment that
+ * was never charging anybody, rather than protect somebody. On a deployment
+ * that CAN charge, a booking with no card on it is refused instead: the
+ * operator is about to fit a part on the platform's word that it will be paid
+ * for, and recording an approval nothing can collect is how that promise gets
+ * broken quietly.
+ *
+ * NO PLATFORM FEE ON PARTS. The fee is for the introduction, and a part is
+ * money the operator laid out on the customer's behalf — the same reason
+ * leadFeeCents refuses to read the parts total.
+ */
+async function chargeApprovedQuote(
+  env: Env, quote: Omit<PartsQuote, 'total_cents'>, orderId: string, amount: number,
+): Promise<Charged | null> {
+  if (!stripeConfigured(env)) return null;
+
+  const payer = await env.DB.prepare(
+    `SELECT o.payment_ref, o.email, a.stripe_customer_id
+       FROM orders o
+       LEFT JOIN customer_accounts a ON a.id = o.customer_account_id
+      WHERE o.id = ?`,
+  ).bind(orderId).first<Payer>();
+
+  if (!payer?.payment_ref || !payer.stripe_customer_id) {
+    throw conflict(
+      'We cannot charge a card for this booking, so there is nothing to approve '
+      + 'here. Add a card to your account and ask them to send the quote again.',
+      'no_card_on_file',
+    );
+  }
+
+  let intent;
+  try {
+    intent = await createPaymentIntent(env, {
+      orderId,
+      amountCents: amount,
+      currency: quote.currency,
+      feeCents: 0,
+      customerEmail: payer.email,
+      customerId: payer.stripe_customer_id,
+      approvedParts: {
+        quoteId: quote.id,
+        paymentMethodId: payer.payment_ref,
+        attempt: quote.charge_attempts,
+      },
+    });
+  } catch (err) {
+    await recordChargeFailure(env, quote.id, err);
+    // STRIPE'S OWN SENTENCE, HANDED STRAIGHT ON. Left as a StripeError this
+    // leaves the router at a 500 reading "Something went wrong." — to a
+    // customer whose bank has just declined a card, which is both untrue and
+    // unactionable. Stripe writes these messages for the person who caused the
+    // problem ("Your card was declined", "Your card has insufficient funds")
+    // and they are the best sentence available. 402 because that is the status
+    // this product already uses when a card is what is missing; see
+    // CARD_REQUIRED in index.ts.
+    if (err instanceof StripeError) {
+      throw new HttpError(402,
+        `${err.message} Nothing has been approved and nothing has been fitted. `
+        + 'Try another card on your account and tap approve again.',
+        err.code ?? 'charge_failed');
+    }
+    throw err;
+  }
+
+  // ANYTHING BUT 'succeeded' IS A FAILURE HERE, and that is stricter than the
+  // checkout charge on purpose. This one is confirmed in the same request, with
+  // nobody at a card form: a card that comes back wanting a second factor has
+  // no screen to show it on, and there is no webhook that would ever finish it
+  // — /webhooks/stripe resolves an intent to an ORDER, and this intent belongs
+  // to a quote. Treating 'requires_action' as done would write charged_at
+  // against money that never moved and pay the business out of a charge that
+  // does not exist.
+  //
+  // The attempt counter deliberately does NOT move for this one. Stripe made an
+  // intent and is holding it under that key, so a fresh key here would mean two
+  // live intents for one part and a chance of both landing. The way out is a
+  // new quote, which carries a new id and therefore a new key — which is what
+  // the message asks for.
+  if (intent.status !== 'succeeded') {
+    await recordChargeFailure(env, quote.id, new Error(
+      `The bank did not complete that payment (${intent.status}).`));
+    throw conflict(
+      'Your bank did not let that payment through. Nothing has been charged and '
+      + 'nothing has been fitted — ask them to send the quote again, and it will '
+      + 'go to whichever card is on your account then.',
+      'charge_not_completed',
+    );
+  }
+
+  // chargeIdOf, never String(). Stripe sends latest_charge as a bare id
+  // normally and as an expanded charge object when anything asks it to, and
+  // the string form of that object is the literal text "[object Object]" —
+  // which reaches createTransfer as source_transaction and stops the business
+  // being paid for the part at all. See stripe.ts.
+  return { payment_intent_id: intent.id, charge_id: chargeIdOf(intent.latest_charge) };
+}
+
 /**
  * Approve or decline, authorised by nothing but the guest link.
  *
@@ -398,13 +621,13 @@ export async function withdrawQuote(
  * is what decides whether this call did anything at all.
  */
 export async function decideQuote(
-  env: Env, rawToken: string, quoteId: string, decision: 'approved' | 'declined',
+  env: Env, ref: ThreadRef, quoteId: string, decision: 'approved' | 'declined',
 ): Promise<PartsQuote> {
   if (decision !== 'approved' && decision !== 'declined') {
     throw badRequest('Approve it or decline it.', 'bad_decision');
   }
 
-  const scope = await guestScope(env, rawToken);
+  const scope = await guestScope(env, ref);
   if (!scope) throw notFound('That link is not valid any more.');
 
   const row = await env.DB.prepare(
@@ -442,22 +665,35 @@ export async function decideQuote(
   const stillSent = `EXISTS (SELECT 1 FROM parts_quotes q WHERE q.id = ? AND q.status = 'sent')`;
 
   const writes: D1PreparedStatement[] = [];
+  let charged: Charged | null = null;
 
   if (decision === 'approved') {
     // -------------------------------------------------------------------
-    // PAYMENT SEAM — the second charge.
+    // THE SECOND CHARGE. The first is at checkout, for the labour the
+    // customer agreed to then; this is the other one, and it is the only
+    // other one.
     //
-    // The first charge is at checkout, in placeOrder, for the labour the
-    // customer agreed to then. THIS is the other one, and it is the only
-    // other one: it may only ever be for exactly `amount`, the number on
-    // the row the customer just approved. Not a recalculated figure, not
-    // the operator's current price list, not a total. When the charge is
-    // wired up it belongs on this line, before the batch, and it writes
-    // charged_at on success — an approved quote with charged_at still NULL
-    // is money owed, and that is the report the operator will ask for.
+    // BEFORE THE BATCH, DELIBERATELY. If the card is refused, nothing below
+    // this line runs: the quote stays 'sent', the parts are not added to
+    // anybody's total, and the customer is told their bank said no rather
+    // than being shown an approval that quietly collected nothing. An
+    // approval that looks identical whether or not the money arrived is the
+    // exact state this is replacing.
     //
-    // Until then the totals below record what is owed and nothing moves.
+    // A DOUBLE TAP CANNOT CHARGE TWICE even though this runs before the
+    // status guard has had its say. Both taps read the same row, so both
+    // send the same idempotency key — `pq:<quote>:<attempts>` — and Stripe
+    // answers the second with the first one's intent rather than making
+    // another. Only one of them then wins the guarded flip at the bottom;
+    // the loser is told the quote was already answered, which it was.
+    //
+    // AND IF THE BATCH FAILS AFTER THE MONEY MOVED, the quote is still
+    // 'sent' with the same attempt count, so the next tap sends the same key
+    // and Stripe hands back the charge that already happened. It is recorded
+    // on the second attempt instead of the first, and nobody pays twice.
     // -------------------------------------------------------------------
+    charged = await chargeApprovedQuote(env, row, item.order_id, amount);
+
     writes.push(env.DB.prepare(
       `UPDATE order_items SET parts_cents = parts_cents + ?
         WHERE id = ? AND ${stillSent}`,
@@ -493,10 +729,18 @@ export async function decideQuote(
   }
 
   // Last, so everything above it saw the row as it was before the decision.
+  //
+  // The charge is written down in the same statement that records the decision,
+  // because they are one fact: the customer said yes AND this is the money that
+  // moved for it. An approved quote with charged_at still NULL means exactly one
+  // thing — that this deployment cannot take cards at all — and that is the
+  // report an operator can act on rather than a column they have to interpret.
   writes.push(env.DB.prepare(
-    `UPDATE parts_quotes SET status=?, decided_at=?, updated_at=?
+    `UPDATE parts_quotes SET status=?, decided_at=?, updated_at=?,
+       payment_intent_id=?, charge_id=?, charged_at=?, charge_error=NULL
       WHERE id=? AND status='sent'`,
-  ).bind(decision, t, t, quoteId));
+  ).bind(decision, t, t, charged?.payment_intent_id ?? null,
+    charged?.charge_id ?? null, charged ? t : null, quoteId));
 
   const res = await env.DB.batch(writes);
   if ((res[writes.length - 1]?.meta.changes ?? 0) === 0) {
@@ -516,7 +760,17 @@ export async function decideQuote(
     starts_at: item.starts_at,
   });
 
-  return withTotal({ ...row, status: decision, decided_at: t, updated_at: t });
+  return withTotal({
+    ...row,
+    status: decision,
+    decided_at: t,
+    updated_at: t,
+    // The screen that showed the approve button is the one place a customer
+    // looks for "did that just take my money", so the answer comes back with
+    // the decision rather than a refresh later.
+    charged_at: charged ? t : row.charged_at,
+    charge_error: null,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -525,9 +779,9 @@ export async function decideQuote(
 
 /** Every quote on this guest's booking, newest first, plus what is still answerable. */
 export async function quotesForGuest(
-  env: Env, rawToken: string,
+  env: Env, ref: ThreadRef,
 ): Promise<{ quotes: PartsQuote[]; parts_cents: number }> {
-  const scope = await guestScope(env, rawToken);
+  const scope = await guestScope(env, ref);
   if (!scope || scope.items.length === 0) return { quotes: [], parts_cents: 0 };
 
   const ids = scope.items.map((i) => i.id);
@@ -599,14 +853,108 @@ export async function quotableItems(env: Env, operatorId: string, limit = 50) {
  * A quote left 'sent' forever is a live authorisation to charge somebody for
  * parts priced weeks ago. Expiring it costs the operator one tap to resend and
  * removes a whole class of "I approved that ages ago, why is it different now".
+ *
+ * A QUOTE THAT HAS TOUCHED MONEY IS NEVER EXPIRED HERE. The approval takes the
+ * money before the batch that records it — see decideQuote — so there is a
+ * window, small but entirely real, where the customer's card has been charged
+ * $340 and the row still says 'sent'. This sweep used to walk into that window
+ * three days later and write 'expired' over it, and at that point the money
+ * was unreachable: no approved quote to transfer, no charged_at to notice, and
+ * a status that means "nothing happened". The two conditions below make that
+ * impossible, and reconcileSentQuotes is what actually goes and finds the
+ * charge rather than merely refusing to bury it.
  */
 export async function expireQuotes(env: Env): Promise<number> {
   const t = now();
   const res = await env.DB.prepare(
     `UPDATE parts_quotes SET status='expired', updated_at=?
-      WHERE status='sent' AND expires_at IS NOT NULL AND expires_at <= ?`,
+      WHERE status='sent' AND expires_at IS NOT NULL AND expires_at <= ?
+        AND charged_at IS NULL AND payment_intent_id IS NULL`,
   ).bind(t, t).run();
   return res.meta.changes ?? 0;
+}
+
+/**
+ * Finds the money for a quote that was charged and never written down.
+ *
+ * THE FAILURE THIS RECOVERS FROM IS ONE REQUEST LONG. chargeApprovedQuote
+ * confirms the PaymentIntent in the same call that creates it, so Stripe has
+ * the customer's $340 the instant it answers — and everything that records
+ * that fact happens afterwards, in a batch that a killed isolate, an evicted
+ * worker or a second of D1 being unavailable can lose. What is left is a
+ * customer who has been charged and a quote that looks exactly like one nobody
+ * got round to answering. Neither side of the conversation can tell.
+ *
+ * Nothing on the row can answer it, because the row is the thing that was not
+ * written. So Stripe is asked, by the quote id that createPaymentIntent puts
+ * into the intent's metadata for exactly this purpose, and an intent that says
+ * 'succeeded' is recorded as the approval it always was — parts added to the
+ * booking, the quote marked approved and charged, and the payout sweep free to
+ * pay the business for it.
+ *
+ * Runs just before expireQuotes on the cron and looks only at quotes about to
+ * be expired, which bounds it: a quote passes through this set once and then
+ * leaves it in one direction or the other.
+ */
+export async function reconcileSentQuotes(env: Env, limit = 25): Promise<{
+  checked: number; recovered: number;
+}> {
+  if (!stripeConfigured(env)) return { checked: 0, recovered: 0 };
+  const t = now();
+  const rows = await env.DB.prepare(
+    `SELECT q.id, q.order_item_id, q.parts_cents + q.labor_cents AS amount_cents,
+            i.order_id
+       FROM parts_quotes q
+       JOIN order_items i ON i.id = q.order_item_id
+      WHERE q.status = 'sent' AND q.charged_at IS NULL AND q.payment_intent_id IS NULL
+        AND q.expires_at IS NOT NULL AND q.expires_at <= ?
+      ORDER BY q.expires_at
+      LIMIT ?`,
+  ).bind(t, Math.min(Math.max(1, Math.floor(limit)), 200)).all<{
+    id: string; order_item_id: string; amount_cents: number; order_id: string;
+  }>();
+
+  let recovered = 0;
+  const quotes = rows.results ?? [];
+  for (const quote of quotes) {
+    try {
+      const intents = await paymentIntentsByMetadata(env, 'parts_quote_id', quote.id);
+      const paid = intents.find((i) => i.status === 'succeeded');
+      if (!paid) continue;
+
+      // The same writes decideQuote makes, in the same order and under the
+      // same guard: everything reads the row while it still says 'sent', and
+      // the flip is last and is what decides whether this changed anything.
+      const stillSent =
+        `EXISTS (SELECT 1 FROM parts_quotes q WHERE q.id = ? AND q.status = 'sent')`;
+      const res = await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE order_items SET parts_cents = parts_cents + ?
+            WHERE id = ? AND ${stillSent}`,
+        ).bind(quote.amount_cents, quote.order_item_id, quote.id),
+        env.DB.prepare(
+          `UPDATE orders SET parts_cents = parts_cents + ?, updated_at = ?
+            WHERE id = ? AND ${stillSent}`,
+        ).bind(quote.amount_cents, t, quote.order_id, quote.id),
+        env.DB.prepare(
+          `UPDATE parts_quotes SET status='approved', decided_at=COALESCE(decided_at, ?),
+             updated_at=?, payment_intent_id=?, charge_id=?, charged_at=?,
+             charge_error=NULL
+            WHERE id=? AND status='sent'`,
+        ).bind(t, t, paid.id, chargeIdOf(paid.latest_charge), t, quote.id),
+      ]);
+      if ((res[2]?.meta?.changes ?? 0) > 0) {
+        recovered += 1;
+        console.warn(`recovered a parts charge nothing had written down: ${quote.id}`);
+      }
+    } catch (err) {
+      // One quote Stripe will not answer about must not stop the rest, and it
+      // must not be expired either — which is what the guard in expireQuotes
+      // above is for.
+      console.error('parts reconcile failed', quote.id, (err as Error).message);
+    }
+  }
+  return { checked: quotes.length, recovered };
 }
 
 /** Re-exported so callers importing from here do not reach past this module. */

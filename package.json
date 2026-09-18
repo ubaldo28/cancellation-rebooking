@@ -1,22 +1,25 @@
 {
-  "name": "gapfiller",
+  "name": "roundtheway",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "cf": "./scripts/cf.sh",
     "deploy": "./scripts/cf.sh deploy",
-    "db:create": "./scripts/cf.sh d1 create cancellation-rebooking",
-    "db:migrate:local": "wrangler d1 migrations apply cancellation-rebooking --local",
-    "db:migrate": "./scripts/cf.sh d1 migrations apply cancellation-rebooking --remote",
+    "db:create": "./scripts/cf.sh d1 create roundtheway",
+    "db:migrate:local": "wrangler d1 migrations apply roundtheway --local",
+    "db:migrate": "./scripts/cf.sh d1 migrations apply roundtheway --remote",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "r2:create": "./scripts/cf.sh r2 bucket create slotfill-photos",
+    "kv:create": "./scripts/cf.sh kv namespace create PHOTOS",
+    "art": "node tools/art-shot.js",
+    "photos": "node tools/tile-photos.js",
     "build": "npm --prefix web run build",
     "ship": "npm test && npm run db:migrate && npm run build && npm run deploy"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260831.1",
+    "playwright-core": "^1.63.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0",
     "wrangler": "^4.128.0"

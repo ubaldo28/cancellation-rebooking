@@ -1,0 +1,269 @@
+/*
+ * The location pages' own furniture: /near and /:metro.
+ *
+ * styles-index.css already dresses everything these two pages share with
+ * /browse and /cost — the counted heading, the lede, the rows of links, the
+ * tiles, the footer note. This file is only the parts that belong to a page
+ * ABOUT A PLACE and to nothing else: the price table scoped to one metro, the
+ * plain-English explanation of what a mobile appointment means for travel and
+ * access, the questions block, and the closing call to action.
+ *
+ * WHY A SECOND FILE RATHER THAN MORE .ix- RULES. styles-index.css is shared by
+ * four routes, and every rule added there has to be checked against three
+ * pages that did not ask for it. These blocks appear on two routes and will
+ * never appear on /browse or /cost, so they live where their blast radius is.
+ *
+ * Everything is prefixed .ar- so it cannot collide with .ix-, .tr-, .cg- or
+ * the profile stylesheet — they are loaded on other routes but share one
+ * document, so the prefix is the whole of the isolation.
+ *
+ * The visual language is deliberately borrowed rather than invented. The
+ * questions block is the trade page's disclosure list with a different prefix,
+ * because a reader who has seen one of those on /s/junk-removal should not
+ * have to learn a second control on /los-angeles.
+ */
+
+/* --------------------------------------------------------------------------
+ * The explainer: what a mobile appointment means here
+ *
+ * Set as prose at a readable measure rather than as a card. It is the one
+ * block on these pages that is genuinely an explanation and not a list, and
+ * boxing it would make it look like a promotional aside to be skipped — which
+ * is exactly backwards for a business whose defining fact is that the person
+ * doing the work drives to you.
+ * ----------------------------------------------------------------------- */
+.ar-explain { max-width: 66ch; }
+
+.ar-explain p {
+  margin: 0 0 12px;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--ink-3);
+}
+
+.ar-explain p:last-child { margin-bottom: 0; }
+
+/* The three things a mobile job actually needs from an address. A definition
+   list rather than bullets, because each one is a term with an answer under
+   it and a reader scanning for "parking" should be able to find the word. */
+.ar-needs {
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.ar-needs dt {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+
+.ar-needs dd {
+  margin: 3px 0 0;
+  max-width: 62ch;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* --------------------------------------------------------------------------
+ * Listed prices, one row per trade
+ *
+ * Not a table element: the rows are links to the trade's own page, and a cell
+ * containing a link that fills it is a table pretending to be a list. The
+ * figures are right-aligned and tabular so a reader can compare down the
+ * column, which is the only reason to show several trades at once.
+ * ----------------------------------------------------------------------- */
+.ar-prices { list-style: none; margin: 0; padding: 0; }
+
+.ar-prices li { border-bottom: 1px solid var(--line); }
+
+.ar-price {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 8px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.ar-price:hover { background: var(--accent-soft); }
+
+.ar-price:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--r-sm);
+}
+
+.ar-price-name {
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ar-price-fig {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  text-align: right;
+}
+
+.ar-price-fig b {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.ar-price-fig span {
+  font-size: 12.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------------------
+ * Which trades work these neighbourhoods
+ *
+ * A wrapped run of links rather than a column, because the useful question it
+ * answers — "is my trade covered at all" — is answered by scanning names, and
+ * thirty names in one column is a scroll rather than a scan.
+ * ----------------------------------------------------------------------- */
+.ar-trades {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ar-trade {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.ar-trade:hover { border-color: var(--line-strong); color: var(--accent-ink); }
+
+.ar-trade:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ar-trade-n {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------------------
+ * Questions
+ *
+ * The trade page's disclosure control, rule for rule. Copied deliberately
+ * rather than shared: styles-trade.css is loaded on a route these pages are
+ * not, and importing it here to reuse eight declarations would pull a whole
+ * stylesheet across for the sake of a plus sign.
+ * ----------------------------------------------------------------------- */
+.ar-faq { border-top: 1px solid var(--line); }
+
+.ar-q { border-bottom: 1px solid var(--line); }
+
+.ar-q > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 58px;
+  padding: 15px 4px;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  cursor: pointer;
+  list-style: none;
+}
+
+.ar-q > summary::-webkit-details-marker { display: none; }
+
+.ar-q > summary::after {
+  content: '+';
+  flex: 0 0 auto;
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--faint);
+}
+
+.ar-q[open] > summary::after { content: '–'; }
+
+.ar-q > summary:hover { color: var(--accent-ink); }
+
+.ar-q > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+.ar-a {
+  margin: 0;
+  padding: 0 4px 20px;
+  max-width: 62ch;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--ink-3);
+}
+
+.ar-a a { color: var(--accent-ink); text-underline-offset: 3px; }
+
+/* --------------------------------------------------------------------------
+ * The closing call to action
+ *
+ * One panel, two things a visitor can actually do today, and no third. There
+ * is nothing to buy on this site yet, so the actions are the honest ones —
+ * watch for an opening, or look at the whole catalogue — and the panel is
+ * quiet enough not to read as an advertisement for a transaction that is not
+ * built.
+ * ----------------------------------------------------------------------- */
+.ar-cta {
+  margin-top: 40px;
+  padding: 22px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.ar-cta h2 {
+  margin: 0 0 6px;
+  font-size: 19px;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+}
+
+.ar-cta p {
+  margin: 0 0 14px;
+  max-width: 60ch;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.ar-cta-do { display: flex; flex-wrap: wrap; gap: 10px; }
+
+@media (max-width: 640px) {
+  .ar-cta { margin-top: 32px; padding: 18px 16px; }
+  .ar-price { padding: 12px 6px; }
+  .ar-price-name { font-size: 15px; }
+}

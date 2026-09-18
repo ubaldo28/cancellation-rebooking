@@ -2,7 +2,7 @@ import type { Point } from '../types';
 import { haversineMeters } from './util';
 
 /**
- * The places Slotfill serves, as data.
+ * The places Round The Way serves, as data.
  *
  * This started as two constants in lib/seo.ts — `METRO = 'Los Angeles'` and
  * `METRO_PATH = '/los-angeles'` — read by about twenty call sites. That was
@@ -18,7 +18,7 @@ import { haversineMeters } from './util';
  * WHAT MAY GO IN A RECORD, and this is the same rule the metro page has always
  * carried: `geography` may state general facts about the place that would be
  * true if this site did not exist, and nothing else. No claim about how many
- * customers are there, how fast anybody replies, or how well Slotfill is doing
+ * customers are there, how fast anybody replies, or how well Round The Way is doing
  * — every number on a metro page is counted from the rows fetched to build it.
  */
 
@@ -52,12 +52,43 @@ export interface MetroArea {
 }
 
 export interface Metro {
+  /**
+   * WHETHER THE SITE ADMITS TO THIS PLACE YET.
+   *
+   * A metro can be fully written — neighbourhoods, coordinates, postcodes,
+   * geography — and still not be somewhere this product is open. Santa Maria is
+   * exactly that: the record below is complete and correct, and the site is
+   * being tested in Los Angeles only, so the front page says so and every other
+   * page has to agree with the front page.
+   *
+   * The alternative was deleting the record and writing it again later, which
+   * is how a hundred lines of researched postcodes get lost. This is a switch
+   * instead: false keeps the entry and takes the place off the site.
+   *
+   * READ THROUGH `METROS`, NOT HERE. Every page, the sitemap, robots.txt, the
+   * nav, the public API and the postcode seed enumerate METROS, and METROS is
+   * the live ones. Nothing outside this file should be testing this flag —
+   * if it does, that is a place that would have been missed.
+   */
+  live: boolean;
   /** Also the URL: '/santa-maria'. Use `metroPath` rather than building it. */
   slug: string;
   /** As a person writes it. Goes in titles, headings and breadcrumbs. */
   name: string;
   /** Printed beside the name, so a metro outside California still reads right. */
   state: string;
+  /**
+   * ISO 3166-1 alpha-2, for the `addressCountry` of a schema.org PostalAddress.
+   *
+   * A LocalBusiness node without an address cannot produce a rich result at
+   * all, and the businesses here have no street address to give — they are
+   * vans. A locality, a region and a country is the most an honest address can
+   * say about one, and the country is the only part of it a metro record did
+   * not already carry. It lives here rather than as a constant in lib/seo.ts
+   * so that the first metro outside the United States gets the right one by
+   * being written down, not by somebody remembering.
+   */
+  country: string;
   /** IANA zone. Both current metros are Pacific; a third need not be. */
   timezone: string;
   /** Roughly the middle of the served area, for the nearest-metro fallback. */
@@ -69,7 +100,7 @@ export interface Metro {
    *
    * General facts about the place only — climate, terrain, what is built there
    * and how it is laid out. The metro page adds its own closing paragraph
-   * about what Slotfill actually does, which is the same everywhere because it
+   * about what Round The Way actually does, which is the same everywhere because it
    * is a fact about the product rather than about the place.
    */
   geography: string[];
@@ -85,9 +116,11 @@ export interface Metro {
  * on this site is the patch a mobile business drives, not a city boundary.
  */
 const LOS_ANGELES: Metro = {
+  live: true,
   slug: 'los-angeles',
   name: 'Los Angeles',
   state: 'California',
+  country: 'US',
   timezone: 'America/Los_Angeles',
   centre: { lat: 34.1808, lng: -118.4487 },
   areas: [
@@ -134,9 +167,15 @@ address coming to a shop.`,
  * fill the list — and the postcodes are the real 934xx ones.
  */
 const SANTA_MARIA: Metro = {
+  // OFF WHILE THE SITE IS TESTED IN LOS ANGELES ONLY. The record below is
+  // complete and stays complete; flipping this to true is the whole of opening
+  // here. See `live` on the Metro interface for why it is a switch rather than
+  // a deletion, and what reads it.
+  live: false,
   slug: 'santa-maria',
   name: 'Santa Maria',
   state: 'California',
+  country: 'US',
   timezone: 'America/Los_Angeles',
   centre: { lat: 34.9530, lng: -120.4357 },
   areas: [
@@ -180,7 +219,39 @@ tools arrive at the address instead of the address travelling to a shop.`,
  * neighbourhood that cannot be placed any other way, and that should be the
  * densest one rather than whichever name sorts first.
  */
-export const METROS: readonly Metro[] = [LOS_ANGELES, SANTA_MARIA];
+const ALL_METROS: readonly Metro[] = [LOS_ANGELES, SANTA_MARIA];
+
+/**
+ * The metros that are LIVE — the list the rest of the codebase reads.
+ *
+ * Filtered rather than hand-written, so opening or closing a place is one
+ * boolean on its record and not an edit here as well. Everything downstream
+ * enumerates this: the metro pages, /near, the sitemap, robots.txt, the header,
+ * the public API, the postcode seed. A metro that is not in it has no page, is
+ * in no sitemap, and is not a postcode this site recognises — which is the
+ * whole point, because a visitor typing a postcode we do not serve should be
+ * told that rather than shown an empty neighbourhood.
+ *
+ * `metroBySlug` therefore returns null for a hidden metro and /santa-maria
+ * 404s. That is correct: it is not a page while the place is not open.
+ */
+export const METROS: readonly Metro[] = ALL_METROS.filter((m) => m.live);
+
+/**
+ * Every metro that has a record, live or not.
+ *
+ * Exported for one job — the demo seed, which has to know that a business based
+ * in a hidden metro should not be created at all. Nothing that renders a page
+ * may use this; use METROS.
+ */
+export const METROS_INCLUDING_HIDDEN: readonly Metro[] = ALL_METROS;
+
+/** Whether a place slug belongs to a metro that is not open yet. */
+export const isHiddenPlace = (placeSlug: string): boolean => {
+  const slug = (placeSlug ?? '').trim().toLowerCase();
+  const owner = ALL_METROS.find((m) => m.areas.some((a) => a.slug === slug));
+  return !!owner && !owner.live;
+};
 
 /**
  * The metro a page falls back to when there is genuinely nothing to go on.
@@ -205,9 +276,22 @@ const BY_PLACE_SLUG = new Map<string, Metro>(
   METROS.flatMap((m) => m.areas.map((a) => [a.slug, m] as const)),
 );
 
+/**
+ * One neighbourhood by its slug, LIVE OR NOT.
+ *
+ * The one lookup that deliberately reads every record rather than the live
+ * ones. It is a dictionary, not a listing: callers use it to turn a slug they
+ * already hold into coordinates and a name, and answering "no such place" for a
+ * neighbourhood that is written down and merely closed would be a lie of a
+ * different kind — the demo seed, which knows a slug because it is in this
+ * file, would throw at module load rather than skip a business.
+ *
+ * Nothing that decides WHETHER TO SHOW something may use this. Ask
+ * `isHiddenPlace` for that, or enumerate METROS.
+ */
 export const metroAreaBySlug = (placeSlug: string): MetroArea | null => {
   const key = (placeSlug ?? '').trim().toLowerCase();
-  for (const m of METROS) {
+  for (const m of METROS_INCLUDING_HIDDEN) {
     const a = m.areas.find((x) => x.slug === key);
     if (a) return a;
   }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, type PendingQuestion } from '../api';
+import { onDay } from '../lib/money';
 import '../styles-parts.css';
 
 /**
@@ -11,14 +12,14 @@ import '../styles-parts.css';
  * and everyone was better off except the platform that found the job and held
  * the slot.
  *
- * NO MONEY HAS ACTUALLY MOVED FOR ANY OF THIS YET — see PaymentState.tsx —
- * which is why the copy below asks the question and describes what the answer
- * settles, rather than telling a customer a refund is on its way. The answer
- * is recorded either way and it is what the refund will follow when there is
- * one; a button reading "refund me $95" to somebody who was never charged $95
- * is the same lie the rest of the site has just stopped telling.
+ * REAL MONEY IS SITTING ON THIS ANSWER — see PaymentState.tsx. The customer
+ * paid the full price by card when they booked and Round The Way is still
+ * holding it, so the copy below says plainly what each answer does with that
+ * money. It said the opposite for months, and a page telling somebody nothing
+ * was paid is a page that talks them out of the tap that gives them their
+ * money back.
  *
- * So the money waits, and the customer is asked one thing. The question is
+ * So the money waits on one question. The question is
  * deliberately not framed as an accusation or an investigation — most of the
  * time the honest answer is "they never came", it takes one tap, and the
  * refund is immediate. The people it is really aimed at are the ones for whom
@@ -29,8 +30,8 @@ import '../styles-parts.css';
  * "are you helping them cheat us?" would make an honest customer feel accused
  * over a refund they are plainly owed.
  */
-export default function WorkQuestion({ token, onAnswered }: {
-  token: string;
+export default function WorkQuestion({ threadRef, onAnswered }: {
+  threadRef: string;
   onAnswered?: () => void;
 }) {
   const [q, setQ] = useState<PendingQuestion | null>(null);
@@ -40,12 +41,12 @@ export default function WorkQuestion({ token, onAnswered }: {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.pendingQuestion(token);
+      const res = await api.pendingQuestion(threadRef);
       setQ(res.question);
     } catch {
       // Nothing useful to show if this will not load; the poll retries.
     }
-  }, [token]);
+  }, [threadRef]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -53,7 +54,7 @@ export default function WorkQuestion({ token, onAnswered }: {
     if (!q) return;
     setBusy(a); setError(null);
     try {
-      await api.answerWork(token, q.order_item_id, a);
+      await api.answerWork(threadRef, q.order_item_id, a);
       setQ(null);
       onAnswered?.();
     } catch (e) {
@@ -80,8 +81,7 @@ export default function WorkQuestion({ token, onAnswered }: {
           <p style={{ margin: '0 0 10px' }}>
             Just to be sure — <strong>they did the job</strong>, so you keep the
             service and the business is treated as having completed it. Nothing
-            comes back to you, and the price is between the two of you as it
-            was.
+            comes back to you, and what you paid goes to the business.
           </p>
           <div className="quote-actions">
             <button className="btn" type="button" disabled={busy !== null}
@@ -111,18 +111,33 @@ export default function WorkQuestion({ token, onAnswered }: {
 
       {error && <div className="error" style={{ marginTop: 12 }}>{error}</div>}
 
-      {/* Said plainly, because the alternative is somebody assuming silence is
-          the safe option. It is not: it is the one outcome where nobody gets
-          anything, which is deliberate — it stops the two sides simply
-          agreeing to say nothing. */}
+      {/*
+        WHAT SILENCE DOES, AND WHY THIS PARAGRAPH CHANGED.
+
+        It used to end "if nobody answers, the payment stays where it is". That
+        was written when no money could move, so keeping it cost nobody anything
+        and read as a tidy symmetry. It is not true any more: this card only
+        ever appears when the BUSINESS cancelled, and settleExpiredHolds in
+        src/lib/settlement.ts releases the refund when the question goes
+        unanswered — a platform quietly keeping a stranger's money for a job that
+        never happened, because they did not open an email, is the one outcome
+        this product cannot have.
+
+        So it says what actually happens, with the date it happens on, read off
+        the hold rather than guessed at. Telling somebody their money is stuck
+        when it is not is how you make them chase a refund already on its way.
+      */}
       <p className="faint" style={{ margin: '12px 0 0' }}>
-        Answer either way and it is settled straight away. Nothing was paid for
-        this booking — paying on the site is not switched on yet — so today the
-        answer settles the record rather than any money. Once it is switched
-        on, "they left" is what releases {q.refund} back to you and "they did
-        the work" is what pays the business; if nobody answers, the payment
-        stays where it is either way, so tell us even if the answer is
-        awkward.
+        Answer either way and it is settled straight away. You paid for this
+        booking by card and we are still holding that money: "they left"
+        releases {q.refund} back to you, and "they did the work" pays the
+        business instead.
+        {q.hold_until
+          ? ` If nobody answers, the hold runs out on ${onDay(q.hold_until)} and `
+            + `${q.refund} comes back to you then anyway — answering now is what `
+            + 'gets it moving today.'
+          : ' If nobody answers the hold runs out on its own and the money comes '
+            + 'back to you anyway, but answering now is what gets it moving today.'}
       </p>
     </section>
   );

@@ -35,14 +35,18 @@ const one = async <T>(sql: string, ...args: unknown[]) =>
 async function seed() {
   env = makeEnv(ALL_MIGRATIONS) as unknown as Env;
   const n = now();
+  // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+  // must have somewhere to be paid before its work can be sold, so priceOrder
+  // treats an opening for an operator without it as unlisted. Drop it and every
+  // booking in this file comes back slot_gone.
   await env.DB.prepare(
     `INSERT INTO operators (id,email,business_name,trade,timezone,country,currency,language,
        location_mode,fill_model,sms_mode,max_detour_seconds,min_gap_seconds,buffer_seconds,
        offer_ttl_seconds,offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,
        discount_percent,plan,accept_public_bookings,deposit_cents,share_location,
-       created_at,updated_at)
+       created_at,updated_at,stripe_payouts_enabled)
      VALUES (?,?,?, 'mobile car wash and detailing','America/Los_Angeles','US','USD','en',
-       'mobile','both','device',3600,3600,900,5400,3,3600,604800,0,'active',1,0,1,?,?)`,
+       'mobile','both','device',3600,3600,900,5400,3,3600,604800,0,'active',1,0,1,?,?,1)`,
   ).bind(OP, 'r@x.com', 'Valley Detailing', n, n).run();
   await saveOperatorCard(env, OP, { ref: 'pm', brand: 'visa', last4: '4242' });
   await saveVehicle(env, OP, { make: 'Ford', model: 'Transit', color: 'White', plate: '8ABC' });

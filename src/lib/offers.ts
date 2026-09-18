@@ -1,14 +1,77 @@
 import type { Candidate, Env, Operator } from '../types';
 import { hashOfferToken } from './auth';
 import { discounted, formatMoney, localeFor } from './countries';
+import { sendEmail, type Email } from './email';
 import { copy, pickLang } from './messages';
+import { REACHABLE_ACCOUNT_SQL, type GapRow } from './rank';
 import { formatTimeRange } from './tz';
-import { conflict, newId, newToken, notFound, now } from './util';
-import type { GapRow } from './rank';
+import {
+  conflict, escapeHtml, newId, newToken, notFound, now, timingSafeEqual,
+} from './util';
+
+/**
+ * HOW AN OFFER REACHES THE PERSON IT IS FOR.
+ *
+ * It used to be a text message, and that is the whole reason this feature has
+ * never worked. The Worker never sent one itself: it handed the operator a
+ * prefilled `sms:` link to tap on their own handset, wrote a row into the
+ * `messages` table to record that it had done so, and called that delivery.
+ * Two things were wrong with it by the time the product became a marketplace.
+ *
+ *   The people it could be sent to did not exist. A candidate needed a mobile
+ *   number and an SMS consent flag, and every customer this site introduces is
+ *   written with neither, on purpose -- no contact details are exchanged here.
+ *   See the rewritten queries in ./rank.ts.
+ *
+ *   And there is no SMS. Not "not configured yet": a US route needs a
+ *   registered campaign behind a rentable street address published on the
+ *   site, and that is a settled no. ./sms.ts stays for the sign-in code path
+ *   it was hardened for; nothing in this file goes near it.
+ *
+ * SO AN OFFER IS DELIVERED THE WAY EVERYTHING ELSE ON THIS SITE IS.
+ *
+ *   1. A MESSAGE IN THE CONVERSATION THEY ALREADY HAVE. Every booking opens a
+ *      thread between that customer and that business, and it is where the
+ *      two of them have talked about this job before. The write goes in the
+ *      SAME D1 batch as the offer row, for the reason chatWrites in
+ *      ./estimates.ts gives: a message with no offer behind it is the site
+ *      telling somebody about an hour that was never held, and an offer with
+ *      no message is a row nobody was ever told about -- which is precisely
+ *      the state every offer this product has ever written ended up in.
+ *
+ *   2. AN EMAIL, ON THE BULK LANE. The thread is a page somebody has to open,
+ *      so on its own it is a note left in an empty room. The nudge goes to the
+ *      address that IS their account since migration 0038, through
+ *      BULK_EMAIL_PROVIDER -- the same lane as the opening alerts, for the
+ *      same reason: this is the half of the site's email that grows with how
+ *      busy it is, and it must not spend the allowance the sign-in links need.
+ *      A sign-in link never goes this way and none is sent from here; what
+ *      travels is the offer link, which is bearer authority over exactly one
+ *      offer and nothing else.
+ *
+ * WHICH OF THE TWO IS THE DELIVERY. The message is. It lands inside the
+ * transaction, so it either exists or the whole wave rolled back. The email is
+ * sent afterwards, cannot be part of a transaction, and is allowed to fail --
+ * an offer whose nudge bounced is still an offer sitting in the conversation.
+ * `emailed` on the result says which happened rather than leaving the operator
+ * to assume.
+ */
 
 const money = (cents: number, currency: string, locale: string) =>
   formatMoney(cents, currency, locale);
 
+/**
+ * What the customer reads, in their own language.
+ *
+ * One string for both lanes on purpose: the email is the nudge and the thread
+ * is the record, and two wordings of the same offer would be two prices and
+ * two times to reconcile when somebody quotes one back at the business.
+ *
+ * NO "Reply STOP" line any more. It was a carrier instruction printed on a
+ * message no carrier carries; in a chat bubble it is advice that does nothing
+ * at all. Stopping these is a one-click link, and it rides on the email --
+ * see offerEmail below.
+ */
 export function buildMessage(
   op: Operator, cand: Candidate, gap: GapRow, url: string,
 ): string {
@@ -25,31 +88,180 @@ export function buildMessage(
       : ` ${money(offered, op.currency, locale)}`
     : '';
 
-  return t.sms({
+  return t.offer({
     name: cand.first_name,
     business: op.business_name,
     when,
     price: price.trim(),
     service: cand.title,
     url,
-  }) + `\n${t.optOut}`;
+  });
 }
 
 /**
- * Device-send links. The Worker never sends the SMS itself in 'device' mode —
- * it hands the operator a prefilled compose screen on their own phone. No
- * carrier registration, no per-message cost, and the message comes from the
- * number the client already knows.
+ * THE WAY OUT, AND WHY IT IS NOT THE ALERTS' UNSUBSCRIBE.
  *
- * iOS and Android disagree on the separator, so both are returned and the
- * frontend picks by user agent rather than guessing server-side.
+ * sms_consent was two things at once: the permission to send and the record of
+ * it being withdrawn. Dropping it from the candidate queries drops both, and a
+ * product that offers somebody an hour with no way to say "stop offering me
+ * hours" is worse than one that cannot offer at all.
+ *
+ * unsubscribeByToken in ./alerts.ts is the right SHAPE and the wrong subject.
+ * It switches off a row in `watches` -- a standing request a stranger made for
+ * themselves -- and there is no watch here to switch off. The thing that has
+ * to stop is offers from one business to one of their past customers, and the
+ * column that already means exactly that is `clients.opted_out_at`, which both
+ * queries in ./rank.ts have always filtered on. So the mechanism is borrowed
+ * and the subject is the client row.
+ *
+ * What is borrowed is the part that matters: a SINGLE-PURPOSE key, derived
+ * rather than random, whose only power is switching itself off. The reason
+ * alerts derive theirs is that the matcher sends mail weeks after the watch
+ * was made and only a hash of the random token was kept -- a hash does not run
+ * backwards. The same is true here: this link has to be reproducible by every
+ * future wave, and the offer's own token cannot do it because it is minted per
+ * offer, expires in hours, and is authority to BOOK.
+ *
+ * WHAT IS DIFFERENT, AND IT IS AN IMPROVEMENT ON THE WATCH VERSION. A watch
+ * stores the hash of its stop key in a column; this stores nothing at all. The
+ * token is the client's id and a digest of that id under the server pepper, so
+ * the route recomputes the digest and compares. A read-only copy of the
+ * database yields no working stop links because there are none in it, and no
+ * migration was needed to add a column to carry them.
+ *
+ * The id being visible in the link is not a leak: it is a random identifier
+ * that names a row in one operator's client list, it reveals nothing on its
+ * own, and without SESSION_PEPPER nobody can turn it into a working link.
  */
-export function deviceSendLinks(phone: string, body: string) {
-  const encoded = encodeURIComponent(body);
+export const offerStopToken = async (env: Env, clientId: string): Promise<string> =>
+  `${clientId}.${await hashOfferToken(`client-offer-stop:${clientId}`, env)}`;
+
+/**
+ * Switches offers off from the link at the bottom of an offer email.
+ *
+ * Deliberately does nothing else. It cannot read the client row, change an
+ * address or say whose it is — the only outcome is that this business stops
+ * offering this person their spare hours, which is what the person clicking it
+ * asked for. Everything else about the relationship, including the bookings
+ * they have already made and the conversation they are in, is untouched.
+ *
+ * Answers false for anything that does not match, including a blank token, so
+ * that a caller cannot accidentally opt out "the client whose digest is the
+ * digest of the empty string".
+ */
+export async function stopOffersByToken(env: Env, token: string): Promise<boolean> {
+  const raw = (token ?? '').trim();
+  const dot = raw.indexOf('.');
+  if (dot <= 0 || dot === raw.length - 1) return false;
+
+  const clientId = raw.slice(0, dot);
+  const presented = raw.slice(dot + 1);
+  const expected = await hashOfferToken(`client-offer-stop:${clientId}`, env);
+  // Constant time, for the reason mayEchoSignInLink gives about the debug
+  // token: `!==` on a digest returns at the first differing byte, so how long
+  // the refusal takes measures how much of the answer the caller already has.
+  if (!timingSafeEqual(presented, expected)) return false;
+
+  const res = await env.DB.prepare(
+    `UPDATE clients SET opted_out_at = ?, updated_at = ?
+      WHERE id = ? AND opted_out_at IS NULL`,
+  ).bind(now(), now(), clientId).run();
+  return (res.meta.changes ?? 0) > 0;
+}
+
+/**
+ * The mailbox behind each of these client rows.
+ *
+ * The same roll-up ./rank.ts joined on to decide who was a candidate at all,
+ * re-run here over just the wave, so that the address is read in the one place
+ * that actually sends and never travels to a browser. It is re-run rather than
+ * carried on the Candidate for two reasons: a candidate list can sit on an
+ * operator's screen for minutes before they press send, and an account closed
+ * in between must not be mailed; and a contact detail that is never put in a
+ * response body cannot be leaked by a response body.
+ *
+ * Reading the fragment from ./rank.ts rather than typing the joins out again
+ * is what stops the two ever disagreeing. A difference between them would not
+ * be a caught error — it would be a candidate the operator was shown, chose,
+ * and whose offer went to nobody.
+ */
+async function reachableEmails(
+  env: Env, operatorId: string, clientIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (clientIds.length === 0) return out;
+  const holes = clientIds.map(() => '?').join(',');
+  const rows = await env.DB.prepare(
+    `SELECT client_id, login_email FROM (${REACHABLE_ACCOUNT_SQL})
+      WHERE client_id IN (${holes})`,
+  ).bind(operatorId, ...clientIds).all<{ client_id: string; login_email: string }>();
+  for (const r of rows.results ?? []) out.set(r.client_id, r.login_email);
+  return out;
+}
+
+/**
+ * What the nudge says.
+ *
+ * Shaped like alertEmail in ./alerts.ts — the facts as a list, one link that
+ * does the thing, and a stop link that is always present — because they are
+ * the same kind of message to the same kind of reader and two house styles for
+ * "a business near you has an hour free" would be two things to maintain.
+ *
+ * The one line it has that the alert does not is why this arrived: an alert
+ * was asked for and this was not, so it says which business it is from and
+ * that they were booked with before. Somebody who has forgotten the booking is
+ * exactly who needs telling.
+ */
+function offerEmail(
+  op: Operator, cand: Candidate, gap: GapRow, to: string, url: string, stopUrl: string,
+): Email {
+  const lang = pickLang(cand.language ?? null, op.language ?? null);
+  const t = copy(lang);
+  const locale = localeFor(op.country, lang);
+  const when = formatTimeRange(
+    gap.starts_at, gap.starts_at + cand.duration_seconds, op.timezone, locale);
+  const offered = discounted(cand.price_cents, op.discount_percent, op.currency);
+
+  const facts: Array<[string, string]> = [
+    [t.offerEmailFacts.what, cand.title],
+    [t.offerEmailFacts.when, when],
+    // No price line at all when the job has no price on it, rather than a
+    // label with an empty value or a zero. A service an operator has not
+    // priced is one they quote per job, and printing "$0.00" beside it is the
+    // one number that is certainly wrong.
+    ...(cand.price_cents > 0
+      ? [[t.offerEmailFacts.price, op.discount_percent > 0
+          ? `${money(offered, op.currency, locale)} (${op.discount_percent}% off)`
+          : money(offered, op.currency, locale)] as [string, string]]
+      : []),
+  ];
+
+  const opening = t.offerEmailOpening({ name: cand.first_name, business: op.business_name });
+  const why = t.offerEmailWhy({ business: op.business_name });
+  const stop = t.stopOffers({ url: stopUrl });
+
   return {
-    ios: `sms:${phone}&body=${encoded}`,
-    android: `sms:${phone}?body=${encoded}`,
-    body,
+    to,
+    subject: t.offerEmailSubject({ business: op.business_name, when }),
+    text: [
+      opening,
+      '',
+      ...facts.map(([k, v]) => `${k}: ${v}`),
+      '',
+      `${t.firstToConfirm} ${url}`,
+      '',
+      why,
+      '',
+      stop,
+    ].join('\n'),
+    html:
+      `<p>${escapeHtml(opening)}</p>`
+      + `<ul>${facts.map(([k, v]) =>
+        `<li><strong>${escapeHtml(k)}:</strong> ${escapeHtml(v)}</li>`).join('')}</ul>`
+      + `<p><a href="${escapeHtml(url)}">${escapeHtml(t.yesBookMe)}</a></p>`
+      + `<p style="color:#666;font-size:14px">${escapeHtml(t.firstToConfirm)}</p>`
+      + `<p style="color:#666;font-size:14px">${escapeHtml(why)}</p>`
+      + `<p style="color:#666;font-size:14px">${escapeHtml(stop)}</p>`,
   };
 }
 
@@ -57,19 +269,39 @@ export interface CreatedOffer {
   offer_id: string;
   client_id: string;
   first_name: string;
-  phone_e164: string | null;
   url: string;
   message: string;
-  send: { ios: string; android: string; body: string };
+  /**
+   * The conversation the message landed in. The operator's own inbox reads
+   * this table, so this is the id of a thread they can open and see the offer
+   * sitting in — which is the point: nothing was handed to them to send.
+   */
+  thread_id: string;
+  /**
+   * Whether the nudge email actually left. False means the offer is in their
+   * conversation and nothing has pinged them about it, which is a smaller
+   * thing than a failed send but is still not the same as delivered, and the
+   * operator is told rather than left to assume.
+   */
+  emailed: boolean;
   rank: number;
   score: number;
   reasons: string[];
 }
 
 /**
- * Persist a wave of offers for a gap and return everything the dashboard needs
- * to actually get them sent. Marks the gap 'offering' so a concurrent
- * detection pass will not expire it out from under the live offers.
+ * Send a wave of offers for a gap.
+ *
+ * SENDS, RATHER THAN PREPARING TO SEND. The old version returned `sms:` links
+ * for the operator to tap one at a time on their own phone, which meant the
+ * offer rows said 'sent' whether or not they ever did it, and on a deployment
+ * with no SMS at all it meant nobody was ever told anything. Everything here
+ * happens server-side: the message is written into each customer's
+ * conversation inside the same transaction as the offer, and the email goes
+ * out immediately afterwards.
+ *
+ * Marks the gap 'offering' so a concurrent detection pass will not expire it
+ * out from under the live offers.
  */
 export async function createOffers(
   env: Env, op: Operator, gap: GapRow, candidates: Candidate[],
@@ -77,6 +309,16 @@ export async function createOffers(
   if (candidates.length === 0) return [];
   const t = now();
   const expiresAt = Math.min(t + op.offer_ttl_seconds, gap.starts_at);
+
+  /*
+   * The addresses, read BEFORE anything is written.
+   *
+   * Order matters in one direction only: if this read throws, nothing has been
+   * written and no offer exists, which is the failure worth having. Doing it
+   * after the batch would mean rows saying 'sent' for a wave whose recipients
+   * could not be looked up.
+   */
+  const emails = await reachableEmails(env, op.id, candidates.map((c) => c.client_id));
 
   /**
    * The offer rows this gap already has, so a second wave keeps their ids.
@@ -92,7 +334,10 @@ export async function createOffers(
    * the first offers expired, got a 500 and nobody was texted at all.
    *
    * Reading the ids first is one query for the whole wave, and it makes the
-   * upsert address the row it is actually going to update.
+   * upsert address the row it is actually going to update. The `messages` row
+   * that made the failure so expensive is gone -- see the chat write below --
+   * but the id still has to be the existing one, because a second wave must
+   * refresh the offer somebody is holding rather than mint a rival to it.
    */
   const held = await env.DB.prepare(
     `SELECT id, client_id, lead_id FROM gap_offers WHERE gap_id = ?`,
@@ -102,9 +347,26 @@ export async function createOffers(
 
   const out: CreatedOffer[] = [];
   const writes: D1PreparedStatement[] = [];
+  /** The raw offer token and the address for each wave member, for the sends below. */
+  const pending: Array<{ cand: Candidate; to: string; url: string }> = [];
 
-  for (let i = 0; i < candidates.length; i++) {
-    const c = candidates[i]!;
+  for (const c of candidates) {
+    /*
+     * A CANDIDATE WITH NO CHANNEL IS NOT OFFERED AT ALL.
+     *
+     * rankCandidates joins on both of these, so in the ordinary path neither
+     * miss is possible. This is here because an offer row is written a few
+     * lines below with status 'sent', and 'sent' has to mean somebody was
+     * told: the previous version wrote that word for every candidate handed to
+     * it and left delivery to whether the operator got round to tapping a
+     * link. Skipping is also the right answer for the race this cannot
+     * otherwise see -- a customer who closed their account, or a conversation
+     * that was closed, between the operator reading the list and pressing
+     * send.
+     */
+    const to = emails.get(c.client_id);
+    if (!c.thread_id || !to) continue;
+
     const raw = newToken(24);
     const url = `${env.APP_URL.replace(/\/$/, '')}/o/${raw}`;
     const message = buildMessage(op, c, gap, url);
@@ -140,7 +402,7 @@ export async function createOffers(
          expires_at = excluded.expires_at, updated_at = excluded.updated_at`,
     ).bind(
       offerId, op.id, gap.id, c.kind, c.client_id, c.lead_id, c.service_id,
-      i + 1, c.drive_in_seconds, c.drive_out_seconds, c.detour_seconds,
+      out.length + 1, c.drive_in_seconds, c.drive_out_seconds, c.detour_seconds,
       c.overdue_days, c.urgency, c.score, await hashOfferToken(raw, env),
       t, expiresAt, quoted, t, t,
     ));
@@ -156,36 +418,108 @@ export async function createOffers(
       ).bind(t, t, c.lead_id, op.id));
     }
 
+    /*
+     * THE DELIVERY ITSELF, in the same batch as the offer it is about.
+     *
+     * This replaces a row in `messages`, which was the SMS pipeline's send
+     * log: a table whose rows exist because a carrier charged for them, with a
+     * `to_address` column that held the customer's phone number. Writing the
+     * in-app conversation into it would be wrong twice over -- migration 0011
+     * separated the two precisely so a free thread could never be mistaken for
+     * a billable send, and `to_address` on an operator-scoped table is a copy
+     * of a contact detail this product promises the operator never gets. So
+     * the offer is a chat message, and `messages` keeps no row for it at all;
+     * the record that it went is the transcript line the customer can read
+     * back, plus gap_offers.sent_at.
+     *
+     * The unread counter goes to the guest, because they are the side with
+     * something new to read. Both statements are scoped by operator_id as well
+     * as by id: the thread came off a candidate this operator was shown, and
+     * scoping it anyway is what makes that true of the statement rather than
+     * of the caller.
+     *
+     * NOT PUT THROUGH redactContact, unlike anything a person types into a
+     * thread, and that is a decision rather than an omission. This body is
+     * composed here out of the business name, the service name, a time and a
+     * price -- fields that are already on the public listing for anybody to
+     * read -- plus a link this function has just minted. The filter looks for
+     * digit runs, and the offer token is 24 random bytes: one unlucky token
+     * would be silently mangled and the customer would tap a link that opens
+     * nothing. The same reasoning is why parts.ts redacts the operator's
+     * description at INPUT and not the sentence it wraps around it.
+     */
     writes.push(env.DB.prepare(
-      `INSERT INTO messages
-         (id, operator_id, client_id, offer_id, direction, channel, to_address,
-          body, status, created_at, updated_at)
-       VALUES (?,?,?,?, 'out', ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      newId(), op.id, c.client_id, offerId,
-      op.sms_mode === 'device' ? 'device' : 'sms',
-      c.phone_e164 ?? '', message,
-      op.sms_mode === 'device' ? 'handed_off' : 'queued', t, t,
-    ));
+      `INSERT INTO chat_messages (id, thread_id, sender, body, created_at)
+       SELECT ?,?, 'operator', ?, ?
+        WHERE EXISTS (SELECT 1 FROM threads
+                       WHERE id = ? AND operator_id = ? AND status = 'open')`,
+    ).bind(newId(), c.thread_id, message, t, c.thread_id, op.id));
+
+    writes.push(env.DB.prepare(
+      `UPDATE threads
+          SET last_message_at = ?, guest_unread = guest_unread + 1, updated_at = ?
+        WHERE id = ? AND operator_id = ? AND status = 'open'`,
+    ).bind(t, t, c.thread_id, op.id));
+
+    pending.push({ cand: c, to, url });
 
     out.push({
       offer_id: offerId,
       client_id: c.client_id,
       first_name: c.first_name,
-      phone_e164: c.phone_e164,
       url, message,
-      send: deviceSendLinks(c.phone_e164 ?? '', message),
-      rank: i + 1,
+      thread_id: c.thread_id,
+      // Overwritten below, once the send has actually been attempted. It
+      // starts false so that a throw between here and there cannot leave
+      // anybody looking at a screen claiming an email went.
+      emailed: false,
+      rank: out.length + 1,
       score: c.score,
       reasons: c.reasons,
     });
   }
+
+  // Everybody in this wave turned out to be unreachable. Nothing is written at
+  // all -- not even the gap's 'offering' status, which would otherwise say an
+  // opening was being worked on when no message exists anywhere.
+  if (out.length === 0) return [];
 
   writes.push(env.DB.prepare(
     `UPDATE gaps SET status = 'offering', updated_at = ? WHERE id = ? AND status = 'open'`,
   ).bind(t, gap.id));
 
   await env.DB.batch(writes);
+
+  /*
+   * THE NUDGES, after the transaction and never inside it.
+   *
+   * A network call cannot be part of a D1 batch, and it must not be able to
+   * undo one either: an offer that is sitting in somebody's conversation has
+   * been made, whatever the mail provider says thirty seconds later. So a
+   * refusal is recorded on the result and logged, and the wave stands.
+   *
+   * Sequential rather than Promise.all, deliberately. This is the same
+   * provider and the same per-second window ./email.ts sleeps against, and
+   * three offers fired at once is the shape that earns a 429 for two of them.
+   * A wave is `offers_per_wave` long -- a handful -- so the wall time is not
+   * the thing worth optimising here.
+   *
+   * The reason and never `detail` in the log: the provider's error text names
+   * the sending domain and usually the mailbox it refused, and a Worker log is
+   * the one store in this product that no sweep and no erasure can reach.
+   */
+  for (let i = 0; i < pending.length; i++) {
+    const p = pending[i]!;
+    const stopUrl =
+      `${env.APP_URL.replace(/\/$/, '')}/a/stop-offers/${await offerStopToken(env, p.cand.client_id)}`;
+    const result = await sendEmail(
+      env, offerEmail(op, p.cand, gap, p.to, p.url, stopUrl), 'bulk');
+    out[i]!.emailed = result.sent;
+    if (!result.sent) {
+      console.error(`offer ${out[i]!.offer_id}: nudge email not sent`, result.reason);
+    }
+  }
+
   return out;
 }
 

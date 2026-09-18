@@ -29,6 +29,39 @@ import { clientIp } from './ratelimit';
 const SITEVERIFY = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
 /**
+ * The longest thing that could be a token, and anything longer is refused
+ * without leaving this Worker.
+ *
+ * Cloudflare documents the response as at most 2048 characters. The field was
+ * read straight off a JSON body and posted onward with no bound at all, which
+ * made every challenged endpoint a free relay: `{"turnstile_token": "<a
+ * megabyte of A>"}` is one cheap request in and a megabyte of OUR egress out
+ * to siteverify, per attempt, before anything has been rate limited on the
+ * result. Amplification aimed at our own bill, on the endpoints that exist to
+ * stop people spending it.
+ *
+ * Doubled from the documented ceiling rather than set at it, so a longer token
+ * format does not turn into every booking on the site being refused by a
+ * constant in this file.
+ */
+const MAX_TOKEN_CHARS = 4096;
+
+/**
+ * How long siteverify gets to answer before this gives up on it.
+ *
+ * There was no bound, which is not the same as waiting forever politely: a
+ * Worker request has a wall-clock budget and a fetch that never settles spends
+ * all of it, so one unreachable-but-not-refusing dependency turns every
+ * booking, sign-in code and alert sign-up into a request that hangs and then
+ * dies with whatever the runtime chooses to say. Five seconds is far past a
+ * normal answer from a Cloudflare endpoint on Cloudflare's own network, and a
+ * timeout lands on the same fail-closed path as any other unreachability --
+ * `turnstile_unavailable`, a 503, and a sentence the front end can show --
+ * which is a refusal somebody can act on rather than a stall.
+ */
+const VERIFY_TIMEOUT_MS = 5_000;
+
+/**
  * The field name the client puts the token in.
  *
  * Turnstile's own widget names its hidden input `cf-turnstile-response`, which
@@ -69,6 +102,54 @@ export function tokenFromBody(b: Record<string, unknown> | null | undefined): st
  * a site key means widgets that render and a token nobody checks, and a secret
  * with no site key means every submission is refused with a code the front end
  * turns into a sentence rather than a dead form.
+ *
+ * WHAT IS ACTUALLY OPEN WHILE IT IS OFF, written out rather than left to be
+ * rediscovered. Six call sites, and the rate limit beside each one is the
+ * WHOLE defence today. Every ceiling below is per address, so the cost of
+ * multiplying it is the cost of renting hosts:
+ *
+ *   POST /api/customer/auth/code        Sends a six-digit code to any mailbox
+ *                                       somebody names. 20 per address per 15
+ *                                       minutes, against a provider allowance
+ *                                       of ONE HUNDRED EMAILS A DAY shared
+ *                                       with operator sign-in. Five hosts can
+ *                                       spend the day's entire allowance
+ *                                       before lunch, and sign-in then fails
+ *                                       for every real customer and every real
+ *                                       business. This is the worst of the six.
+ *   POST /api/public/orders             A real booking: appointment rows, a
+ *                                       conversation, mail, and a geocode of a
+ *                                       street address against the US Census
+ *                                       service. 10 per address per hour. A
+ *                                       booking placed and then cancelled
+ *                                       walks the refund ladder at the
+ *                                       operator's expense, and enough of them
+ *                                       walk a business into the suspension
+ *                                       ladder — which is money off a real
+ *                                       person, not just noise.
+ *   POST /api/public/online/requests    Rings a working operator's phone and
+ *                                       lights a five-minute fuse. 6 per
+ *                                       address per 15 minutes, 20 per
+ *                                       operator per 15 minutes. The per-
+ *                                       operator bucket is what stops this
+ *                                       being a paging attack on one business;
+ *                                       it is also what a spread of hosts
+ *                                       cannot get round, so this one degrades
+ *                                       least badly.
+ *   POST /api/public/watches            Creates a standing instruction to
+ *                                       email an address nobody proved they
+ *                                       own, and sends a confirmation to it.
+ *                                       10 per address per hour, 5 per target
+ *                                       mailbox per hour.
+ *   POST /api/public/threads            Opens a conversation in a business's
+ *   POST /api/public/profile/:slug/…    inbox from nothing but a name. 10 per
+ *                                       address per 15 minutes, 40 per
+ *                                       business, plus the distinct-businesses
+ *                                       ceiling in ./chat.ts. Cheap for us,
+ *                                       and an inbox somebody has to read.
+ *
+ * The ranking is not a suggestion to protect one and not the others — it is
+ * what to expect to see first. Setting the secret closes all six at once.
  */
 export const turnstileOn = (env: Env): boolean =>
   typeof env.TURNSTILE_SECRET === 'string' && env.TURNSTILE_SECRET.trim() !== '';
@@ -114,6 +195,20 @@ export async function requireTurnstile(
     );
   }
 
+  // Refused HERE rather than at siteverify, because the point is not to learn
+  // that it is invalid -- it is not to spend our own egress finding out. See
+  // MAX_TOKEN_CHARS. The caller gets the same sentence a forged token gets: a
+  // prober who can tell "too long" from "wrong" has been handed the shape of
+  // the check for free.
+  if (token.length > MAX_TOKEN_CHARS) {
+    console.error(`turnstile token rejected unsent: ${token.length} chars`);
+    throw new HttpError(
+      400,
+      'That security check did not pass. Try again.',
+      'turnstile_failed',
+    );
+  }
+
   // The client IP is sent because Cloudflare scores the token against it.
   // Omitting it does not fail the check, it just makes it a weaker one.
   const form = new FormData();
@@ -124,7 +219,15 @@ export async function requireTurnstile(
 
   let result: SiteverifyResult;
   try {
-    const res = await fetch(SITEVERIFY, { method: 'POST', body: form });
+    const res = await fetch(SITEVERIFY, {
+      method: 'POST',
+      body: form,
+      // See VERIFY_TIMEOUT_MS. An abort surfaces as a rejected fetch, so it
+      // arrives in the same catch as a refused connection and gets the same
+      // fail-closed answer -- there is deliberately no separate branch making
+      // "slow" mean something different from "unreachable".
+      signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`siteverify ${res.status}`);
     result = (await res.json()) as SiteverifyResult;
   } catch (err) {

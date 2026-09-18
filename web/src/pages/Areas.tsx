@@ -8,10 +8,11 @@ import Crumbs from '../components/Crumbs';
 import PublicPage from '../components/PublicPage';
 import { ErrorNote, Spinner } from '../components/ui';
 import '../styles-index.css';
+import '../styles-areas.css';
 import { plural } from '../lib/format';
 import { groupByMetro, loadMetros, metroNames } from '../lib/metros';
 import { distinctGaps } from '../lib/slots';
-import { nearTradeHref } from '../lib/seo';
+import { nearTradeHref, tradeHref } from '../lib/seo';
 import { useDocumentTitle } from '../lib/title';
 
 /**
@@ -135,6 +136,45 @@ export default function Areas() {
   const anyLive = rows.some((r) => r.n > 0);
 
   /**
+   * WHICH TRADES ACTUALLY WORK THESE NEIGHBOURHOODS, counted the other way
+   * round from everything else on the page.
+   *
+   * The sections above are neighbourhood-first: pick a place, see what is in
+   * it. That answers the question of a reader who already knows where they
+   * live and is the right default. It does not answer the other half of the
+   * traffic — somebody who knows they want a locksmith and wants to know
+   * whether this site has locksmiths at all — and until now the only way to
+   * find that out was to open neighbourhoods one at a time until one had the
+   * word in it.
+   *
+   * The figure beside each trade is HOW MANY NEIGHBOURHOODS IT IS OPEN IN and
+   * not how many openings it has, because "eleven openings" on this page could
+   * be one business having a slow week and the question being asked is one of
+   * coverage. It is counted off the same rows the metro blocks are built from,
+   * so the two cannot disagree.
+   *
+   * Labels come from the catalogue rather than from `sentence(slug)`: the
+   * catalogue is where a trade's name is written properly, and it is also the
+   * only guarantee that /s/<slug> is a page rather than a 404. `rows` has
+   * already dropped anything the catalogue does not name.
+   */
+  const tradeCoverage = useMemo(() => {
+    const bySlug = new Map(cats.flatMap((c) => c.trades.map((t) => [t.slug, t] as const)));
+    const areasPerTrade = new Map<string, number>();
+    for (const r of rows) {
+      for (const t of r.trades) {
+        areasPerTrade.set(t.trade, (areasPerTrade.get(t.trade) ?? 0) + 1);
+      }
+    }
+    return [...areasPerTrade.entries()]
+      .flatMap(([slug, n]) => {
+        const trade = bySlug.get(slug);
+        return trade ? [{ trade, n }] : [];
+      })
+      .sort((a, b) => b.n - a.n || a.trade.label.localeCompare(b.trade.label));
+  }, [cats, rows]);
+
+  /**
    * Counted over the whole map rather than by adding the per-area figures up.
    * A whole free day is genuinely offered in every neighbourhood its owner
    * covers, so it is right on each of those rows and would be counted several
@@ -161,13 +201,13 @@ export default function Areas() {
     <PublicPage className="ix-page">
       {/* The same trail the server-rendered page prints, and Crumbs emits the
           BreadcrumbList that markup carries in its JSON-LD. Crumbs prepends
-          Slotfill itself. This page is under no one metro — it lists them
+          Round The Way itself. This page is under no one metro — it lists them
           all — so there is no metro step in it. */}
       <Crumbs items={[{ label: 'Neighbourhoods' }]} />
 
       <header className="ix-head">
         <h1>
-          Every neighbourhood Slotfill covers
+          Every neighbourhood Round The Way covers
           <span className="ix-count">
             {areas.length} {plural(areas.length, 'neighbourhood', 'neighbourhoods')},{' '}
             {openings} open {plural(openings, 'appointment', 'appointments')}
@@ -192,7 +232,7 @@ export default function Areas() {
           <div className="ix-empty">
             <h2>Nothing is open in any neighbourhood at the moment</h2>
             <p>
-              An opening is an hour a business has free, so everywhere Slotfill
+              An opening is an hour a business has free, so everywhere Round The Way
               covers can be quiet for an hour and full by the afternoon. Rather
               than show you a listing that is not there, we will tell you when
               one appears.
@@ -282,8 +322,92 @@ export default function Areas() {
         </section>
       ))}
 
+      {/*
+        The trade-first way into the same set of links, for the reader who
+        knows what they want and not where it is. Omitted rather than shown
+        empty: on an hour when nothing is open anywhere this list would be a
+        heading over nothing, and the empty state above has already said so
+        once.
+      */}
+      {tradeCoverage.length > 0 && (
+        <section className="ix-sec" aria-labelledby="ix-trades">
+          <h2 id="ix-trades">Which trades work these neighbourhoods</h2>
+          <p className="ix-sec-sub">
+            Every trade with an opening somewhere on this page right now, and
+            how many of the neighbourhoods it is open in. Each one leads to that
+            trade's own page, which counts what is open across everywhere
+            Round The Way covers.
+          </p>
+          <ul className="ar-trades">
+            {tradeCoverage.map((t) => (
+              <li key={t.trade.slug}>
+                <Link className="ar-trade" to={tradeHref(t.trade.slug)}>
+                  {t.trade.label}
+                  <span className="ar-trade-n">
+                    {t.n} {plural(t.n, 'neighbourhood', 'neighbourhoods')}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <p className="ix-note">
+            Counted from what is open at this moment, so a trade with a quiet
+            morning is not on this list and is not therefore absent from the
+            site. <Link to="/browse">The full catalogue</Link> is the list that
+            does not move.
+          </p>
+        </section>
+      )}
+
+      {/*
+        WHAT "COVERED" ACTUALLY MEANS, which this page has always assumed the
+        reader knew.
+
+        Every neighbourhood above is a place a business drives to, and the two
+        things that follow from that are worth a paragraph each rather than a
+        footnote: a boundary on this site is a business's own answer about how
+        far it will drive, and an address has to be able to receive a van. A
+        reader who has just found their neighbourhood on this page is about to
+        book one, and this is the last point at which either fact is cheap to
+        learn.
+
+        Nothing here is a claim about how many businesses cover anywhere or how
+        far any of them will go. Where the honest answer is that it depends on
+        the business, it says so.
+      */}
+      <section className="ix-sec" aria-labelledby="ix-mean">
+        <h2 id="ix-mean">What it means for a neighbourhood to be on this list</h2>
+        <div className="ar-explain">
+          <p>
+            A neighbourhood is here because at least one business told us it
+            works there. That is a business's own statement about how far it is
+            willing to drive, and it is the only thing that puts a name on this
+            page — not a population, not a boundary drawn by a council, and not
+            an area we have decided to expand into. When a business changes the
+            list of places it covers, this page changes with it.
+          </p>
+          <p>
+            Which also means a neighbourhood being listed does not tell you
+            every trade is available in it. The counts beside each name are
+            openings from the businesses that happen to cover it, and a place
+            covered by two businesses will look thinner than one covered by
+            twelve however similar the two streets are.
+          </p>
+          <p>
+            Because the work comes to the address, what matters at your end is
+            whether a van can arrive and work. Somewhere to stand the vehicle
+            for the length of the job, access that is not gated or height-
+            limited past what a van will clear, and — for anything involving
+            water or power — either an outside tap and socket or a business
+            that carries its own. Round The Way does not record which businesses
+            carry their own, so that last one is a question for messages before
+            the day rather than something this page can answer.
+          </p>
+        </div>
+      </section>
+
       <section className="ix-sec" aria-labelledby="ix-places">
-        <h2 id="ix-places">The places Slotfill serves</h2>
+        <h2 id="ix-places">The places Round The Way serves</h2>
         <ul className="ix-else">
           {metros.map((m) => (
             <li key={m.slug}>
@@ -292,6 +416,30 @@ export default function Areas() {
           ))}
           <li><Link to="/browse">Every service, by category</Link></li>
         </ul>
+      </section>
+
+      {/*
+        The same closing action the metro pages carry, and the same reasoning:
+        the honest thing to offer on a coverage page is a way to be told when
+        something opens, because on a quiet hour there is nothing else to do
+        here. It is repeated on the metro page rather than shared as a
+        component because the two say different sentences — that one names a
+        place and this one cannot.
+      */}
+      <section className="ar-cta" aria-labelledby="ix-do">
+        <h2 id="ix-do">If your neighbourhood is quiet</h2>
+        <p>
+          Openings appear through the day as jobs cancel and gaps open between
+          booked ones, so a neighbourhood with nothing in it this morning may
+          have something by the afternoon. You can be told when one appears
+          rather than checking, or look through the catalogue and start from
+          the work instead of the place.
+        </p>
+        <div className="ar-cta-do">
+          <Link className="btn" to="/a">Tell me when one appears</Link>
+          <Link className="btn quiet" to="/browse">See every service</Link>
+          <Link className="btn quiet" to="/pros">Cover a neighbourhood</Link>
+        </div>
       </section>
 
       <footer className="ix-foot">

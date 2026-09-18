@@ -53,6 +53,27 @@ import '../styles-slotcard.css';
  * put in it, and adds no height at all. `.slot-more` and `.slot-foot` keep
  * `grid-column: 1 / -1` and the slack stays in the same flexible row it was
  * in, so the Book buttons across a row are still pinned to each other.
+ *
+ * A SAMPLE LISTING DOES NOT OFFER A BOOKING, AND THAT IS THE NEWEST RULE HERE.
+ *
+ * Every card on this site used to be a link to `/book/:gapId`, samples
+ * included. The seeded businesses in src/lib/demo.ts are the great majority of
+ * what is on the map before anyone has signed up — around a hundred and forty
+ * openings — so the commonest thing a first-time visitor could press was a
+ * Book button belonging to a company that does not exist. It took them into
+ * the four-step checkout, let them tick services, and refused at the pricing
+ * step, because the Worker will not price a gap belonging to a sample operator
+ * (see `sample_listing` in src/lib/orders.ts). Once live card payments were
+ * switched on that stopped being a cosmetic problem and became the front door
+ * of the product: choose, type, be refused.
+ *
+ * The badge was never enough on its own. A badge says what a thing IS; a
+ * button says what you can DO with it, and when the two disagree the button
+ * wins, because it is the one under the reader's thumb. So a sample card now
+ * carries no booking action at all. What it offers instead is the one thing
+ * that is genuinely there — the business's own page, which says in its first
+ * paragraph that everything on it is seeded — and the badge stays exactly
+ * where it was.
  */
 
 export interface SlotCardProps {
@@ -81,9 +102,26 @@ export interface SlotCardProps {
    * nothing, which is the same rule everything else on it follows.
    */
   area?: string | null;
+  /**
+   * Whether this grid is already on the business's own public page.
+   *
+   * It changes one thing, and only for a sample: a sample card's action is a
+   * link to `/p/<slug>`, and on that business's own page that is a link to the
+   * page the reader is standing on. A card that reloads the page you are
+   * already reading is worse than a card with nothing to press, so on their own
+   * page the sample card carries no action at all — the paragraph at the top of
+   * a sample profile has already said everything that link was going to say.
+   *
+   * It does nothing whatever for a real listing. Book is still Book on every
+   * page, this one included, because booking is what the card is for and their
+   * own page is where somebody has gone in order to do it.
+   */
+  onTheirPage?: boolean;
 }
 
-export default function SlotCard({ slot: s, showTrade = false, area = null }: SlotCardProps) {
+export default function SlotCard({
+  slot: s, showTrade = false, area = null, onTheirPage = false,
+}: SlotCardProps) {
   /* Everything in the strip under the business name is conditional on the
      business actually having it, with the single exception argued at the top of
      this file: the rating's place always says something, either the score or
@@ -97,12 +135,29 @@ export default function SlotCard({ slot: s, showTrade = false, area = null }: Sl
      why there is no placeholder standing in for one. */
   const photo = s.work_photo_key ?? s.avatar_key;
 
-  return (
-    // A plain anchor rather than <Link>: /book/:gapId is a React route, but a
-    // full load of the booking page is the cheaper thing to be wrong about here
-    // and it is what every page did before this component existed.
-    <a href={`/book/${s.gap_id}`}
-      className={`slot-card${s.online ? ' is-live' : ''}${photo ? ' has-photo' : ''}`}>
+  /**
+   * Where the whole card goes, and null for a card that goes nowhere.
+   *
+   * A real listing goes to its checkout, which is what this card has always
+   * been. A sample goes to the seeded business's own page instead — see the
+   * note at the top of this file for why it may not offer a booking — and a
+   * sample with no published page has nowhere honest to send anybody, so it
+   * is not a link at all rather than a link to the checkout that will refuse
+   * it. Every seeded business in src/lib/demo.ts is published with a slug, so
+   * the last case is a guard against a payload we have not seen rather than
+   * something a visitor meets today.
+   */
+  const href = s.is_sample
+    ? (onTheirPage || !s.profile_slug ? null : `/p/${s.profile_slug}`)
+    : `/book/${s.gap_id}`;
+
+  const cls = `slot-card${s.online ? ' is-live' : ''}${photo ? ' has-photo' : ''}`;
+
+  // Written out once and wrapped below, because the wrapper is the only thing
+  // that differs between a card you can press and a card you cannot, and two
+  // copies of a forty-line grid would be two cards that drift apart.
+  const inner = (
+    <>
       {photo && (
         // alt="" deliberately. The image is one part of a link whose name is
         // already the service, the price, the time and the business; a photo
@@ -236,8 +291,25 @@ export default function SlotCard({ slot: s, showTrade = false, area = null }: Sl
           : area
             ? <span className="slot-near plain">In {area}</span>
             : <span className="slot-near plain">They come to you</span>}
-        <span className="slot-go">Book</span>
+        {/* THE WORD IN THE PILL IS A PROMISE ABOUT WHAT HAPPENS NEXT.
+            "Book" on a seeded listing was a promise the checkout could not
+            keep — see the top of this file — so a sample says where it
+            actually goes instead, and a sample with nowhere to go says
+            nothing at all rather than offering an action that is not there.
+            The word is the same one the server-rendered twin of this card
+            uses in src/lib/seo.ts `slotItem`; the two have to match
+            character for character. */}
+        {s.is_sample
+          ? (href ? <span className="slot-go">See their page</span> : null)
+          : <span className="slot-go">Book</span>}
       </span>
-    </a>
+    </>
   );
+
+  // A plain anchor rather than <Link>: /book/:gapId and /p/:slug are both React
+  // routes, but a full load is the cheaper thing to be wrong about here and it
+  // is what every page did before this component existed.
+  return href
+    ? <a href={href} className={cls}>{inner}</a>
+    : <div className={cls}>{inner}</div>;
 }

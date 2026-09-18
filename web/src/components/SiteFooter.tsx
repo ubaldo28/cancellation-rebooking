@@ -1,85 +1,84 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { api, sentence, type MapArea, type Trade, type TradeCategory } from '../api';
 import { groupByMetro, useMetros } from '../lib/metros';
 import '../styles-shell.css';
 
-/**
- * A link in one of the four columns.
- *
- * `to` is deliberately optional and deliberately not defaulted to '#'. Half
- * the destinations the reference marketplace carries in its footer do not
- * exist here yet, and the two wrong ways to handle that are both tempting:
- * link them at a route that 404s, or link them at '/' so every one of them
- * quietly lies about where it goes. A label with no page is rendered as
- * text — visible, honest, and obvious to whoever builds the page later.
- */
+/** A link in one of the columns. */
 interface FootLink { label: string; to?: string; }
 
 /**
- * WHICH FOOTER DESTINATIONS ARE REAL, AND WHICH ARE STUBS.
+ * THE FOOTER, REBUILT TO THE SHAPE OF THE REFERENCE MARKETPLACE.
  *
- * Most of what this footer used to render as grey text now has a page behind
- * it, so most of it is a link. Real routes: '/', '/a', '/join', '/signin',
- * '/browse', '/cost', '/covered', '/safety', '/pros', '/about', '/help',
- * '/terms', '/privacy'.
+ * Measured off theirs at 1440px: a flex row of four columns — the mark and a
+ * one-line promise in the first, then Customers, Pros and Support — thirty-odd
+ * links in total, and NO directory of services or places. Terms, Privacy and
+ * the California notice sit at the foot of Support, not in a line of their
+ * own. The line under the row is the copyright and one link.
  *
- * Still stubs, rendered as plain text until somebody writes the page: Get an
- * estimate, Pricing, Careers, Press, Blog, Contact. Every one of those is a
- * marketing gap rather than a legal one, and a label with no page reads
- * better than a link that 404s.
+ * What this replaced: four columns, six labels with no page behind them
+ * rendered as grey text, and three further columns listing every category,
+ * eight trades and a dozen neighbourhoods — sixty-odd links, most of them
+ * unreadable, at the foot of every page.
+ *
+ * EVERY LABEL HERE GOES SOMEWHERE. A destination with no page is left out
+ * rather than printed as text; test/seo-pages.test.ts fails if one comes
+ * back. Nothing became unreachable when the directory went: /browse lists
+ * every category and trade, /near lists every neighbourhood, and both are in
+ * the Customers column, so a deep page is two hops from here.
  *
  * "How it works" points at '/' because the front page's explainer bands are
  * the explanation that exists; there is no separate page for it.
  *
- * Terms and Privacy are deliberately NOT in these columns any more. They are
- * in the legal line under them, which is where the reference marketplace puts
- * them and where anybody looking for them will look first; carrying them in
- * both places made the Support column half legal boilerplate.
- *
- * There is no copy in this file making a claim about the company. Nobody has
- * told us when Slotfill was founded, how many people work on it or who has
- * written about it, so the footer says none of those things.
+ * No copy here makes a claim about the company. Nobody has said when
+ * Round The Way was founded or who works on it, so the footer says neither.
  */
 const COLUMNS: Array<{ heading: string; links: FootLink[] }> = [
   {
-    heading: 'For customers',
+    heading: 'Customers',
     links: [
-      { label: 'Browse services', to: '/browse' },
-      { label: 'Get an estimate' },
       { label: 'How it works', to: '/' },
+      { label: 'Browse services', to: '/browse' },
       { label: 'Cost guides', to: '/cost' },
+      { label: 'Your bookings', to: '/account' },
+      { label: 'Services near you', to: '/near' },
       { label: 'What is covered', to: '/covered' },
       { label: 'Alert me', to: '/a' },
     ],
   },
   {
-    heading: 'For businesses',
+    heading: 'Pros',
     links: [
+      { label: 'How Round The Way works for pros', to: '/pros' },
       { label: 'List your business', to: '/join' },
       { label: 'Sign in', to: '/signin' },
-      { label: 'How Slotfill works for pros', to: '/pros' },
-      { label: 'Pricing' },
-    ],
-  },
-  {
-    heading: 'Company',
-    links: [
-      { label: 'About', to: '/about' },
-      { label: 'Careers' },
-      { label: 'Press' },
-      { label: 'Blog' },
     ],
   },
   {
     heading: 'Support',
     links: [
       { label: 'Help centre', to: '/help' },
-      { label: 'Contact' },
       { label: 'Safety', to: '/safety' },
+      { label: 'Terms of service', to: '/terms' },
+      { label: 'Privacy policy', to: '/privacy' },
+      { label: 'Notice at Collection', to: '/privacy' },
     ],
   },
 ];
+
+/**
+ * The underline on the two licence links in the attribution line, written
+ * here rather than left to a stylesheet.
+ *
+ * styles.css turns the underline off on every anchor on the site, and the
+ * comment over its own `.muted a` rule already worked out why that is a
+ * problem in a block like this one: --accent-ink on --muted is 1.19:1, so a
+ * link sitting in this sentence would be told apart from the words around it
+ * by colour alone, which at that contrast is not being told apart at all.
+ * These are the two links a licence asks for by name, so they are the last
+ * ones on the page that may be invisible.
+ */
+const ATTRIB_LINK: CSSProperties = { textDecoration: 'underline', textUnderlineOffset: 2 };
 
 export interface SiteFooterProps {
   /**
@@ -212,18 +211,27 @@ export default function SiteFooter({ trades, areas }: SiteFooterProps) {
    */
   const someTrades = useMemo(() => {
     const rows: Trade[] = [];
-    for (let i = 0; rows.length < 14; i += 1) {
+    for (let i = 0; rows.length < 8; i += 1) {
       const round = cats.map((c) => c.trades[i]).filter((t): t is Trade => Boolean(t));
       if (round.length === 0) break;
       rows.push(...round);
     }
-    return rows.slice(0, 14);
+    return rows.slice(0, 8);
   }, [cats]);
 
   return (
     <footer className="site-foot">
       <div className="wrap-wide">
         <div className="site-foot-cols">
+          {/* The first COLUMN, not a banner above the row: the reference
+              marketplace opens its footer with the mark and a one-line
+              promise in the leftmost column, with the link columns beside
+              it. */}
+          <div className="foot-brand">
+            <span className="foot-mark">Round The Way</span>
+            <p>Book someone round the way.</p>
+            <ul><li><Link to="/about">About</Link></li></ul>
+          </div>
           {COLUMNS.map((col) => (
             <nav className="foot-col" key={col.heading} aria-label={col.heading}>
               <h2>{col.heading}</h2>
@@ -241,129 +249,68 @@ export default function SiteFooter({ trades, areas }: SiteFooterProps) {
         </div>
 
         {/*
-          THE DIRECTORY.
-          Three columns of plain links, which is what the reference
-          marketplace puts at the foot of every page. It does two jobs at
-          once: a visitor who did not find their thing in the tiles above can
-          find it here by name, and a search engine cannot crawl a page that
-          nothing links to. Plain <a> for the /near pages because those are
-          server-rendered by the Worker and are not React routes; <Link> for
-          everything inside the app.
+          THE DIRECTORY IS GONE, AND ON PURPOSE.
+
+          It was three more columns under the four above — every category,
+          eight trades and a dozen neighbourhoods — forty-odd links whose job
+          was to give a crawler a path to the server-rendered pages. It did
+          that, and it also made the foot of every page a wall nobody could
+          read past.
+
+          Nothing became unreachable. /browse lists every category and every
+          trade under it, /near lists every neighbourhood in every metro, and
+          both are links in the columns above, so each deep page is two hops
+          from anywhere rather than one. The hubs carry the linking now, which
+          is what hubs are for.
         */}
-        <div className="foot-dir">
-          {cats.length > 0 && (
-            <nav className="foot-col" aria-label="Services by category">
-              <h2>Browse by category</h2>
-              <ul>
-                {cats.map((c) => (
-                  <li key={c.key}><Link to={`/browse/${c.key}`}>{c.label}</Link></li>
-                ))}
-              </ul>
-            </nav>
-          )}
-
-          {/*
-            The front page has counted what is open near the visitor and hands
-            it over, so there the column is what is busy and says how busy.
-            Everywhere else it is the plain directory below, because three
-            headings with nothing under them is not a footer anybody can use.
-          */}
-          {trades && trades.length > 0 ? (
-            <nav className="foot-col" aria-label="Popular services">
-              <h2>Popular services near you</h2>
-              <ul>
-                {trades.slice(0, 14).map(([slug, n]) => (
-                  <li key={slug}>
-                    {/*
-                      reloadDocument, which is not the usual choice and is not
-                      free. Discover seeds its trade filter from ?trade= once,
-                      in a useState initialiser, so a client-side navigation
-                      from the front page back to the front page changes the
-                      URL and nothing else — and the front page is exactly
-                      where this column appears most. A footer link that
-                      silently does nothing on the one page it is most often
-                      pressed is worse than paying for a reload.
-                    */}
-                    <Link reloadDocument to={`/?trade=${encodeURIComponent(slug)}`}>
-                      {sentence(slug)}
-                      <span className="foot-n">{n}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </nav>
-          ) : someTrades.length > 0 && (
-            <nav className="foot-col" aria-label="Services">
-              <h2>Browse by service</h2>
-              <ul>
-                {someTrades.map((t) => (
-                  <li key={t.slug}>
-                    <Link to={`/s/${encodeURIComponent(t.slug)}`}>{t.label}</Link>
-                  </li>
-                ))}
-              </ul>
-            </nav>
-          )}
-
-          {shownAreas.length > 0 && (
-            <nav className="foot-col" aria-label="Areas">
-              <h2>Open near you</h2>
-              {/*
-                A SUB-HEADING PER METRO, not one run of names.
-
-                This column is ordered by distance from wherever the visitor
-                said they were, so with two places open it can put Orcutt three
-                rows above Encino — two names a hundred and fifty miles apart,
-                in a list whose only claim is that these are near you. The
-                metro heading is what makes the ordering readable, and it is a
-                link to that metro's own page, which is where somebody who
-                scrolled this far and found nothing of theirs should go next.
-              */}
-              {areaGroups.map((g) => (
-                <div className="foot-group" key={g.metro?.slug ?? 'unfiled'}>
-                  {g.metro && (
-                    <h3><a href={g.metro.path}>{g.metro.name}</a></h3>
-                  )}
-                  <ul>
-                    {g.rows.map((a) => (
-                      <li key={a.slug}>
-                        <a href={`/near/${a.slug}`}>
-                          {a.name}
-                          {a.slot_count > 0 && <span className="foot-n">{a.slot_count}</span>}
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-              {/*
-                The page above the individual neighbourhoods, at the foot of
-                the list rather than the head of it: somebody scanning this
-                column is looking for their own area first. Plain <a> like the
-                rest of the column, so the visitor gets the Worker's
-                server-rendered /near. It is a React route too — App.tsx has to
-                match it so React can mount over that HTML rather than replace
-                it — but a client-side <Link> would skip the render and rebuild
-                the page from the API for no gain. The metro pages are the
-                headings above rather than a line here, so opening a third
-                place adds a heading and nothing has to be edited.
-              */}
-              <ul>
-                <li><a href="/near">Every neighbourhood</a></li>
-              </ul>
-            </nav>
-          )}
-        </div>
 
         {/*
           Verbatim, and not to be reworded: the first line is a condition of
-          the OpenStreetMap and GeoNames licences the map is built on, and the
-          second is the promise the whole product rests on.
+          the OpenStreetMap and GeoNames licences the map is built on, the
+          second says who owns the names the vehicle picker prints, and the
+          third is the promise the whole product rests on.
+
+          seo.ts draws the same three lines for the server-rendered pages, in
+          the same order and the same words. They are written out twice
+          because the two trees cannot import each other; change one and
+          change the other in the same commit.
+
+          THE TWO LINKS ARE PART OF THE CREDIT RATHER THAN DECORATION ON IT,
+          and for a while they were missing. The OpenStreetMap Foundation asks
+          that the credit point at openstreetmap.org/copyright wherever the
+          medium allows a link, and CC BY 4.0 asks the same of the licence
+          itself — both of them only so far as it is reasonably practicable,
+          which on an HTML page is entirely. What was here before said the
+          right words and led nowhere, which is a credit naming a licence the
+          reader has no way to go and read.
+
+          THE TRADEMARK LINE IS A NOTICE AND NOT A DISCLAIMER. The vehicle
+          picker prints Transit, Sprinter and ProMaster because those are what
+          a van is called, and naming somebody's product to say which product
+          you mean is the ordinary, permitted use of their mark. Nothing here
+          is in any doubt. What was missing was the plain acknowledgement that
+          the names belong to the companies that own them, so it is one
+          sentence in the same small type as the rest of this block. Anything
+          longer would read as a claim that there is something to answer for.
         */}
         <div className="site-foot-legal">
           <p>
-            Map data © OpenStreetMap contributors, tiles by OpenFreeMap.
-            Postcode centroids from GeoNames, CC BY 4.0.
+            Map data ©{' '}
+            <a
+              href="https://www.openstreetmap.org/copyright"
+              target="_blank" rel="noreferrer" style={ATTRIB_LINK}
+            >OpenStreetMap</a>{' '}
+            contributors, tiles by OpenFreeMap. Postcode centroids from
+            GeoNames,{' '}
+            <a
+              href="https://creativecommons.org/licenses/by/4.0/"
+              target="_blank" rel="noreferrer" style={ATTRIB_LINK}
+            >CC BY 4.0</a>.
+          </p>
+          <p>
+            Vehicle makes and models named on this site are the trademarks of
+            their respective owners, and are used here only to describe
+            vehicles.
           </p>
           <p>Prices are set by the business doing the work.</p>
 
@@ -381,7 +328,7 @@ export default function SiteFooter({ trades, areas }: SiteFooterProps) {
 
             THERE IS DELIBERATELY NO "DO NOT SELL OR SHARE MY PERSONAL
             INFORMATION" LINK, and it is not an oversight. That link is an
-            opt-out of selling or sharing personal information, and Slotfill
+            opt-out of selling or sharing personal information, and Round The Way
             does neither — so the link would either lead to a page describing
             a choice that does not exist, or lead nowhere and imply a trade in
             data that is not happening. Adding it to look thorough would make
@@ -390,11 +337,13 @@ export default function SiteFooter({ trades, areas }: SiteFooterProps) {
             forgivable. If selling or sharing ever starts, this is where the
             link goes and it stops being a lie on the same day.
           */}
+          {/* The three legal links moved UP into the Support column, which is
+              where the reference marketplace keeps Terms of Use, Privacy
+              Policy and CA Notice at Collection. What is left here is the
+              copyright, which is all its own bottom line carries. */}
           <p className="site-foot-fine">
-            <span>© {new Date().getFullYear()} Slotfill</span>
-            <Link to="/terms">Terms of service</Link>
-            <Link to="/privacy">Privacy policy</Link>
-            <Link to="/privacy">Notice at Collection</Link>
+            <span>© {new Date().getFullYear()} Round The Way</span>
+            <Link to="/covered">What is covered</Link>
           </p>
         </div>
       </div>

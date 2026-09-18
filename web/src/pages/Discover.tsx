@@ -3,15 +3,15 @@ import { Link } from 'react-router-dom';
 import { api, type MapArea, type Metro, type PublicSlot, type TradeCategory } from '../api';
 import CityMap from '../components/CityMap';
 import CategoryArt from '../components/CategoryArt';
+import { CategoryArtImg } from '../components/TileArt';
 import { PAY_TODAY_SHORT } from '../components/PaymentState';
 import SiteHeader from '../components/SiteHeader';
 import SiteFooter from '../components/SiteFooter';
 import SlotCard from '../components/SlotCard';
-import SlotFilters, { useSlotFilters } from '../components/SlotFilters';
+import { useSlotFilters } from '../components/SlotFilters';
 import { HowItWorks, WhyBook } from '../components/HowItWorks';
 import { Icon, Spinner } from '../components/ui';
 import { useBookingState } from '../lib/customer';
-import { groupByMetro, metroNames, useMetros } from '../lib/metros';
 import '../styles-parts.css';
 import '../styles-home.css';
 
@@ -45,21 +45,6 @@ import '../styles-home.css';
  */
 const PAGE = 24;
 
-/** Live, because the two panes swap at a width, not on a click. */
-function useMatches(query: string): boolean {
-  const [on, setOn] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia(query).matches,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia(query);
-    const sync = () => setOn(mq.matches);
-    sync();
-    mq.addEventListener('change', sync);
-    return () => mq.removeEventListener('change', sync);
-  }, [query]);
-  return on;
-}
-
 export default function Discover() {
   /**
    * What booking requires on this deployment, and whether it is possible at
@@ -71,18 +56,6 @@ export default function Discover() {
   const [areas, setAreas] = useState<MapArea[]>([]);
   const [slots, setSlots] = useState<PublicSlot[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  /**
-   * The places Slotfill serves, for the two parts of this page that have to
-   * name them: the neighbourhood rail, which groups its chips by metro, and
-   * the geography band underneath.
-   *
-   * Not part of `load` below, and not a reason for this page to fail. If the
-   * list does not arrive the rail is one ungrouped run of chips and the band
-   * lists the neighbourhoods without naming the metros — which is what they
-   * both were before there was a second place, and better than a front page
-   * that will not render.
-   */
-  const metros = useMetros();
   /**
    * Seeded from ?trade= so a category page can link straight into a filtered
    * list. Read once at mount rather than kept in sync with the URL: this is a
@@ -117,19 +90,16 @@ export default function Discover() {
    */
   const [gateOff, setGateOff] = useState(false);
 
-  const wide = useMatches('(min-width: 960px)');
-  const [pane, setPane] = useState<'list' | 'map'>('list');
+  // Kept as a scroll target: choosing a neighbourhood on the map above sends
+  // the visitor to the list it just changed.
   const browseTop = useRef<HTMLDivElement | null>(null);
-  // Swapping panes without this leaves the one that was asked for below the
-  // fold, so the control looks like it did nothing.
-  const swap = (to: 'list' | 'map') => {
-    setPane(to);
-    browseTop.current?.scrollIntoView({
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
-        ? 'auto' : 'smooth',
-      block: 'start',
-    });
-  };
+
+  /**
+   * True while the map is drawing vehicles rather than showing live ones. Owned
+   * here because the line that says so sits on the map's frame, which is this
+   * page's element. The map reports it; the page prints it.
+   */
+  const [illustrated, setIllustrated] = useState(false);
 
   const load = useCallback(async (pc?: string) => {
     if (pc) { setLocating(true); setLocateError(null); } else { setLoading(true); setError(null); }
@@ -179,10 +149,24 @@ export default function Discover() {
    * says so on the page it leads to rather than being hidden.
    */
   const [cats, setCats] = useState<TradeCategory[]>([]);
+  /**
+   * The picture for the "Everything" tile, which is not a category and so has
+   * no row in `cats` to carry one.
+   *
+   * It comes off the catalogue payload beside the categories rather than being
+   * written out here, for the reason set out over `everything_art` in api.ts:
+   * this would otherwise be the only place in this tree that spells a path to
+   * one of the art files, and therefore the only one that could be wrong
+   * without the Worker or a test disagreeing with it.
+   */
+  const [allArt, setAllArt] = useState<string | undefined>(undefined);
   useEffect(() => {
     void (async () => {
-      try { setCats((await api.tradeCatalog()).categories); }
-      catch { /* the flat tiles below still work without it */ }
+      try {
+        const res = await api.tradeCatalog();
+        setCats(res.categories);
+        setAllArt(res.everything_art);
+      } catch { /* the flat tiles below still work without it */ }
     })();
   }, []);
 
@@ -286,37 +270,7 @@ export default function Discover() {
     };
   }, [inTrade, counted]);
 
-  /**
-   * Everywhere Slotfill covers, counted across every trade rather than the one
-   * somebody has filtered to.
-   *
-   * `counted` above is recounted against the chosen trade, which is right for
-   * the rail and the map — those answer "what is open over there in the thing
-   * I am looking for". The geography band answers a different question, "does
-   * this site work where I live", and narrowing it by a filter would tell a
-   * visitor who tapped "locksmiths" that Slotfill covers four neighbourhoods.
-   * Counted from `slots`, like everything else here; nothing is written down.
-   */
-  const placeAreas = useMemo(() => {
-    const n = new Map<string, number>();
-    for (const s of slots) n.set(s.area_slug, (n.get(s.area_slug) ?? 0) + 1);
-    return areas.map((a) => ({
-      slug: a.slug, name: a.name, metro: a.metro, n: n.get(a.slug) ?? 0,
-    }));
-  }, [areas, slots]);
 
-  /**
-   * The rail's chips, split into the places they are in.
-   *
-   * The rail is ordered by distance from wherever the visitor said they were,
-   * so with two metros open it can put Orcutt beside Encino: a row of names
-   * that reads as one neighbourhood after another down the same road. The
-   * metro label is what stops it saying that.
-   */
-  const railGroups = useMemo(
-    () => groupByMetro(metros, shownAreas, (a) => a.metro, 'nearest'),
-    [metros, shownAreas],
-  );
 
   const near = located?.place ?? located?.postcode ?? null;
   const visible = shown.slice(0, limit);
@@ -335,6 +289,22 @@ export default function Discover() {
    * sticky bar — so the scroll is asked for first and the focus is told not to
    * repeat it.
    */
+  /**
+   * Choosing a neighbourhood on the map, which is now above the list rather
+   * than beside it. Beside it, changing the selection visibly changed the
+   * column next door and needed nothing else; above it, the thing that
+   * changed is off the bottom of the screen, so a tap would look like it did
+   * nothing at all.
+   */
+  const pickArea = (slug: string) => {
+    setSelected(slug);
+    browseTop.current?.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'auto' : 'smooth',
+      block: 'start',
+    });
+  };
+
   const askPostcode = () => {
     const el = postcodeRef.current;
     if (!el) return;
@@ -380,13 +350,27 @@ export default function Discover() {
               </span>
             )}
 
-            {/* Says only what the data can back. The old headline promised a
+            {/* Says only what the data can back. An earlier headline promised a
                 van on your street and a lower price; neither is something we
                 know, and a first claim that turns out to be untrue is the one
-                thing a stranger will not forgive. */}
-            {/* Customer language. "Hours" is how an operator thinks about
-                their own day; a customer thinks about getting an appointment. */}
-            <h1>Someone is free <em>near you</em> this week.</h1>
+                thing a stranger will not forgive.
+
+                The one it replaced — "Someone is free near you this week" —
+                was honest about distance but not about supply: it asserts
+                somebody is available, which is false on any day with an empty
+                map, and the first day is always an empty map. An instruction
+                promises nothing, so it cannot be contradicted by the page
+                underneath it.
+
+                "Round the way" is the name doing its own explaining. It means
+                LOCAL — someone from your own streets — not "already on the
+                way". The distinction matters: local is a thing this product
+                can stand behind, and imminence is not.
+
+                Customer language throughout. "Hours" is how an operator thinks
+                about their own day; a customer thinks about getting an
+                appointment. */}
+            <h1>Book someone <em>round the way</em>.</h1>
             <p className="hero-sub">
               Detailers, junk removal, locksmiths, mobile mechanics, phone repair and more.
               When a job cancels, that appointment opens up — and if they are
@@ -418,38 +402,65 @@ export default function Discover() {
                 </button>
               </form>
               {/*
-                THIS SAID "No account. No app. No card." AND ALL THREE WERE
-                WRONG, in the first thing a stranger reads. Booking needs an
-                account and it will need a card; what is true — and what was
-                always the only true part of it — is that neither is asked for
-                until somebody has decided to buy something. So the line
-                separates the two halves it was collapsing: looking costs
-                nothing and asks for nothing, and booking asks for a number we
-                can text.
+                WHAT THIS LINE IS FOR, and what it stopped being.
 
-                "No app" is gone too, and not because it is untrue today. An
-                app is coming, and a promise printed on the front page is the
-                most expensive kind to go back on — the day it ships, this
-                sentence would have to be walked back in public. Nothing here
-                asks anybody to install anything, which is the useful half, and
-                that is said without swearing off a thing we intend to build.
+                It has been three things. It said "No account. No app. No card."
+                and all three were wrong, in the first sentence a stranger
+                reads. It then said what booking costs and what it asks for —
+                true, but it explained the sign-up mechanics to somebody who has
+                not decided to sign up, which is a defence against a question
+                nobody has asked yet.
+
+                It now says the two things that are TRUE AND ONLY TRUE HERE.
+                Los Angeles, because that is the whole of it and a visitor from
+                anywhere else should find that out in one line rather than after
+                typing a postcode. And that nobody paid to be listed, because
+                that is the actual difference from every directory this will be
+                compared to: on those, position is bought. Here a business pays
+                only when the site brings them a customer they did not have.
+
+                Both are checkable, which is the test a sentence in this
+                position has to pass. Neither is a promise about the future.
+
+                THE ACCOUNT MECHANICS MOVED to the point somebody actually
+                books, which is where the question gets asked.
               */}
               <p className="finder-note">
-                Free to look, and nothing to install. Booking needs an account —
-                a mobile number, and the six digits we text back.
+                Testing in LA. Real businesses, and none of them paid to be here.
               </p>
             </div>
 
             {/* AND TODAY IT CANNOT BE DONE AT ALL, which the hero is the right
                 place to say and the checkout is the wrong place to discover.
-                The sentence is the Worker's own: whether a text can be sent
-                depends on a Worker secret, so a bundle carrying its own answer
-                would be guessing about the one thing this band is inviting
-                somebody to start. */}
+                The sentence is the Worker's own: whether a sign-in code can be
+                sent depends on a Worker secret, so a bundle carrying its own
+                answer would be guessing about the one thing this band is
+                inviting somebody to start. */}
             {bookingState && !bookingState.sms_ready && bookingState.sms_note && (
               <p className="hero-warn" role="status">
                 <strong>Bookings are not open yet.</strong>{' '}
                 {bookingState.sms_note}
+                {' '}
+                {/* THE DOOR THAT IS STILL OPEN, and the reason this notice is
+                    not just an apology.
+
+                    A standing alert runs over web push, with email as an
+                    optional second channel — see src/lib/alerts.ts — so setting
+                    one up does not turn on the provider this notice is about.
+                    Until migration 0038 this said the alert was fine because it
+                    "is not a text message"; that stopped being the distinction
+                    that matters the day the sign-in code became an email
+                    itself, and claiming the alert definitely arrives would now
+                    be claiming something this page cannot know.
+
+                    Without this sentence the notice is a dead end: somebody
+                    who arrived wanting a detailer reads that they cannot have
+                    one and leaves, and nothing is kept. With it they can ask
+                    to be told, which is the only thing worth capturing on a
+                    day when nothing can be booked. */}
+                <Link to="/a">Ask to be told when something opens near you</Link>
+                {' — an alert goes out over web push, so setting one up does '
+                 + 'not wait on this.'}
               </p>
             )}
 
@@ -470,36 +481,72 @@ export default function Discover() {
               </div>
             )}
 
-            {totalOpen > 0 && (
-              <div className="facts">
-                <div className="fact">
-                  <b>{totalOpen}</b>
-                  <span>{located ? 'open near you' : 'appointments open'}</span>
-                </div>
-                {located && facts.nearest !== null ? (
-                  <div className="fact">
-                    <b>{facts.nearest} min</b>
-                    <span>extra driving, closest one</span>
-                  </div>
-                ) : (
-                  <div className="fact">
-                    <b>{facts.places}</b>
-                    <span>neighbourhoods covered</span>
-                  </div>
-                )}
-                {facts.from && (
-                  <div className="fact">
-                    <b>{facts.from}</b>
-                    <span>lowest price listed</span>
-                  </div>
-                )}
-              </div>
+            {/* THE THREE COUNTS ARE GONE from under the postcode box.
+
+                They said how many appointments were open, how many
+                neighbourhoods were covered and the lowest price on the site —
+                all true, all counted from the rows on the page, and all wrong
+                in this position. A number under a search box is read as a
+                promise about what the search will return, and on a site this
+                new the honest figures are small enough to argue against
+                looking. The openings themselves are one scroll down and they
+                are the answer.
+
+                Nothing is hidden by this: `facts` is still computed and the
+                same figures still appear where they belong — on a trade page,
+                against that trade. */}
+          </div>
+        </div>
+      </section>
+
+      {/*
+        --- band two: the map, and why it is here rather than in a sidebar ---
+
+        It used to be a 430px column beside the list, four screens down, under
+        eight category tiles and a rail of neighbourhood names. That is where a
+        directory puts a map, because on a directory the map is a locator: you
+        already know what you want and it tells you how far away it is.
+
+        Here the map is the pitch. Every business on this site drives to the
+        customer, and a wide shot of your own streets with vans moving across it
+        says that in the second before anybody reads a word. So it comes second,
+        full width, and the list of appointments follows it — the picture first,
+        the inventory after.
+      */}
+      <section className="map-band" aria-labelledby="map-head">
+        <div className="wrap-wide">
+          <div className="map-band-head">
+            <h2 id="map-head">They come to you.</h2>
+            <p>
+              Every business here is mobile — they drive to your kerb, your
+              driveway, your car park. Tap a neighbourhood to see what is open
+              in it.
+            </p>
+          </div>
+
+          <div className="map-shell map-stage">
+            <CityMap areas={shownAreas} selected={selected} onSelect={pickArea}
+              cars onIllustrated={setIllustrated} />
+            <span className="map-hint">Tap a neighbourhood</span>
+            {/* THE HONEST LINE, and it is shown exactly when it is true.
+                The map draws real positions from real phones whenever anybody
+                is out. While nobody is — which is every minute of a deployment
+                that is still showing sample businesses, because sample
+                businesses have no phone to ping — it draws vehicles instead,
+                and says so. A moving vehicle on a marketplace map is read as a
+                real one, so the page has to be straight about which it is.
+                Do not make this permanent and do not delete it: it is wired to
+                what the map is actually doing. */}
+            {illustrated && (
+              <span className="map-note">
+                Sample vehicles. Real ones appear here as businesses go out.
+              </span>
             )}
           </div>
         </div>
       </section>
 
-      {/* --- band two: what is open, and where -------------------------- */}
+      {/* --- band three: what is open ------------------------------------ */}
       <section className="browse-band">
         <div className="wrap-wide">
           {loading && <Spinner label="Finding open appointments" />}
@@ -528,27 +575,53 @@ export default function Discover() {
                       stopped being true the moment the tiles became the whole
                       catalogue rather than today's inventory. */}
                   <p className="band-sub">
-                    Everything Slotfill covers. The number is what is open right now.
+                    Everything Round The Way covers. The number is what is open right now.
                   </p>
                   <div className="cat-tiles" role="group" aria-label="Browse by category">
-                    {grouped.map((c) => {
-                      const n = c.trades.reduce((a, t) => a + t.n, 0);
-                      return (
+                    {grouped.map((c) => (
                         <Link key={c.key} to={`/browse/${c.key}`} className="cat-tile">
-                          <span className="cat-tile-art"><CategoryArt category={c.key} /></span>
+                          {/*
+                            THE TILE PICTURES ARE RENDERED FILES NOW.
+
+                            These eight were inline SVG, drawn from coordinates
+                            in CategoryArt.tsx, and the argument for that was a
+                            good one: no request, no decode, nothing to go
+                            wrong. What changed is that the owner asked for a
+                            picture on every TRADE tile as well, and thirty-nine
+                            of those cannot be inline SVG in a bundle every
+                            visitor downloads. Once the trades are files, the
+                            categories being the one set drawn a different way
+                            is how a grid stops looking like one set: the .webp
+                            files and CategoryArt's scenes are the same
+                            coordinates for exactly that reason — see the note
+                            at the top of tools/trade-art.html.
+
+                            `c.art` is the path the Worker computed and put on
+                            the catalogue payload; CategoryArt is what draws
+                            when an hour-old cached payload has no such field.
+                            See TileArt.tsx for the empty alt, the width and
+                            height, and why these are lazy.
+                          */}
+                          <span className="cat-tile-art">
+                            <CategoryArtImg
+                              src={c.art}
+                              fallback={<CategoryArt category={c.key} />}
+                            />
+                          </span>
+                          {/* THE NAME, AND NOTHING ELSE ON THE TILE. The
+                              count that used to sit beside it is gone from
+                              here: a tile is a picture of the work with its
+                              name written across the foot of it, which is what
+                              the grid has to say at a glance. What is open is
+                              said in words on the category page each tile
+                              leads to, and per trade on the trade's own page,
+                              where somebody is close enough to the decision
+                              for a number to mean something. */}
                           <span className="cat-tile-body">
                             <span className="cat-tile-name">{c.label}</span>
-                            {/* The count is what is open, so a category
-                                nobody is working in today prints nothing
-                                rather than a nought. The tile still leads
-                                somewhere real: the category page lists every
-                                service in it and says plainly which ones have
-                                nothing open. */}
-                            {n > 0 && <span className="cat-tile-n">{n}</span>}
                           </span>
                         </Link>
-                      );
-                    })}
+                    ))}
                     {/* Everything last, not first: it is the fallback for
                         somebody whose job does not fit a heading, not the
                         thing most people want. */}
@@ -560,10 +633,14 @@ export default function Discover() {
                     <button type="button" aria-pressed={trade === null}
                       className={`cat-tile${trade === null ? ' on' : ''}`}
                       onClick={() => setTrade(null)}>
-                      <span className="cat-tile-art"><CategoryArt category={null} /></span>
+                      <span className="cat-tile-art">
+                        <CategoryArtImg
+                          src={allArt}
+                          fallback={<CategoryArt category={null} />}
+                        />
+                      </span>
                       <span className="cat-tile-body">
                         <span className="cat-tile-name">Everything</span>
-                        <span className="cat-tile-n">{slots.length}</span>
                       </span>
                     </button>
                   </div>
@@ -582,38 +659,11 @@ export default function Discover() {
               )}
 
               <section className="browse">
-                {shownAreas.length > 1 && (
-                  /*
-                    THE RAIL IS LABELLED BY METRO, and each metro is its own
-                    group rather than a caption floating over a flat row. A
-                    visitor reading "Orcutt" three chips along from "Encino"
-                    has no way of knowing they are a hundred and fifty miles
-                    apart, and this rail is ordered by distance from them, so
-                    that is exactly the order it produces once two places are
-                    open. Each group carries its own name for a screen reader
-                    as well, which is the same fact said the other way.
-                  */
-                  <div className="rail" role="group" aria-label="Filter by neighbourhood">
-                    {railGroups.map((g) => (
-                      <div className="rail-group" key={g.metro?.slug ?? 'unfiled'}
-                        role="group"
-                        aria-label={g.metro
-                          ? `Neighbourhoods in ${g.metro.name}`
-                          : 'Neighbourhoods'}>
-                        {g.metro && <span className="rail-label">{g.metro.name}</span>}
-                        {g.rows.map((a) => (
-                          <button key={a.slug} type="button" aria-pressed={a.slug === selected}
-                            className={`area-chip${a.slug === selected ? ' on' : ''}`
-                              + (a.slot_count === 0 ? ' none' : '')}
-                            onClick={() => setSelected(a.slug)}>
-                            {a.name}
-                            {a.slot_count > 0 && <span className="area-n">{a.slot_count}</span>}
-                          </button>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {/* THE NEIGHBOURHOOD RAIL IS GONE. It printed every covered
+                    neighbourhood with a count against each, which is the
+                    postcode box's job said a second, longer way. The map below
+                    is the thing that answers "who is near me", so the map is
+                    what gets the room. */}
 
                 <div className="browse-head" ref={browseTop}>
                   <div>
@@ -632,12 +682,9 @@ export default function Discover() {
                           + ` · ${filters.sortSub}`}
                     </p>
                   </div>
-                  <div className="seg" role="group" aria-label="Map size">
-                    <button type="button" aria-pressed={pane === 'list'}
-                      onClick={() => swap('list')}>Small map</button>
-                    <button type="button" aria-pressed={pane === 'map'}
-                      onClick={() => swap('map')}>Big map</button>
-                  </div>
+                  {/* THE SMALL/BIG MAP TOGGLE IS GONE with the sidebar map it
+                      resized. There is one map now, it is the size it should
+                      be, and it is above this list rather than beside it. */}
                 </div>
 
                 <div className="browse-grid">
@@ -679,11 +726,19 @@ export default function Discover() {
                       </div>
                     )}
 
-                    {/* SORT AND FILTER.
-                        Only the controls this particular set of rows can
-                        answer for are drawn; the component renders nothing at
-                        all when there is nothing here to sort. */}
-                    <SlotFilters filters={filters} />
+                    {/* THE FILTER ROW IS GONE, and the filtering under it is
+                        not. `filters` still narrows and sorts `shown`; what
+                        was removed is the row of Job / Day / Price / Rating
+                        controls above the results.
+
+                        They were four dropdowns over a handful of rows. A
+                        control that offers to divide six results into six
+                        groups of one is not helping anybody choose — it is
+                        four decisions asked before the first useful one, at
+                        the exact moment somebody wants to see what is
+                        available. The hook stays because the page still needs
+                        its ordering, and because putting the row back is one
+                        line rather than a rebuild. */}
 
 
                     {shown.length === 0 ? (
@@ -750,21 +805,6 @@ export default function Discover() {
                     )}
                   </div>
 
-                  <div className={`map-col${pane === 'map' && !wide ? ' map-big' : ''}`}>
-                    {/* Mounted once and never torn down. The Small/Big control
-                        above resizes the pane it sits in; unmounting MapLibre to
-                        hide it would mean a fresh style download and a fresh
-                        fitBounds every time somebody tapped between the two, and
-                        hiding the map behind a toggle at all was tried once and
-                        read as the map having been removed. The two pieces of
-                        state that used to gate this — a `showMap` constant that
-                        was always true and a `mapLive` latch that started true
-                        and could never be unset — are gone with it. */}
-                    <div className="map-shell">
-                      <CityMap areas={shownAreas} selected={selected} onSelect={setSelected} />
-                      <span className="map-hint">Pick a neighbourhood</span>
-                    </div>
-                  </div>
                 </div>
               </section>
             </>
@@ -788,14 +828,31 @@ export default function Discover() {
       */}
       <WhoBand />
       <CoveredBand />
-      <PlacesBand areas={placeAreas} metros={metros} />
+      {/* THE NEIGHBOURHOOD BAND IS GONE.
+
+          It printed every open neighbourhood in both metros with a count
+          against each — Studio City 18, Encino 14, and on down to places with
+          three. Two problems with it, and the second is the one that matters.
+
+          It answered a question the page already answers better: somebody who
+          wants to know whether this reaches their street types their postcode
+          into the box at the top, and gets their own street rather than a list
+          of twenty-five names to scan for it.
+
+          And the counts were the wrong thing to lead with on a quiet day. A
+          band whose job is "we cover your area" that opens with a column of
+          single digits argues against itself.
+
+          /near still exists and is still linked from the footer and from every
+          category page, so nothing is unreachable — it is just no longer the
+          thing between somebody and the search box. */}
       <ProsBand />
 
       {/*
         NO TESTIMONIALS BAND, and this is deliberate rather than unfinished.
 
         The reference marketplace ends its home page with three customer
-        quotes, and it is the one band on it we cannot have: Slotfill has no
+        quotes, and it is the one band on it we cannot have: Round The Way has no
         customers to quote. Writing three anyway — from an imagined persona,
         from a member of the team, from a seeded listing — would be inventing
         the single piece of evidence a stranger weighs most heavily, on the
@@ -875,9 +932,10 @@ function WhoBand() {
             you book is the person who knocks.
           </p>
           <p>
-            Slotfill does not vet them. There is no interview, no reference
+            Round The Way does not vet them. There is no interview, no reference
             check and no identity check: a business gives an email address, a
-            business name, a vehicle and a card, and that is the whole of it.
+            business name, a vehicle and a bank account to be paid into, and
+            that is the whole of it.
             What the site does instead is make each one answerable — the
             reviews on a card were written by people who booked that
             appointment and had the work done, and the vehicle that turns up
@@ -885,7 +943,7 @@ function WhoBand() {
           </p>
         </div>
         <p className="band-more">
-          <Link to="/pros">How Slotfill works for a business</Link>
+          <Link to="/pros">How Round The Way works for a business</Link>
         </p>
       </div>
     </section>
@@ -905,18 +963,19 @@ function WhoBand() {
  * then reads either of those must not find the site describing itself two
  * different ways — the moment the same promise is phrased twice, a reader
  * starts working out which version is the true one, and by then it does not
- * matter what the answer is. That is not a hypothetical: the first item here
- * used to be headed "You pay when you book, not at the door" while the
- * checkout it leads to said no money is taken, and the two pages were three
- * clicks apart. The payment item now takes its sentence from PaymentState.tsx
- * so it cannot say anything the checkout does not.
+ * matter what the answer is. That is not a hypothetical: this band's payment
+ * item spent months headed "Nothing is paid on this site yet" while the
+ * checkout three clicks away was charging real cards. The payment item now
+ * takes its sentence from PaymentState.tsx so it cannot say anything the
+ * checkout does not.
  */
 const COVERED = [
   {
-    title: 'Nothing is paid on this site yet',
+    title: 'You pay when you book, not at the door',
     body:
-      `${PAY_TODAY_SHORT} Paying here at the moment you book is the design, `
-      + 'and it is not built.',
+      `${PAY_TODAY_SHORT} If it is cancelled, what comes back depends on how `
+      + 'close to the appointment it is: all of it more than 48 hours out, '
+      + 'three quarters inside 48 hours, a quarter inside 12.',
   },
   {
     title: 'Parts are approved before they are fitted',
@@ -956,7 +1015,7 @@ function CoveredBand() {
             is covered" that opens with five reassuring items reads as a
             guarantee whatever the small print at the bottom says. */}
         <p className="band-lede">
-          Slotfill is not an insurer and none of this is a guarantee. It is
+          Round The Way is not an insurer and none of this is a guarantee. It is
           the list of things the site actually does to make a booking between
           two strangers safer to make.
         </p>
@@ -976,87 +1035,6 @@ function CoveredBand() {
   );
 }
 
-/**
- * WHERE THIS WORKS.
- *
- * The reference marketplace's band in this position is "All 50 states", and
- * the honest version of it for a product that covers two places is those two
- * places, named. The neighbourhoods are the rows this page already fetched and
- * the count is taken from them, so the band shrinks on a quiet day and says so
- * rather than printing a figure somebody typed in last year.
- *
- * IT IS GROUPED, and the grouping is the content. A single list of open
- * neighbourhoods now runs from Encino to Guadalupe, and a reader who does not
- * know the geography would take that for one city with a lot of districts. The
- * metro headings say which of the two places each name is in, and the metros
- * come from the API rather than from a constant here, so the day a third opens
- * this band grows a heading on its own.
- *
- * The links are plain <a> and not <Link>: /near, /near/:slug and the metro
- * pages are rendered by the Worker and are not React routes for the visitor's
- * purposes, so routing to them client-side would throw the rendered page away.
- */
-function PlacesBand({ areas, metros }: {
-  areas: Array<{ slug: string; name: string; metro: string; n: number }>;
-  metros: Metro[];
-}) {
-  const open = areas.filter((a) => a.n > 0);
-  const groups = groupByMetro(metros, open, (a) => a.metro, 'nearest');
-  // Nothing fetched yet, or nothing to say. A band about coverage with no
-  // places under it is worse than no band.
-  if (areas.length === 0) return null;
-
-  return (
-    <section className="places-band" aria-labelledby="places-title">
-      <div className="band-wrap">
-        <h2 className="band-h" id="places-title">Where this works</h2>
-        {/* Three sentences for three states, because "18 of the 18" is not
-            how anybody says "all of them" and "0 of the 18" is a way of
-            burying the fact that the answer today is none. The places are
-            named from the metro list, and where that has not arrived the
-            sentence starts at the count rather than at a name this page would
-            have to make up. */}
-        <p className="band-lede">
-          {metros.length > 0 && `${metroNames(metros)}, a neighbourhood at a time. `}
-          {open.length === 0
-            ? `Slotfill covers ${areas.length}, and none of them has anything `
-              + `open this minute — an opening appears the moment a job cancels.`
-            : open.length === areas.length
-              ? `All ${areas.length} of the neighbourhoods Slotfill covers have `
-                + `something open right now.`
-              : `${open.length} of the ${areas.length} neighbourhoods Slotfill `
-                + `covers ${open.length === 1 ? 'has' : 'have'} something open `
-                + `right now.`}
-        </p>
-
-        {groups.map((g) => (
-          <div className="places-group" key={g.metro?.slug ?? 'unfiled'}>
-            {g.metro && (
-              <h3 className="places-h"><a href={g.metro.path}>{g.metro.name}</a></h3>
-            )}
-            <ul className="places-list">
-              {g.rows.map((a) => (
-                <li key={a.slug}>
-                  <a href={`/near/${a.slug}`}>
-                    {a.name}
-                    <span className="places-n">{a.n}</span>
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-
-        <p className="band-more">
-          <a href="/near">Every neighbourhood</a>
-          {metros.map((m) => (
-            <a key={m.slug} href={m.path}>Slotfill in {m.name}</a>
-          ))}
-        </p>
-      </div>
-    </section>
-  );
-}
 
 /**
  * THE OTHER SIDE OF THE MARKET.

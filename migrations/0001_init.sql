@@ -454,13 +454,30 @@ CREATE TABLE messages (
   channel        TEXT NOT NULL DEFAULT 'device'
                    CHECK (channel IN ('device','sms','email','whatsapp')),
   to_address     TEXT NOT NULL,
+  -- Who a message came FROM. NOT WIRED: the only writer was the inbound
+  -- webhook behind an operator's own carrier account, and that whole feature
+  -- is gone -- messaging here is in-app so that neither side hands over a
+  -- phone number. Every row this product writes is outbound, and outbound
+  -- rows have no from-address worth storing. Kept rather than dropped because
+  -- dropping a column in SQLite rebuilds the table, and this one costs a NULL.
   from_address   TEXT,
   body           TEXT NOT NULL,
 
   provider       TEXT,
+  -- The carrier's own id for a message, and the key a delivery receipt would
+  -- be matched on. NOT WIRED: nothing writes it and, with the status webhook
+  -- gone, nothing reads it. It is what a future provider's send would record
+  -- if delivery receipts are ever wanted, and idx_messages_sid below is
+  -- already the unique index that would make them idempotent.
   provider_sid   TEXT,
   status         TEXT NOT NULL DEFAULT 'queued'
                    CHECK (status IN ('queued','handed_off','sent','delivered','failed','received')),
+  -- Why a send failed, in the carrier's vocabulary. NOT WIRED for the same
+  -- reason as provider_sid: it was written by the status webhook and read by
+  -- nothing else. It is the column that would separate "this number is
+  -- unreachable, stop offering to them" from "we were rate limited, it will
+  -- go next time" -- a distinction worth having again if offers are ever sent
+  -- by carrier rather than handed to the operator's own handset.
   error_code     TEXT,
   -- What the carrier charged for this message. NOT WIRED: the Twilio status
   -- webhook is the only place a price could come from and it does not read

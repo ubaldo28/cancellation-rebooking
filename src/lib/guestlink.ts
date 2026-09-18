@@ -1,5 +1,6 @@
 import type { Env } from '../types';
-import { threadByToken } from './chat';
+import { threadByToken, threadForCustomer, type Thread } from './chat';
+import { currentCustomer } from './customers';
 import { RateLimitedError } from './ratelimit';
 import { notFound, now } from './util';
 
@@ -134,7 +135,31 @@ export async function recordGuestLinkFailure(env: Env, ip: string): Promise<void
 }
 
 /**
- * The one gate every guest-link route goes through.
+ * Which authority opened this conversation.
+ *
+ * `link` means the segment in the URL was a real guest token and everything
+ * behind it works exactly as it always has -- the handlers get the string and
+ * resolve it themselves, unchanged.
+ *
+ * `account` means the segment was a thread id, the caller had a customer
+ * session, and that session's account owns that thread. The resolved row
+ * travels with it so nothing downstream has to ask the question a second time
+ * and nothing downstream is able to answer it differently.
+ *
+ * THE ACCOUNT ID IS NOT ON HERE and was taken off again after being written.
+ * The Thread carries `customer_account_id`, so a second copy beside it is a
+ * field nothing reads travelling alongside one that is already right — and
+ * the one question a handler actually asks (is this conversation on an
+ * account) has to be answerable on the LINK door too, where there is no
+ * session at all. See `on_account` in guestView.
+ */
+export type ThreadDoor =
+  | { via: 'link' }
+  | { via: 'account'; thread: Thread };
+
+/**
+ * The one gate every guest-link route goes through, and now the one place the
+ * two doors into a conversation are decided.
  *
  * It resolves the token itself rather than waiting to see what the handler
  * makes of it, because the handlers disagree about what an unknown token
@@ -145,11 +170,56 @@ export async function recordGuestLinkFailure(env: Env, ip: string): Promise<void
  * request, on top of the lookup the handler then does for itself. That is a
  * real duplicate and it is worth it: the alternative is threading a request
  * through every library function that takes a token.
+ *
+ * ---------------------------------------------------------------------------
+ * THE SECOND DOOR, AND WHY IT IS HERE OF ALL PLACES
+ * ---------------------------------------------------------------------------
+ * A customer's conversation lived behind one secret and the page said so:
+ * "keep this link, it is the only way to this conversation." Since migration
+ * 0037 they also have an account, and the person who lost the link had a
+ * proved email address, an order against it and a booking listed at /account
+ * -- and still no way back to the messages, the photographs they had sent, the
+ * start code or the unpaid card form. Only a fingerprint of the token is
+ * stored, deliberately, so nobody here could hand it back. That dead end is
+ * what this closes.
+ *
+ * It is written into THIS function rather than into thirty handlers for the
+ * same reason the lockout was: "the whole value of it is that it cannot be
+ * forgotten". Every route under /api/public/threads/:ref already passes
+ * through here, so the account door reaches all of them at once, and the next
+ * guest endpoint somebody adds is covered by existing. A door that has to be
+ * remembered on each route is a door with a hole in it already.
+ *
+ * ORDER MATTERS AND THE TOKEN IS FIRST. A guest who never made an account has
+ * nothing else, and somebody opening their confirmation on a phone that has
+ * never been signed in is the ordinary case. So a valid token short-circuits
+ * before a cookie is even looked at: no extra read, no behaviour change, and
+ * the account lookup only ever runs on a segment that was already going to be
+ * a 404.
+ *
+ * A FAILED ACCOUNT LOOKUP STILL COUNTS AS A WRONG LINK, on purpose. Somebody
+ * feeding thread ids at this endpoint hoping to find one is doing exactly what
+ * the counter exists to stop, and the fact that ids are random rather than
+ * secret is not a reason to let them be walked for free. The refusal is the
+ * same sentence and the same 404 either way, so nothing here tells a caller
+ * whether the value they tried was a real thread belonging to somebody else --
+ * which is the property the whole file is built around.
  */
-export async function guardGuestLink(env: Env, ip: string, rawToken: string): Promise<void> {
+export async function guardGuestLink(
+  env: Env, req: Request, ip: string, ref: string,
+): Promise<ThreadDoor> {
   await assertGuestLinkAllowed(env, ip);
 
-  if (await threadByToken(env, rawToken)) return;
+  if (await threadByToken(env, ref)) return { via: 'link' };
+
+  // Only now, and only for a segment that matched no token. One session read
+  // and one indexed thread read, on a request that was otherwise about to be
+  // refused.
+  const account = await currentCustomer(req, env);
+  if (account) {
+    const thread = await threadForCustomer(env, account.id, ref);
+    if (thread) return { via: 'account', thread };
+  }
 
   await recordGuestLinkFailure(env, ip);
   // The same words an unknown token has always produced, and no hint that

@@ -46,6 +46,13 @@ async function seed(opts: { lat?: number; lng?: number } = {}) {
 
   await saveOperatorCard(env, OP, { ref: 'pm', brand: 'visa', last4: '4242' });
   await saveVehicle(env, OP, { make: 'Ford', model: 'Transit', color: 'White', plate: '8ABC' });
+  // Somewhere to send the money. A business that cannot be paid cannot list —
+  // see NEEDS_PAYOUTS_OPERATOR — so every fixture that expects to be listable
+  // has to carry it, the same as the card and the van above.
+  await env.DB.prepare(
+    `UPDATE operators SET stripe_account_id = ?, stripe_payouts_enabled = 1,
+       stripe_charges_enabled = 1 WHERE id = ?`,
+  ).bind(`acct_${OP}`, OP).run();
 
   await env.DB.prepare(
     `INSERT INTO services (id,operator_id,name,duration_seconds,price_cents,created_at,updated_at)

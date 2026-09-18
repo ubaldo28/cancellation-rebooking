@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react';
-import type { MapArea } from '../api';
+import { api, type LiveVan, type MapArea } from '../api';
 import { prefersReducedMotion } from '../lib/motion';
-import { MAP_STYLE, mapLib } from '../lib/map';
+import { MAP_STYLE, useMapLib } from '../lib/map';
+import { buildCars, carAt, type Car } from '../lib/cars';
+import { vehicleArt } from './vehicleArt';
 
 /**
  * A real map: OpenStreetMap data, rendered by MapLibre GL.
@@ -11,9 +13,19 @@ import { MAP_STYLE, mapLib } from '../lib/map';
  * stage and rules out hammering OSM's own raster tiles at any stage. MapLibre
  * draws the required attribution itself, so it is not duplicated in the page.
  *
- * MapLibre is loaded from a CDN in index.html rather than bundled, so this
- * component reaches it through `mapLib()` and degrades to a plain list if the
- * script has not arrived.
+ * WHERE MAPLIBRE COMES FROM, AND WHY THE ANSWER CHANGED. It used to be a
+ * `<script defer>` in index.html pointing at unpkg.com, and this component read
+ * the `window.maplibregl` that script left behind. Because the tag lived in the
+ * SPA shell, that 800 kB fetch — and the visitor's IP and User-Agent reaching a
+ * third party with it — was paid on every route, including the majority that
+ * never draw a map. The library is a dependency now and `useMapLib()` fetches
+ * it from this origin, in a chunk of its own, the first time this component is
+ * mounted. See web/src/lib/map.ts.
+ *
+ * The practical difference inside this file is one of timing rather than of
+ * shape: `gl` is null for a beat on a cold visit, so every effect that touches
+ * the library lists it as a dependency and bails while it is null, and runs
+ * again — properly, once — when the chunk lands.
  */
 
 /** Framing a corridor leaves room on the right, where the labels hang. */
@@ -22,18 +34,81 @@ const FIT = { padding: { top: 60, bottom: 60, left: 50, right: 150 }, maxZoom: 1
 /** How many pins in a metro carry a name and a price before labels collide. */
 const LABELS = 5;
 
+/**
+ * How often the map asks who is out.
+ *
+ * Twenty seconds. A van in traffic moves a couple of hundred metres in that
+ * time, which at this zoom is a visible slide rather than a jump, and the ease
+ * between fixes covers the gap. Faster buys nothing a viewer can see: the
+ * position it would be asking for is itself only refreshed every
+ * MIN_PING_SECONDS at the other end, so most extra polls would return the same
+ * fix and spend a request finding that out.
+ */
+const LIVE_EVERY_MS = 20_000;
+
+/**
+ * How long the ease between two fixes takes.
+ *
+ * Slightly longer than the poll, so a vehicle is still moving when the next
+ * fix lands and the motion never visibly stops and restarts. Overshoot is
+ * impossible because the ease is clamped at the destination.
+ */
+const EASE_MS = 22_000;
+
+/** Where a live vehicle should be drawn right now, between its last two fixes. */
+function easeNow(
+  v: { fromLng: number; fromLat: number; toLng: number; toLat: number; at: number },
+  t: number,
+): { lng: number; lat: number } {
+  const raw = Math.min(1, Math.max(0, (t - v.at) / EASE_MS));
+  // Eased out only. A vehicle that is already moving should not appear to
+  // start from rest every twenty seconds, but it should settle rather than
+  // slam into the new fix.
+  const p = 1 - (1 - raw) * (1 - raw);
+  return {
+    lng: v.fromLng + (v.toLng - v.fromLng) * p,
+    lat: v.fromLat + (v.toLat - v.fromLat) * p,
+  };
+}
+
+/** Compass bearing from one point to another, or null if they are the same. */
+function bearing(
+  fromLat: number, fromLng: number, toLat: number, toLng: number,
+): number | null {
+  const dLng = toLng - fromLng;
+  const dLat = toLat - fromLat;
+  if (Math.abs(dLng) < 1e-9 && Math.abs(dLat) < 1e-9) return null;
+  return (Math.atan2(dLng, dLat) * 180) / Math.PI;
+}
+
 export interface CityMapProps {
   areas: MapArea[];
   selected: string | null;
   onSelect: (slug: string) => void;
+  /**
+   * Show vehicles on this map. Off by default: a small locator map does not
+   * need them and a polling request behind one nobody is looking at is waste.
+   * On for the big map on the front page, where the vehicles are the point.
+   */
+  cars?: boolean;
+  /**
+   * Called with true while the map is showing the ILLUSTRATED fleet rather
+   * than live vehicles, so the page can put up the line that says so — and
+   * take it down the moment somebody real is out.
+   *
+   * Lifted to the page rather than drawn here because the note belongs over
+   * the map's frame, which is the page's element, not the canvas.
+   */
+  onIllustrated?: (on: boolean) => void;
 }
+
 
 /**
  * THE MAP FRAMES ONE METRO AT A TIME, and this is the part of the component
  * the second place broke.
  *
  * Fitting the bounds of every pin was right while every pin was in one valley.
- * Slotfill now covers two places a hundred and fifty miles apart, and a shot
+ * Round The Way now covers two places a hundred and fifty miles apart, and a shot
  * wide enough to hold both is a shot of the Central Coast with two specks on
  * it: no street, no neighbourhood, nothing a visitor can act on. So the camera
  * frames the metro the chosen neighbourhood is in, and choosing one in the
@@ -43,7 +118,20 @@ export interface CityMapProps {
 const metroOf = (areas: MapArea[], slug: string | null): string | null =>
   (areas.find((a) => a.slug === slug) ?? areas[0])?.metro ?? null;
 
-export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
+export default function CityMap({
+  areas, selected, onSelect, cars = false, onIllustrated,
+}: CityMapProps) {
+  // Held in a ref so the effect below does not tear down and rebuild the whole
+  // vehicle layer every time the page passes a new closure.
+  const noteCb = useRef(onIllustrated);
+  noteCb.current = onIllustrated;
+  const setNote = useRef((on: boolean) => noteCb.current?.(on)).current;
+
+  // The library, and how its fetch is going. `gl` is null until the chunk has
+  // arrived, which on a cold visit is a beat after the first render, so it is a
+  // dependency of every effect below that builds anything with it.
+  const { gl, state: glState } = useMapLib();
+
   const host = useRef<HTMLDivElement | null>(null);
   const map = useRef<any>(null);
   const markers = useRef<Map<string, any>>(new Map());
@@ -77,7 +165,6 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
 
   // --- create once ---------------------------------------------------------
   useEffect(() => {
-    const gl = mapLib();
     if (!gl || !host.current || map.current) return;
 
     // The nearest neighbourhood the page has, which is the first row the map
@@ -100,7 +187,10 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
     map.current = m;
 
     return () => { m.remove(); map.current = null; markers.current.clear(); };
-  }, []);
+    // Created once — but `gl` is null on the first pass of a cold visit, so
+    // this has to be allowed to run a second time, when there is a library to
+    // build with. `map.current` above is what keeps it to one map either way.
+  }, [gl]);
 
   // --- the pane it lives in changes width, and disappears entirely ---------
   //
@@ -133,7 +223,6 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
 
   // --- markers follow the data --------------------------------------------
   useEffect(() => {
-    const gl = mapLib();
     const m = map.current;
     if (!gl || !m || areas.length === 0) return;
 
@@ -184,7 +273,207 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
 
     // A new set of pins is a new shot, whichever metro it turns out to be of.
     framed.current = null;
-  }, [areas]);
+  }, [areas, gl]);
+
+  // --- the vehicles --------------------------------------------------------
+  //
+  // TWO SOURCES, AND THE MAP IS ALWAYS EXPLICIT ABOUT WHICH IT IS SHOWING.
+  //
+  //   LIVE, and this is the real thing: /api/public/live returns the actual
+  //   position of every operator who has switched location sharing on and is
+  //   out working. Real fixes from real phones, coarsened server side to about
+  //   110 m and carrying no identity — a rotating handle so the browser can
+  //   move a dot rather than replace it, and nothing else. Polled, and eased
+  //   between fixes so a vehicle drives across the map instead of jumping.
+  //
+  //   ILLUSTRATED, only while this deployment is still showing sample
+  //   businesses. Sample businesses have no phones, so nothing can ping and
+  //   the live list is always empty; drawing nothing would say "nobody works
+  //   here" about a demonstration. So the drawn fleet runs instead, and the
+  //   map says in plain words that is what it is.
+  //
+  // The moment one real operator is out, the drawn fleet stops and the map is
+  // showing people. The note goes with it, because it is no longer true.
+  useEffect(() => {
+    const m = map.current;
+    const el = host.current;
+    // No vehicles asked for means no markers AND no polling. A locator map in
+    // a sidebar must not put a request on the wire every twenty seconds.
+    if (!gl || !m || !el || !cars) return;
+
+    let dead = false;
+    let poll = 0;
+    let frame = 0;
+    let running = false;
+    const started = performance.now();
+
+    /** Live vans, keyed by the rotating handle, holding where to ease from. */
+    const live = new Map<string, {
+      marker: any; el: HTMLElement; kind: string;
+      fromLng: number; fromLat: number; toLng: number; toLat: number;
+      deg: number; at: number;
+    }>();
+    /** The drawn fleet, when there is nothing live to show. */
+    let drawn: { car: Car; marker: any; el: HTMLElement }[] = [];
+
+    const node = (kind: string) => {
+      const art = vehicleArt(kind);
+      const d = document.createElement('div');
+      d.className = 'van';
+      d.setAttribute('aria-hidden', 'true');
+      // Sized to the drawing. Every vehicle is the same WIDTH — a car and a
+      // van are the same across on a real road — and it is the height that
+      // differs, which is the whole of what tells them apart at this size.
+      d.style.width = `${art.w}px`;
+      d.style.height = `${art.h}px`;
+      d.innerHTML = art.svg;
+      return d;
+    };
+    const turn = (host: HTMLElement, deg: number) =>
+      (host.firstElementChild as HTMLElement | null)
+        ?.style.setProperty('transform', `rotate(${deg}deg)`);
+
+    const clearDrawn = () => {
+      for (const d of drawn) d.marker.remove();
+      drawn = [];
+    };
+
+    /** Put the illustrated fleet up. Only ever called on a sample deployment. */
+    const showDrawn = () => {
+      if (drawn.length > 0 || prefersReducedMotion() || areas.length < 2) return;
+      for (const car of buildCars(areas, focus)) {
+        const d = node(car.kind);
+        const at = carAt(car, 0);
+        const marker = new gl.Marker({ element: d, anchor: 'center' })
+          .setLngLat([at.lng, at.lat]).addTo(m);
+        drawn.push({ car, marker, el: d });
+      }
+      setNote(drawn.length > 0);
+    };
+
+    /** Reconcile the live set against a fresh poll. */
+    const apply = (list: LiveVan[]) => {
+      const seen = new Set<string>();
+      for (const v of list) {
+        seen.add(v.ref);
+        const held = live.get(v.ref);
+        if (held) {
+          // Ease from wherever it is being drawn right now, not from the last
+          // fix — otherwise a poll that lands mid-ease snaps the vehicle back.
+          const p = easeNow(held, performance.now());
+          held.fromLng = p.lng; held.fromLat = p.lat;
+          held.toLng = v.lng; held.toLat = v.lat;
+          held.at = performance.now();
+          // A phone that reports a heading is believed. One that does not gets
+          // the bearing of the leg it is driving, which is the same answer for
+          // anything that is actually moving.
+          held.deg = v.heading ?? bearing(p.lat, p.lng, v.lat, v.lng) ?? held.deg;
+          continue;
+        }
+        const d = node(v.kind);
+        const marker = new gl.Marker({ element: d, anchor: 'center' })
+          .setLngLat([v.lng, v.lat]).addTo(m);
+        live.set(v.ref, {
+          marker, el: d, kind: v.kind,
+          fromLng: v.lng, fromLat: v.lat, toLng: v.lng, toLat: v.lat,
+          deg: v.heading ?? 0, at: performance.now(),
+        });
+        turn(d, v.heading ?? 0);
+      }
+      // Gone: switched off, went offline, stopped pinging, or the handle
+      // rotated. All four mean the same thing here — that dot is not a claim
+      // we can still make.
+      for (const [ref, held] of live) {
+        if (seen.has(ref)) continue;
+        held.marker.remove();
+        live.delete(ref);
+      }
+      if (live.size > 0) { clearDrawn(); setNote(false); }
+    };
+
+    const tick = (t: number) => {
+      if (live.size > 0) {
+        for (const v of live.values()) {
+          const p = easeNow(v, t);
+          v.marker.setLngLat([p.lng, p.lat]);
+          turn(v.el, v.deg);
+        }
+      } else {
+        const secs = (t - started) / 1000;
+        for (const d of drawn) {
+          const p = carAt(d.car, secs);
+          d.marker.setLngLat([p.lng, p.lat]);
+          turn(d.el, p.deg);
+        }
+      }
+      frame = requestAnimationFrame(tick);
+    };
+
+    const start = () => {
+      if (running) return;
+      running = true;
+      frame = requestAnimationFrame(tick);
+    };
+    const stop = () => {
+      if (!running) return;
+      running = false;
+      cancelAnimationFrame(frame);
+    };
+
+    const read = async () => {
+      if (dead) return;
+      try {
+        const res = await api.live();
+        if (dead) return;
+        apply(res.vans);
+        // Nothing live. On a real deployment that is the honest picture and
+        // the map stays empty; on the sample one it means no phone exists to
+        // ping, so the drawn fleet stands in and says so.
+        if (res.vans.length === 0) {
+          if (res.demo) showDrawn(); else { clearDrawn(); setNote(false); }
+        }
+      } catch {
+        // A failed poll changes nothing: the vehicles already on the map keep
+        // easing to their last known fix and the next poll corrects them.
+      }
+    };
+
+    // Off screen or in a background tab is nobody watching: no animation frame
+    // and no request. A map nobody is looking at should cost nothing.
+    let onScreen = typeof IntersectionObserver === 'undefined';
+    const settle = () => {
+      const watching = onScreen && !document.hidden;
+      if (watching) {
+        start();
+        if (!poll) {
+          void read();
+          poll = window.setInterval(() => void read(), LIVE_EVERY_MS);
+        }
+      } else {
+        stop();
+        if (poll) { clearInterval(poll); poll = 0; }
+      }
+    };
+
+    const io = onScreen ? null : new IntersectionObserver(
+      (e) => { onScreen = !!e[0]?.isIntersecting; settle(); },
+      { threshold: 0.01 },
+    );
+    io?.observe(el);
+    document.addEventListener('visibilitychange', settle);
+    settle();
+
+    return () => {
+      dead = true;
+      stop();
+      if (poll) clearInterval(poll);
+      io?.disconnect();
+      document.removeEventListener('visibilitychange', settle);
+      for (const v of live.values()) v.marker.remove();
+      live.clear();
+      clearDrawn();
+    };
+  }, [areas, focus, cars, setNote, gl]);
 
   // --- selection is a class, not a rebuild --------------------------------
   useEffect(() => {
@@ -198,7 +487,6 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
       el.querySelector('.mk-text')?.classList.toggle('mk-hide', keepHidden);
       el.style.zIndex = on ? '5' : '';
     }
-    const gl = mapLib();
     const m = map.current;
     const el = host.current;
     if (!gl || !m) return;
@@ -230,9 +518,19 @@ export default function CityMap({ areas, selected, onSelect }: CityMapProps) {
         padding: { right: 120 },
       });
     }
-  }, [selected, areas, focus]);
+  }, [selected, areas, focus, gl]);
 
-  if (!mapLib()) {
+  // ONLY ON 'failed', AND THAT IS THE WHOLE POINT OF THE THIRD STATE.
+  //
+  // This used to read `if (!mapLib())`, which was right while the library was a
+  // CDN script that had either already run or was never going to: by the time
+  // React rendered anything, the answer was final. A dynamic import is absent
+  // for a moment on every cold visit, so the same test would put "The map could
+  // not load" in front of every single visitor for a frame before the map drew.
+  // While it is still coming, the canvas below renders instead — which it has
+  // to anyway, because MapLibre needs that element in the document before it
+  // can be pointed at it.
+  if (glState === 'failed') {
     return (
       // Every opening the map would have pinned is already on the page as a
       // card — beside this column on a desktop, above it on a phone — so the

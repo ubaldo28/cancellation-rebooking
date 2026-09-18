@@ -2,10 +2,11 @@ import type { Env, Point } from '../types';
 import { hashOfferToken } from './auth';
 import { attachBooking, startThread, threadByToken } from './chat';
 import { formatMoney, getCountry, localeFor, normalisePostcode } from './countries';
+import { isDemoOperator } from './demo';
 import { notify } from './feed';
 import { partsLine, type PartsPolicy } from './parts';
 import { driveSeconds, geocode } from './geo';
-import { discounted } from './public';
+import { businessBehindAccount, discounted } from './public';
 import { claimPhoneHash, firstNameOnly } from './redact';
 import { customerStanding } from './standing';
 import { newStartCode } from './startcode';
@@ -104,6 +105,13 @@ export interface OrderAccount {
   id: string;
   /** E.164, off the account row. Never off the request body — see below. */
   phone: string;
+  /**
+   * The account's identity, off the account row and never off the request
+   * body. This is what standing is counted against and what claimGuestHistory
+   * matches on, so taking it from the body would be taking the one thing that
+   * is supposed to be proved from the one place nobody has proved anything.
+   */
+  login_email: string;
 }
 
 export interface PlaceOrderInput {
@@ -168,6 +176,8 @@ interface GapRow {
   language: string; deposit_cents: number; max_detour_seconds: number;
   discount_percent: number; accept_public_bookings: number; plan: string;
   banned_at: number | null; suspended_until: number | null;
+  /** 1 once the business has somewhere its share can actually be sent. */
+  stripe_payouts_enabled: number;
   claimed: number;
 }
 
@@ -194,6 +204,7 @@ async function loadContext(env: Env, items: OrderItemInput[]) {
               o.business_name, o.country, o.currency, o.timezone, o.language,
               o.deposit_cents, o.max_detour_seconds, o.discount_percent,
               o.accept_public_bookings, o.plan, o.banned_at, o.suspended_until,
+              o.stripe_payouts_enabled,
               (SELECT COUNT(*) FROM public_claims c
                 WHERE c.gap_id = g.id AND c.status = 'confirmed') AS claimed
          FROM gaps g JOIN operators o ON o.id = g.operator_id
@@ -272,7 +283,60 @@ export async function priceOrder(
       && (gap.banned_at != null
         || (gap.suspended_until != null && gap.suspended_until > t));
 
-    if (!gap || barred || gap.accept_public_bookings !== 1
+    // A BUSINESS WITH NOWHERE TO BE PAID CANNOT BE SOLD.
+    //
+    // listingBlock refuses to publish an opening for one, but it is only
+    // consulted when an opening is posted or a profile is published — and the
+    // cron builds gaps for every operator on a live plan, so an opening could
+    // reach the map, be booked, and take a real card payment for a business
+    // whose share has nowhere to go. The money then sits in the platform
+    // balance with no payout and nothing in the product to resolve it.
+    //
+    // Treated as an unlisted opening rather than as its own refusal, because
+    // that is what it is from the customer's side and the alternative is
+    // telling a stranger about somebody's bank arrangements. That reasoning
+    // holds for a REAL business and only for a real business: there is a person
+    // behind it whose banking is nobody else's business, and the vaguer answer
+    // is the kind one. The sample check below runs first precisely so this
+    // branch is never the thing that answers for a business that does not
+    // exist — nothing about invented data is anyone's private affair.
+    const unpayable = !!gap && gap.stripe_payouts_enabled !== 1;
+
+    // A SAMPLE BUSINESS SAYS IT IS A SAMPLE BUSINESS, AND SAYS IT FIRST.
+    //
+    // The seeded businesses in lib/demo.ts exist so the map is not blank before
+    // anybody has signed up, and they are deliberately left on the public page
+    // with a SAMPLE LISTING badge on them. None of them has a Stripe account,
+    // so every one of them is `unpayable` above — which meant that every
+    // opening on the map, which before anybody signs up is the whole of what a
+    // visitor can see, answered the tap with "That opening is no longer
+    // listed."
+    //
+    // That sentence was false twice over. The opening WAS still listed, on the
+    // page the customer was looking at as they read it; and it sent them off to
+    // wait for a relisting that is never coming, when the real answer is that
+    // there is no business at the other end and there never was. A refusal a
+    // customer cannot act on is worse than no listing at all.
+    //
+    // Checked BEFORE the unlisted branch below, so a sample never reports as
+    // gone, and before `barred` too: a suspended sample business is still a
+    // sample business, and "this is not real" is the fact the customer needs
+    // rather than a disciplinary state invented for data we made up.
+    //
+    // Not in CONFLICT_CODES, so placeOrder answers 400 rather than 409: nothing
+    // raced and nothing changed underneath anybody. The basket is asking for
+    // something that was never for sale.
+    if (gap && isDemoOperator(gap.operator_id)) {
+      priced.push(emptyItem(gapId, [{
+        code: 'sample_listing',
+        message: `${gap.business_name} is sample data, not a real business, so it `
+          + 'cannot be booked. It is listed so the map is not blank before anyone '
+          + 'has signed up.',
+      }]));
+      continue;
+    }
+
+    if (!gap || barred || unpayable || gap.accept_public_bookings !== 1
         || !['trial', 'active'].includes(gap.plan)) {
       priced.push(emptyItem(gapId, [{
         code: 'slot_gone', message: 'That opening is no longer listed.',
@@ -418,6 +482,329 @@ function emptyItem(gapId: string, problems: OrderProblem[]): PricedItem {
   };
 }
 
+// ---------------------------------------------------------------------------
+// The rows a booking is made of
+// ---------------------------------------------------------------------------
+
+/**
+ * The statements that turn "somebody agreed to this" into a booking, pulled
+ * out of placeOrder so there is exactly one of them.
+ *
+ * WHY THESE ARE NOT SIMPLY INSIDE placeOrder ANY MORE. placeOrder sells a
+ * POSTED opening: it prices a basket of gaps, re-checks the drive time, claims
+ * each gap against the unique index that decides the race, and marks the gap
+ * filled. An accepted estimate (see lib/estimates.ts) has none of that — the
+ * whole point of an estimate is that no gap was ever posted — but it needs the
+ * identical order, client, appointment, order_item and order_item_services
+ * rows, because that is what start codes, photographs, arrival, cancellation,
+ * refunds and settlement are all written against.
+ *
+ * The alternative was a second set of INSERTs in estimates.ts with the same
+ * columns in the same tables, and that is the arrangement where the two drift:
+ * somebody adds a column here, fixes the bug here, and the other path silently
+ * keeps producing bookings that are missing it. A booking that came in through
+ * a quote must be indistinguishable, from the row down, from one that came in
+ * through a slot — otherwise every feature downstream has to learn about two
+ * kinds of booking, and half of them will not.
+ *
+ * So the gap-specific writes (public_claims, the gaps flip, superseding the
+ * offers) stay in placeOrder, where the gap is, and everything that is true of
+ * ANY booking lives in the four builders below.
+ */
+
+/**
+ * A condition every write of one booking is made conditional on.
+ *
+ * A D1 batch is one transaction, but a transaction commits whatever its
+ * statements matched — an unguarded INSERT inside it still lands even when the
+ * guarded UPDATE beside it matched nothing. offers.ts learnt that the
+ * expensive way (see acceptOffer) and parts.ts carries the same fragment under
+ * the name `stillSent`. So a caller that has a race to settle passes the
+ * condition in here and it is appended to every row it writes, which makes
+ * "all of it or none of it" true of the batch rather than merely intended.
+ *
+ * Callers with no race to settle — placeOrder, which settles its own on a
+ * unique index — pass nothing and get the plain statements.
+ */
+export interface WriteGuard {
+  /** A boolean SQL expression, e.g. `EXISTS (SELECT 1 FROM estimates …)`. */
+  sql: string;
+  /** Bound after the row's own values, because the guard is always last. */
+  args: unknown[];
+}
+
+/**
+ * `INSERT INTO t (…) SELECT ?,?,?` rather than `VALUES (?,?,?)` throughout, so
+ * that a guard is one appended WHERE rather than a second spelling of every
+ * statement. SQLite allows a SELECT with no FROM, and the two forms insert the
+ * same row; this is the shape offers.ts and parts.ts already use.
+ */
+const withGuard = (sql: string, guard?: WriteGuard | null): string =>
+  (guard ? `${sql} WHERE ${guard.sql}` : sql);
+
+/** The same, for a statement that already has a WHERE clause of its own. */
+const andGuard = (sql: string, guard?: WriteGuard | null): string =>
+  (guard ? `${sql} AND ${guard.sql}` : sql);
+
+const guardArgs = (guard?: WriteGuard | null): unknown[] => guard?.args ?? [];
+
+/**
+ * Where the job happens, snapshotted onto every row that records it.
+ *
+ * Copied and never joined, for the reason the schema gives in migration 0016:
+ * a client edits their address, and a booking that read through to the client
+ * row would rewrite where last month's job took place.
+ */
+export interface BookingPlace {
+  address_line: string | null;
+  postcode: string | null;
+  lat: number | null;
+  lng: number | null;
+}
+
+/** Nothing known about where. What an estimate has until somebody says. */
+export const NOWHERE: BookingPlace = {
+  address_line: null, postcode: null, lat: null, lng: null,
+};
+
+/** One line of the receipt. Copied, never joined — see migration 0016. */
+export interface BookingReceiptLine {
+  /** Kept for reporting, and nullable because a bespoke job priced no service. */
+  service_id: string | null;
+  name: string;
+  duration_seconds: number;
+  price_cents: number;
+  parts_policy: PartsPolicy;
+  parts_note: string | null;
+  parts_estimate_low_cents: number | null;
+  parts_estimate_high_cents: number | null;
+}
+
+export interface NewOrderRow {
+  id: string;
+  account_id: string | null;
+  guest_name: string;
+  /** E.164. NULL when nobody has ever proved a number for this customer. */
+  phone: string | null;
+  login_email: string | null;
+  email: string | null;
+  place: BookingPlace;
+  currency: string;
+  total_cents: number;
+  card: { ref: string; brand?: string | null; last4?: string | null } | null;
+  at: number;
+}
+
+/**
+ * The order itself, always 'pending'.
+ *
+ * 'pending' is the honest state for a row this function writes: the time is
+ * held and no money has moved. startPayment in lib/checkout.ts opens the
+ * charge against it and the webhook writes 'confirmed'. Nothing here ever
+ * writes a paid state, and nothing that calls it is allowed to either.
+ *
+ * The card reference is COPIED onto the order rather than read off the account
+ * when the charge eventually happens. An account's card changes; what the
+ * customer agreed to does not, and a capture that silently followed whichever
+ * card is on the account today would charge a card the person never associated
+ * with this booking. Only the processor's opaque handle is ever written — see
+ * lib/payments.ts, which refuses anything card-shaped at every D1 bind
+ * whatever this line says.
+ */
+export function orderWrite(
+  env: Env, o: NewOrderRow, guard?: WriteGuard | null,
+): D1PreparedStatement {
+  return env.DB.prepare(withGuard(
+    `INSERT INTO orders (id, status, customer_account_id, guest_name, phone_e164,
+       login_email, email, address_line, postcode, lat, lng, currency, total_cents,
+       payment_ref, payment_brand, payment_last4, created_at, updated_at)
+     SELECT ?,'pending',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?`, guard),
+  ).bind(o.id, o.account_id, o.guest_name, o.phone, o.login_email || null,
+    o.email ?? null, o.place.address_line, o.place.postcode, o.place.lat, o.place.lng,
+    o.currency, o.total_cents,
+    o.card?.ref ?? null, o.card?.brand ?? null, o.card?.last4 ?? null, o.at, o.at,
+    ...guardArgs(guard));
+}
+
+export interface NewClientRow {
+  id: string;
+  operator_id: string;
+  /** First name only. See firstNameOnly in lib/redact.ts. */
+  first_name: string;
+  place: BookingPlace;
+  /**
+   * 'ok' when the address resolved to a point, 'failed' when it was given and
+   * did not, 'pending' when none was ever asked for. The third is not the same
+   * as the second and must not be written as it: "we could not find it" sends
+   * an operator looking for a typo in an address nobody typed.
+   */
+  geocode_status: 'pending' | 'ok' | 'failed' | 'manual';
+  /** What this client came in for, so their next booking pre-fills. */
+  default_service_id: string | null;
+  at: number;
+}
+
+/**
+ * The operator's own row for this customer.
+ *
+ * NO PHONE, NO EMAIL, NO SURNAME on it.
+ *
+ * This used to write all three and mask them on the way out of the API. That
+ * is the wrong place to solve it: a filter over four queries is one forgotten
+ * query away from failing, it fails silently, and meanwhile the number sits in
+ * the table for every backup and every future endpoint to carry. Not writing
+ * it is the only version that stays true when somebody adds a fifth query next
+ * year.
+ *
+ * The address IS written, because the operator has to drive there and a
+ * product that hides it does not work. It is cleared when the booking is
+ * cancelled — see bypass.ts.
+ *
+ * The customer's contact details live on the order, which is the platform's
+ * record rather than the operator's list. That is what makes "they cannot walk
+ * away with your number" a fact about the schema instead of a promise about
+ * our query hygiene.
+ */
+export function clientWrite(
+  env: Env, c: NewClientRow, guard?: WriteGuard | null,
+): D1PreparedStatement {
+  return env.DB.prepare(withGuard(
+    `INSERT INTO clients (id, operator_id, first_name, phone_e164, email,
+       address_line, postcode, lat, lng, geocode_status, geocoded_at,
+       default_service_id, sms_consent, sms_consent_at, acquired,
+       platform_introduced, created_at, updated_at)
+     SELECT ?,?,?,NULL,NULL,?,?,?,?,?,?,?,0,NULL,'public',1,?,?`, guard),
+  ).bind(c.id, c.operator_id, c.first_name,
+    c.place.address_line, c.place.postcode, c.place.lat, c.place.lng,
+    c.geocode_status, c.geocode_status === 'ok' ? c.at : null,
+    c.default_service_id, c.at, c.at, ...guardArgs(guard));
+}
+
+export interface NewBookingLine {
+  order_id: string;
+  operator_id: string;
+  client_id: string;
+  /**
+   * The appointment's id, when the caller needs to know it BEFORE these
+   * statements are built rather than after.
+   *
+   * That is not a convenience. A caller whose guard asks "is this hour still
+   * free?" — see decideEstimate — has to exclude the appointment this batch is
+   * itself inserting, or every statement after the appointment collides with
+   * it and writes nothing, which is a booking that silently loses its order
+   * line, its receipt and its acceptance. Excluding it needs the id, and the
+   * id has to exist before the guard does. Left out, one is minted here.
+   */
+  appointment_id?: string;
+  /** The posted opening this fills, or NULL when nothing was posted. */
+  gap_id: string | null;
+  /** The headline job on the calendar row. NULL when no service priced it. */
+  service_id: string | null;
+  starts_at: number;
+  ends_at: number;
+  duration_seconds: number;
+  price_cents: number;
+  is_mobile: number;
+  place: BookingPlace;
+  services: BookingReceiptLine[];
+  at: number;
+}
+
+export interface BookingLineWrites {
+  appointment_id: string;
+  order_item_id: string;
+  /** The four digits the customer reads out on the doorstep. */
+  start_code: string;
+  writes: D1PreparedStatement[];
+}
+
+/**
+ * One line of a booking: the calendar entry, the order line, and the receipt.
+ *
+ * These three go together and are never written apart. An appointment with no
+ * order_item is work with no money behind it and no start code; an order_item
+ * with no appointment is a charge for a job that is on nobody's calendar.
+ *
+ * source = 'online' on the appointment whether a gap or a quote sold it,
+ * because from the operator's calendar both are the same fact: this came in
+ * through the public side of the product rather than being typed in or
+ * imported. A fifth source value for estimates would mean every query that
+ * filters on 'online' — and there are several — quietly stopped covering them.
+ */
+export function bookingLineWrites(
+  env: Env, line: NewBookingLine, guard?: WriteGuard | null,
+): BookingLineWrites {
+  const appointmentId = line.appointment_id ?? newId();
+  const orderItemId = newId();
+  const startCode = newStartCode();
+  const t = line.at;
+
+  const writes: D1PreparedStatement[] = [
+    env.DB.prepare(withGuard(
+      `INSERT INTO appointments (id, operator_id, client_id, service_id,
+         starts_at, ends_at, is_mobile, address_line, postcode, lat, lng,
+         status, price_cents, source, created_at, updated_at)
+       SELECT ?,?,?,?,?,?,?,?,?,?,?, 'scheduled', ?, 'online', ?, ?`, guard),
+    ).bind(appointmentId, line.operator_id, line.client_id, line.service_id,
+      line.starts_at, line.ends_at, line.is_mobile,
+      line.place.address_line, line.place.postcode, line.place.lat, line.place.lng,
+      line.price_cents, t, t, ...guardArgs(guard)),
+
+    env.DB.prepare(withGuard(
+      `INSERT INTO order_items (id, order_id, operator_id, gap_id, appointment_id,
+         client_id, starts_at, ends_at, duration_seconds, price_cents, created_at,
+         address_released_at, start_code)
+       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?`, guard),
+    ).bind(orderItemId, line.order_id, line.operator_id, line.gap_id, appointmentId,
+      line.client_id, line.starts_at, line.ends_at, line.duration_seconds,
+      line.price_cents, t,
+      // The street address is released to the operator HERE and nowhere
+      // earlier: before a booking exists they get the neighbourhood, because
+      // an operator who can read addresses off unbooked slots has a lead list,
+      // not a marketplace. Cancelling clears this again — see bypass.ts.
+      t,
+      // Generated once, here, so it exists from the moment the booking does
+      // and there is never a window where a job can start without one.
+      startCode, ...guardArgs(guard)),
+  ];
+
+  for (const s of line.services) {
+    // Copied, not joined — see migration 0016. The operator may rename or
+    // reprice this service tomorrow; the receipt must not change with it.
+    writes.push(env.DB.prepare(withGuard(
+      `INSERT INTO order_item_services
+         (id, order_item_id, service_id, name, duration_seconds, price_cents,
+          parts_policy, parts_note, parts_estimate_low_cents, parts_estimate_high_cents)
+       SELECT ?,?,?,?,?,?,?,?,?,?`, guard),
+    ).bind(newId(), orderItemId, s.service_id, s.name, s.duration_seconds, s.price_cents,
+      s.parts_policy, s.parts_note,
+      s.parts_estimate_low_cents, s.parts_estimate_high_cents, ...guardArgs(guard)));
+  }
+
+  return {
+    appointment_id: appointmentId,
+    order_item_id: orderItemId,
+    start_code: startCode,
+    writes,
+  };
+}
+
+/**
+ * Tells the operator's open calendar that something moved under it.
+ *
+ * In the same batch as the booking, not after it: a calendar that has a new
+ * appointment in it and an unchanged version is a screen that will not refresh
+ * until something else happens to bump it.
+ */
+export function calendarBumpWrite(
+  env: Env, operatorId: string, at: number, guard?: WriteGuard | null,
+): D1PreparedStatement {
+  return env.DB.prepare(andGuard(
+    `UPDATE operators SET calendar_version = calendar_version + 1, updated_at = ?
+      WHERE id = ?`, guard),
+  ).bind(at, operatorId, ...guardArgs(guard));
+}
+
 /** 'slot_taken' and friends are a 409; everything else the customer typed is a 400. */
 const CONFLICT_CODES = new Set(['slot_gone', 'slot_taken', 'slot_passed', 'too_far']);
 
@@ -495,10 +882,45 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
   }
   if (!phone) throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
 
-  // Checked after the number is normalised, so a suspension cannot be stepped
-  // around by typing the same number a different way.
-  const standing = await customerStanding(env, phone);
+  // COUNTED AGAINST THE ADDRESS, NOT THE NUMBER, since migration 0038. The
+  // number on this order is whatever was typed into the form and nobody has
+  // proved it, so a suspension hung on one would be escapable with the
+  // backspace key. The address is the thing somebody has demonstrated they can
+  // read mail at, and it is therefore the only thing a sanction can hold on to.
+  //
+  // A guest checkout has no account and so has no proved address: it reaches
+  // here only through checkoutAccount, which refuses without a verified code,
+  // so `login_email` below is never empty on a path that books anything.
+  const loginEmail = input.account?.login_email ?? '';
+  const standing = await customerStanding(env, loginEmail);
   if (standing.blocked) throw conflict(standing.message!, 'suspended');
+
+  // NOBODY BUYS THEIR OWN OPENING.
+  //
+  // A business can open the customer side of the product and book other trades
+  // since migration 0042, which is the first time the person paying for an
+  // opening can be the business selling it. That is not a purchase: the price
+  // and the platform's fee go out of one pocket and into the same one, the job
+  // can be marked complete and reviewed without anybody having done anything —
+  // on a marketplace young enough for a handful of invented jobs to change what
+  // a stranger sees — and the cancellation, refund and no-show rules all end up
+  // with one person on both sides of them.
+  //
+  // Checked against the whole basket and not line by line, because this
+  // function is all or nothing: one line of their own is a basket that cannot
+  // be bought, and refusing it here means it is refused before a single row is
+  // written rather than half-placed and unpicked afterwards.
+  //
+  // Leaving these openings off their own map would not be this check — the gap
+  // ids are in a POST body — and claimSlot in public.ts makes the same refusal
+  // for the form that has no JavaScript behind it.
+  const ownBusiness = await businessBehindAccount(env, input.account?.id);
+  if (ownBusiness && rows.some((r) => r.operator_id === ownBusiness)) {
+    throw conflict(
+      'One of those openings is your own — you cannot book yourself. '
+      + 'Nothing has been booked. Take that one out and the rest of your basket stands.',
+      'own_opening');
+  }
 
   const postcode = input.postcode ? normalisePostcode(input.postcode) : null;
   const needsAddress = rows.some((r) => r.is_mobile === 1);
@@ -545,14 +967,14 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
   // the capture belongs immediately after the batch below commits — so a
   // customer is never charged for slots the batch then failed to claim.
   //
-  // WHAT IS REAL ABOUT THIS TODAY AND WHAT IS NOT. The account above is real:
-  // the number was proved with a code, and it is what the order is written
-  // against. `input.card` is the processor's reference to a card the processor
-  // holds, exactly as operators.payment_ref has been since migration 0023, and
-  // it is recorded on the order below. It is NULL in every order that exists,
-  // because Stripe is not wired and there is nothing in this product that can
-  // produce such a reference — no charge is attempted, no authorisation is
-  // held, and nothing here pretends a card was taken.
+  // WHAT `input.card` IS. The account above is real: the address was proved
+  // with a code, and it is what the order is written against. `input.card` is
+  // the processor's reference to a card the processor holds — never a card
+  // number, which nothing in this codebase may touch — exactly as
+  // operators.payment_ref has been since migration 0023, and it is recorded on
+  // the order below. It is now populated on every order, because a booking
+  // without a card is refused: see checkoutCard in index.ts. The charge itself
+  // happens after this, against the order this function writes.
   //
   // Until the seam exists, orders.status stays 'pending': the slots are held
   // and no money has moved, which is the honest description of this state. The
@@ -564,23 +986,30 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
   // before the batch is assembled: a statement list is built synchronously and
   // this is the one value in it that has to be awaited.
   const phoneHash = await claimPhoneHash(env, phone);
+
+  // Where the whole basket happens. One address per order by construction —
+  // the checkout asks for exactly one.
+  const place: BookingPlace = {
+    address_line: input.address_line ?? null,
+    postcode,
+    lat: at?.lat ?? null,
+    lng: at?.lng ?? null,
+  };
+
   const writes: D1PreparedStatement[] = [
-    env.DB.prepare(
-      // The card reference is COPIED onto the order rather than read off the
-      // account when the charge eventually happens. An account's card changes;
-      // what the customer agreed to at checkout does not, and a capture that
-      // silently follows whichever card is on the account today would charge a
-      // card the person never associated with this booking. Only the
-      // processor's opaque handle is ever written — see lib/payments.ts, which
-      // refuses anything card-shaped at every D1 bind whatever this line says.
-      `INSERT INTO orders (id, status, customer_account_id, guest_name, phone_e164,
-         email, address_line, postcode, lat, lng, currency, total_cents,
-         payment_ref, payment_brand, payment_last4, created_at, updated_at)
-       VALUES (?,'pending',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    ).bind(orderId, input.account?.id ?? null, guestName, phone,
-      input.email ?? null, input.address_line ?? null,
-      postcode, at?.lat ?? null, at?.lng ?? null, priced.currency, priced.total_cents,
-      input.card?.ref ?? null, input.card?.brand ?? null, input.card?.last4 ?? null, t, t),
+    orderWrite(env, {
+      id: orderId,
+      account_id: input.account?.id ?? null,
+      guest_name: guestName,
+      phone,
+      login_email: loginEmail,
+      email: input.email ?? null,
+      place,
+      currency: priced.currency,
+      total_cents: priced.total_cents,
+      card: input.card ?? null,
+      at: t,
+    }),
   ];
 
   // One client row per business in the order, not one per item. Two slots at
@@ -606,46 +1035,42 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
     if (!clientId) {
       clientId = newId();
       clientByOperator.set(row.operator_id, clientId);
-      // NO PHONE, NO EMAIL, NO SURNAME on the operator's client row.
-      //
-      // This used to write all three and mask them on the way out of the API.
-      // That is the wrong place to solve it: a filter over four queries is one
-      // forgotten query away from failing, it fails silently, and meanwhile
-      // the number sits in the table for every backup and every future
-      // endpoint to carry. Not writing it is the only version that stays true
-      // when somebody adds a fifth query next year.
-      //
-      // The address IS written, because the operator has to drive there and a
-      // product that hides it does not work. It is cleared when the booking is
-      // cancelled -- see bypass.ts.
-      //
-      // The customer's contact details live on the order, which is the
-      // platform's record rather than the operator's list. That is what makes
-      // "they cannot walk away with your number" a fact about the schema
-      // instead of a promise about our query hygiene.
-      writes.push(env.DB.prepare(
-        `INSERT INTO clients (id, operator_id, first_name, phone_e164, email,
-           address_line, postcode, lat, lng, geocode_status, geocoded_at,
-           default_service_id, sms_consent, sms_consent_at, acquired,
-           platform_introduced, created_at, updated_at)
-         VALUES (?,?,?,NULL,NULL,?,?,?,?,?,?,?,0,NULL, 'public', 1, ?,?)`,
-      ).bind(clientId, row.operator_id, guestName,
-        input.address_line ?? null, postcode, at?.lat ?? null, at?.lng ?? null,
-        at ? 'ok' : 'failed', at ? t : null, primary.service_id, t, t));
+      writes.push(clientWrite(env, {
+        id: clientId,
+        operator_id: row.operator_id,
+        first_name: guestName,
+        place,
+        // 'failed' and not 'pending', because an address WAS given — the
+        // checkout refuses without one for a mobile job — and the geocoder
+        // could not place it.
+        geocode_status: at ? 'ok' : 'failed',
+        default_service_id: primary.service_id,
+        at: t,
+      }));
     }
 
-    const apptId = newId();
     const claimId = newId();
-    const itemId = newId();
 
-    writes.push(env.DB.prepare(
-      `INSERT INTO appointments (id, operator_id, client_id, service_id,
-         starts_at, ends_at, is_mobile, address_line, postcode, lat, lng,
-         status, price_cents, source, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?, 'scheduled', ?, 'online', ?, ?)`,
-    ).bind(apptId, row.operator_id, clientId, primary.service_id, row.starts_at, endsAt,
-      row.is_mobile, input.address_line ?? null, postcode,
-      at?.lat ?? null, at?.lng ?? null, item.price_cents, t, t));
+    // The calendar entry, the order line and the receipt, from the one builder
+    // every booking on this site goes through. See bookingLineWrites.
+    const line = bookingLineWrites(env, {
+      order_id: orderId,
+      operator_id: row.operator_id,
+      client_id: clientId,
+      gap_id: item.gap_id,
+      service_id: primary.service_id,
+      starts_at: row.starts_at,
+      ends_at: endsAt,
+      duration_seconds: item.duration_seconds,
+      price_cents: item.price_cents,
+      is_mobile: row.is_mobile,
+      place,
+      services: item.services,
+      at: t,
+    });
+    const apptId = line.appointment_id;
+    const itemId = line.order_item_id;
+    writes.push(...line.writes);
 
     // The row the race is decided on: one confirmed claim per gap, enforced by
     // the partial unique index from migration 0006.
@@ -675,36 +1100,6 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
         WHERE gap_id=? AND status IN ('candidate','queued','sent','delivered','viewed')`,
     ).bind(t, item.gap_id));
 
-    writes.push(env.DB.prepare(
-      `INSERT INTO order_items (id, order_id, operator_id, gap_id, appointment_id,
-         client_id, starts_at, ends_at, duration_seconds, price_cents, created_at,
-         address_released_at, start_code)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    ).bind(itemId, orderId, row.operator_id, item.gap_id, apptId, clientId,
-      row.starts_at, endsAt, item.duration_seconds, item.price_cents, t,
-      // The street address is released to the operator HERE and nowhere
-      // earlier: before a booking exists they get the neighbourhood, because
-      // an operator who can read addresses off unbooked slots has a lead list,
-      // not a marketplace. Cancelling clears this again -- see bypass.ts.
-      t,
-      // The four digits the customer reads out on the doorstep. Generated
-      // once, here, so it exists from the moment the booking does and there
-      // is never a window where a job can start without one.
-      newStartCode()));
-
-    for (const s of item.services) {
-      // Copied, not joined — see migration 0016. The operator may rename or
-      // reprice this service tomorrow; the receipt must not change with it.
-      writes.push(env.DB.prepare(
-        `INSERT INTO order_item_services
-           (id, order_item_id, service_id, name, duration_seconds, price_cents,
-            parts_policy, parts_note, parts_estimate_low_cents, parts_estimate_high_cents)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      ).bind(newId(), itemId, s.service_id, s.name, s.duration_seconds, s.price_cents,
-        s.parts_policy, s.parts_note,
-        s.parts_estimate_low_cents, s.parts_estimate_high_cents));
-    }
-
     placed.push({
       order_item_id: itemId,
       gap_id: item.gap_id,
@@ -720,10 +1115,7 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
   }
 
   for (const operatorId of new Set(rows.map((r) => r.operator_id))) {
-    writes.push(env.DB.prepare(
-      `UPDATE operators SET calendar_version = calendar_version + 1, updated_at = ?
-        WHERE id = ?`,
-    ).bind(t, operatorId));
+    writes.push(calendarBumpWrite(env, operatorId, t));
   }
 
   let res: D1Result[];
@@ -786,6 +1178,25 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
   // One conversation per business, because a basket can span two and there is
   // no shared inbox between them. An existing thread is reused only for the
   // business it already belongs to.
+  //
+  // EVERY CONVERSATION A BOOKING PRODUCES CARRIES THE ACCOUNT THE ORDER WAS
+  // WRITTEN AGAINST, and it is the same value on both branches below — the one
+  // that reuses an enquiry thread and the one that mints a new one. Writing it
+  // in only one of them is the bug this note exists to prevent: the customer
+  // whose conversation started as a question, which is the common way one
+  // starts, would be exactly the customer whose conversation never appeared on
+  // their account.
+  //
+  // It is also the ONE place the account and the thread are both in scope
+  // without a lookup. The alternative is deriving it afterwards by joining
+  // threads to order_items to orders, which is what migration 0052 backfills
+  // with and explains at length why it is the wrong thing to run per request.
+  //
+  // NULL WHEN THE ORDER HAS NO ACCOUNT, and that is left as null rather than
+  // guessed at. Booking needs an account today, so this is chiefly the older
+  // rows and the operator-side paths; a thread with no account stays reachable
+  // on its link, which is what the link is for.
+  const accountId = input.account?.id ?? null;
   const existing = input.thread_token ? await threadByToken(env, input.thread_token) : null;
   const threads: Array<{ operator_id: string; business_name: string; token: string }> = [];
   for (const operatorId of new Set(placed.map((p) => p.operator_id))) {
@@ -794,6 +1205,7 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
     if (existing && existing.operator_id === operatorId && input.thread_token) {
       await attachBooking(env, existing.id, {
         appointment_id: mine[0]!.appointment_id, client_id: mine[0]!.client_id,
+        customer_account_id: accountId,
       });
       threads.push({ operator_id: operatorId, business_name: row.business_name,
         token: input.thread_token });
@@ -804,6 +1216,7 @@ export async function placeOrder(env: Env, input: PlaceOrderInput): Promise<Plac
       gap_id: mine[0]!.gap_id,
       appointment_id: mine[0]!.appointment_id,
       client_id: mine[0]!.client_id,
+      customer_account_id: accountId,
       guest_name: guestName,
       subject: mine.flatMap((p) => p.services.map((s) => s.name)).join(' + '),
     });

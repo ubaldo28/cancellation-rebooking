@@ -1,0 +1,954 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Round The Way tile art</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:#fff}
+  /* The renderer screenshots #plate and nothing else, so the page around it is
+     never in the picture. Its size is set from the query string rather than
+     here, because one scene is wanted at two sizes: a 5:3 tile on the front
+     page and a 5:3 thumbnail on a browse row. */
+  #plate{overflow:hidden}
+  #plate svg{display:block;width:100%;height:100%}
+</style>
+</head>
+<body>
+<div id="plate"></div>
+<script>
+/*
+ * THE SOURCE FOR EVERY TILE IMAGE UNDER web/public/art.
+ *
+ * Forty-seven drawings plus the neutral one, rendered to WebP by
+ * tools/art-shot.js in headless Chromium — the same pattern tools/og-card.html
+ * and tools/og-shot.js use for the preview image, and for the same reason: an
+ * image that ships on the front page must not be a binary nobody can
+ * reproduce. Change a scene here, run `npm run art`, and the file on disk is
+ * the drawing below.
+ *
+ * WHY THIS IS ONE FILE AND NOT FORTY-SEVEN. The whole point of the set is that
+ * it holds one visual language. Forty-seven files would each be free to drift
+ * into its own stroke weight, its own palette and its own level of detail, and
+ * the browse page would read as thirty-nine unrelated doodles rather than as
+ * one designed thing. Here the grammar is written once, at the top, and every
+ * scene is a motif handed to it.
+ *
+ * THE GRAMMAR, which is web/src/components/CategoryArt.tsx's grammar. That
+ * component draws the eight category tiles on the front page as inline SVG and
+ * it settled these rules against the real tiles; they are restated rather than
+ * reinvented, and the eight category scenes below are the same coordinates, so
+ * a rendered category tile and the fallback drawing are the same picture.
+ *
+ *   1. One box for everything: 200x120, which is 5:3, the ratio of both the
+ *      front-page tile and the browse-row thumbnail. Nothing is cropped at
+ *      either size, so a motif near an edge survives.
+ *   2. A two-stop ground in the category's own hue. Hue is what makes eight
+ *      categories tell themselves apart in a grid before anybody reads a
+ *      label, and it is what makes fifteen green scenes read as one category.
+ *   3. A soft white disc top right, and a dark floor band along the bottom.
+ *      Same disc, same band, same opacity in all forty-eight.
+ *   4. ONE subject on open ground and nothing else. These are read at about
+ *      70px wide on a browse row. Detail is exactly what kills a drawing at
+ *      that size, so every scene is a single object, drawn heavy: no feature
+ *      narrower than about 5 units of the 200, which is roughly two pixels on
+ *      the thumbnail.
+ *   5. Exactly one warm-yellow accent per scene, always on the working part --
+ *      the tool, the handle, the jet, the flame. It is the thread that ties a
+ *      wash bucket to a pair of scissors, and it is the only colour every
+ *      scene shares.
+ *
+ * NO TYPE, ANYWHERE. The site's display face is Saira Stencil One and the feel
+ * of it -- heavy, geometric, flat, no thin strokes anywhere -- is what these
+ * shapes are drawn to match. But there is no lettering in any scene, for two
+ * reasons: every tile already carries its trade name as text beside the
+ * picture, so drawn words would be the same words twice, and a screen reader
+ * cannot be told to ignore lettering baked into a bitmap. The images are
+ * decorative and marked as such; that is only honest if there is nothing in
+ * them to read.
+ *
+ * NOTHING HERE DEPICTS A REAL BUSINESS. There is no logo, no brand, no badge,
+ * no livery and no name in any of these drawings. They are generic objects:
+ * a bucket, a mower, a padlock. A tile says what KIND of work it is, and never
+ * who does it.
+ *
+ * To re-render, from the repository root:
+ *   npm run art
+ *   CHROME=/path/to/chrome node tools/art-shot.js        (what that runs)
+ */
+
+/* ---------------------------------------------------------------------------
+ * The palettes: one per category, plus the neutral.
+ *
+ * `g` is the two-stop ground, `lt` the brightest fill (the body of the
+ * object), `md` the mid tone that gives it a second plane, and `dk` the
+ * darkest, for wheels, holes and anything that has to read as a gap. Taken
+ * from CategoryArt.tsx so a rendered tile and the drawn fallback match.
+ * ------------------------------------------------------------------------- */
+const HUE = {
+  auto:     { g: ['#2f6fb5', '#14375e'], lt: '#f2f8fe', md: '#a8cdf2', dk: '#0e2a48' },
+  home:     { g: ['#2c7f5c', '#0f4030'], lt: '#f2fbf6', md: '#bfe8d0', dk: '#0b3325' },
+  pets:     { g: ['#a9603a', '#52280e'], lt: '#f7e3cd', md: '#d9a678', dk: '#43220a' },
+  beauty:   { g: ['#a8407e', '#4c1739'], lt: '#fde4f1', md: '#f2b8d8', dk: '#3d1030' },
+  food:     { g: ['#cf4634', '#6b1c16'], lt: '#fff3e6', md: '#ffd9bd', dk: '#4a120e' },
+  tech:     { g: ['#5b46b8', '#241a5c'], lt: '#e9e6fb', md: '#8f86e8', dk: '#241a5c' },
+  services: { g: ['#4a5567', '#212832'], lt: '#eef2f7', md: '#c9d4e2', dk: '#1a2029' },
+  retail:   { g: ['#0d7f89', '#06424b'], lt: '#e6f7f9', md: '#7fdce4', dk: '#04333a' },
+  all:      { g: ['#3d4757', '#1c222b'], lt: '#eef2f7', md: '#c7d2e0', dk: '#141922' },
+};
+
+/** The one accent every scene carries, on the working part of the object. */
+const ACC = '#ffd257';
+
+/** The site's blue, used only where a scene needs water or glass to read. */
+const BLUE = '#4CB3F0';
+
+/* ---------------------------------------------------------------------------
+ * The scenes.
+ *
+ * `id` is the file name, and for a trade it is `tradeSlug(t.slug)` from
+ * src/lib/seo.ts -- the same spelling that trade's own URL uses. That is not a
+ * coincidence and it is not decoration: `tradeArt` in src/lib/seo.ts builds the
+ * path from exactly that function, so a drawing whose id is spelled any other
+ * way is a drawing nothing on the site will ever ask for. test/art.test.ts
+ * fails when the two disagree, in either direction.
+ * ------------------------------------------------------------------------- */
+const SCENES = [
+
+  // === the eight categories, plus the neutral =============================
+  // These are CategoryArt.tsx's scenes, coordinate for coordinate. The
+  // component still renders in the browser whenever the catalogue payload is
+  // old enough not to carry an image path, so the two have to be one picture.
+
+  { id: 'auto', kind: 'category', hue: 'auto', art: (c) => `
+    <path d="M72 54l16-20h44l16 20z" fill="${c.md}"/>
+    <rect x="50" y="52" width="120" height="28" rx="13" fill="${c.lt}"/>
+    <circle cx="80" cy="82" r="12" fill="${c.dk}"/>
+    <circle cx="142" cy="82" r="12" fill="${c.dk}"/>
+    <circle cx="80" cy="82" r="4.5" fill="${c.md}"/>
+    <circle cx="142" cy="82" r="4.5" fill="${c.md}"/>
+    <path d="M16 64h30l-4 28H20z" fill="#dcebfa"/>
+    <rect x="14" y="57" width="34" height="8" rx="4" fill="${ACC}"/>
+    <circle cx="24" cy="44" r="6" fill="#fff" opacity="0.85"/>
+    <circle cx="39" cy="37" r="4.5" fill="#fff" opacity="0.7"/>
+    <circle cx="12" cy="34" r="3.5" fill="#fff" opacity="0.55"/>` },
+
+  { id: 'home', kind: 'category', hue: 'home', art: (c) => `
+    <path d="M52 58L100 22l48 36z" fill="${c.md}"/>
+    <rect x="64" y="56" width="72" height="38" fill="${c.lt}"/>
+    <rect x="70" y="63" width="15" height="13" rx="2" fill="#8fd9b4"/>
+    <rect x="115" y="63" width="15" height="13" rx="2" fill="#8fd9b4"/>
+    <rect x="88" y="70" width="24" height="24" rx="3" fill="#2c7f5c"/>
+    <g transform="rotate(-38 168 62)">
+      <rect x="146" y="56" width="44" height="12" rx="6" fill="${ACC}"/>
+      <circle cx="148" cy="62" r="11.5" fill="${ACC}"/>
+      <circle cx="148" cy="62" r="5" fill="#0f4030"/>
+    </g>` },
+
+  { id: 'pets', kind: 'category', hue: 'pets', art: (c) => `
+    <path d="M56 58q-18-6-18-24" stroke="${c.lt}" stroke-width="9" stroke-linecap="round" fill="none"/>
+    <rect x="52" y="54" width="82" height="34" rx="17" fill="${c.lt}"/>
+    <rect x="66" y="80" width="13" height="14" rx="6" fill="${c.lt}"/>
+    <rect x="108" y="80" width="13" height="14" rx="6" fill="${c.lt}"/>
+    <path d="M134 40q13-11 21 2l-10 13z" fill="${c.md}"/>
+    <circle cx="148" cy="58" r="21" fill="${c.lt}"/>
+    <rect x="158" y="60" width="26" height="16" rx="8" fill="#ffeed8"/>
+    <ellipse cx="181" cy="66" rx="5" ry="4" fill="${c.dk}"/>
+    <circle cx="152" cy="51" r="3.5" fill="${c.dk}"/>
+    <rect x="70" y="26" width="46" height="12" rx="5" fill="${ACC}"/>
+    <path d="M78 38v9M89 38v9M100 38v9M110 38v9" stroke="${ACC}" stroke-width="4" stroke-linecap="round"/>` },
+
+  { id: 'beauty', kind: 'category', hue: 'beauty', art: (c) => `
+    <circle cx="160" cy="46" r="25" fill="${c.lt}"/>
+    <circle cx="160" cy="46" r="18" fill="${c.md}"/>
+    <rect x="44" y="30" width="22" height="46" rx="10" fill="${c.lt}"/>
+    <rect x="66" y="52" width="58" height="8" rx="4" fill="${c.md}"/>
+    <rect x="44" y="62" width="86" height="16" rx="8" fill="${c.lt}"/>
+    <rect x="80" y="78" width="14" height="10" fill="${c.lt}"/>
+    <rect x="66" y="86" width="42" height="8" rx="4" fill="${c.lt}"/>` },
+
+  { id: 'food', kind: 'category', hue: 'food', art: (c) => `
+    <rect x="26" y="34" width="112" height="46" rx="7" fill="${c.lt}"/>
+    <path d="M138 46h22l16 20v14h-38z" fill="${c.md}"/>
+    <rect x="146" y="51" width="18" height="12" rx="3" fill="#6b1c16"/>
+    <rect x="42" y="44" width="64" height="24" rx="3" fill="#6b1c16"/>
+    <path d="M36 44l8-13h60l8 13z" fill="${ACC}"/>
+    <rect x="36" y="68" width="76" height="6" rx="3" fill="${c.md}"/>
+    <circle cx="56" cy="86" r="8" fill="${c.dk}"/>
+    <circle cx="152" cy="86" r="8" fill="${c.dk}"/>` },
+
+  { id: 'tech', kind: 'category', hue: 'tech', art: (c) => `
+    <rect x="54" y="24" width="92" height="56" rx="5" fill="${c.lt}"/>
+    <rect x="60" y="30" width="80" height="44" rx="3" fill="#3a2f8f"/>
+    <path d="M66 74l34-44h16L82 74z" fill="${c.md}" opacity="0.45"/>
+    <path d="M42 80h116l12 12H30z" fill="${c.lt}"/>
+    <rect x="88" y="84" width="24" height="4" rx="2" fill="#b9b2ee"/>
+    <g transform="rotate(40 168 70)">
+      <rect x="163" y="34" width="10" height="30" rx="5" fill="${ACC}"/>
+      <rect x="166" y="62" width="4" height="20" rx="2" fill="#cfd4e4"/>
+    </g>` },
+
+  { id: 'services', kind: 'category', hue: 'services', art: (c) => `
+    <rect x="62" y="22" width="76" height="72" rx="8" fill="${c.lt}"/>
+    <rect x="94" y="10" width="12" height="9" rx="3" fill="#9fb0c6"/>
+    <rect x="86" y="15" width="28" height="14" rx="5" fill="#9fb0c6"/>
+    <rect x="76" y="40" width="48" height="7" rx="3.5" fill="${c.md}"/>
+    <rect x="76" y="54" width="26" height="7" rx="3.5" fill="${c.md}"/>
+    <path d="M76 74l12 12 26-28" stroke="${BLUE}" stroke-width="9" fill="none"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <g transform="rotate(30 150 60)">
+      <rect x="145" y="26" width="10" height="42" rx="5" fill="${ACC}"/>
+      <path d="M145 68h10l-5 12z" fill="${c.lt}"/>
+    </g>` },
+
+  { id: 'retail', kind: 'category', hue: 'retail', art: (c) => `
+    <path d="M24 26h152l14 24H10z" fill="${c.lt}"/>
+    <path d="M10 50q10 14 20 0 10 14 20 0 10 14 20 0 10 14 20 0 10 14 20 0 10 14 20 0 10 14 20 0 10 14 20 0 10 14 20 0z" fill="${c.md}"/>
+    <rect x="44" y="72" width="6" height="22" fill="#cfeff2"/>
+    <rect x="150" y="72" width="6" height="22" fill="#cfeff2"/>
+    <rect x="40" y="66" width="120" height="6" rx="3" fill="#cfeff2"/>
+    <path d="M70 74l12-6 12 6-3 16H73z" fill="${ACC}"/>
+    <path d="M106 74l12-6 12 6-3 16h-18z" fill="${c.lt}"/>` },
+
+  // The "Everything" tile on the front page. Four blank cards rather than a
+  // pile of the other eight motifs: it has to say "all of it" without claiming
+  // to be any one of them, and stay quiet enough that the labelled tiles
+  // beside it still win the eye.
+  { id: 'all', kind: 'category', hue: 'all', art: (c) => `
+    <rect x="56" y="26" width="40" height="32" rx="7" fill="${c.lt}"/>
+    <rect x="104" y="26" width="40" height="32" rx="7" fill="${c.md}"/>
+    <rect x="56" y="62" width="40" height="32" rx="7" fill="${c.md}"/>
+    <rect x="104" y="62" width="40" height="32" rx="7" fill="${c.lt}"/>
+    <circle cx="168" cy="74" r="8" fill="${BLUE}"/>
+    <circle cx="30" cy="46" r="5" fill="${BLUE}" opacity="0.7"/>` },
+
+  // === automotive and vehicle ============================================
+  // The category tile above already owns the whole car, so every trade in here
+  // is the IMPLEMENT instead. Otherwise five blue tiles in a row would all be
+  // a car at slightly different angles.
+
+  // A bucket with the sponge set on its rim and suds coming off it. The suds
+  // are three plain discs, not foam: foam at 70px wide is a grey smudge.
+  { id: 'mobile-car-wash-and-detailing', kind: 'trade', hue: 'auto', art: (c) => `
+    <circle cx="62" cy="34" r="9" fill="#fff" opacity="0.9"/>
+    <circle cx="84" cy="24" r="6.5" fill="#fff" opacity="0.75"/>
+    <circle cx="44" cy="22" r="5" fill="#fff" opacity="0.6"/>
+    <path d="M62 50h76l-9 44H71z" fill="${c.lt}"/>
+    <rect x="58" y="42" width="84" height="10" rx="5" fill="${c.md}"/>
+    <rect x="86" y="30" width="60" height="16" rx="8" fill="${ACC}"/>
+    <rect x="94" y="34" width="44" height="8" rx="4" fill="#fff" opacity="0.5"/>
+    <path d="M74 60h52l-5 26H79z" fill="${c.md}" opacity="0.5"/>` },
+
+  // An oil bottle tipped over a drain pan, with one heavy drop between them.
+  // One drop rather than a stream: a stream reads as a spill.
+  { id: 'mobile-oil-change-and-mechanics', kind: 'trade', hue: 'auto', art: (c) => `
+    <g transform="rotate(34 78 40)">
+      <rect x="52" y="18" width="46" height="44" rx="7" fill="${c.lt}"/>
+      <rect x="62" y="26" width="26" height="12" rx="4" fill="${c.md}"/>
+      <rect x="96" y="30" width="26" height="12" rx="6" fill="${ACC}"/>
+    </g>
+    <path d="M126 50q6 10 0 14-6-4 0-14z" fill="${ACC}"/>
+    <rect x="96" y="70" width="82" height="20" rx="6" fill="${c.md}"/>
+    <rect x="102" y="74" width="70" height="8" rx="4" fill="${c.dk}" opacity="0.55"/>` },
+
+  // A windscreen in its frame with a star break in it, and the suction cup a
+  // glazier lifts it with standing on the glass.
+  //
+  // Six heavy spokes out of a solid centre, not a realistic crack: a hairline
+  // is invisible on a browse row, and four spokes read as a compass rose. The
+  // glass is drawn as a curved trapezoid with a pillar down each side, so the
+  // thing broken is unmistakably a windscreen rather than a window -- window
+  // cleaning is a square pane and is two categories away on the same page.
+  { id: 'auto-glass-repair', kind: 'trade', hue: 'auto', art: (c) => `
+    <path d="M30 82q10-58 22-58h96q12 0 22 58z" fill="${c.md}"/>
+    <path d="M44 76q9-44 18-44h76q9 0 18 44z" fill="${c.lt}" opacity="0.95"/>
+    <path d="M52 70q8-32 15-32h66q7 0 15 32z" fill="${BLUE}" opacity="0.3"/>
+    <circle cx="92" cy="54" r="10" fill="${c.dk}"/>
+    <path d="M92 54L64 36M92 54l30-18M92 54l-30 20M92 54l30 20M92 54V26M92 54v28"
+          stroke="${c.dk}" stroke-width="5" stroke-linecap="round"/>
+    <rect x="26" y="82" width="152" height="11" rx="5" fill="${c.dk}"/>
+    <rect x="146" y="26" width="16" height="22" rx="8" fill="${ACC}"/>
+    <path d="M136 48h36l-8 12h-20z" fill="${ACC}"/>` },
+
+  // A tyre laid flat with its five bolt holes, and a wheel brace across it.
+  { id: 'mobile-tyre-fitting', kind: 'trade', hue: 'auto', art: (c) => `
+    <circle cx="94" cy="58" r="40" fill="${c.dk}"/>
+    <circle cx="94" cy="58" r="24" fill="${c.md}"/>
+    <circle cx="94" cy="58" r="8" fill="${c.dk}"/>
+    <circle cx="94" cy="40" r="4" fill="${c.dk}"/>
+    <circle cx="110" cy="52" r="4" fill="${c.dk}"/>
+    <circle cx="104" cy="72" r="4" fill="${c.dk}"/>
+    <circle cx="84" cy="72" r="4" fill="${c.dk}"/>
+    <circle cx="78" cy="52" r="4" fill="${c.dk}"/>
+    <g transform="rotate(-24 152 56)">
+      <rect x="128" y="50" width="56" height="11" rx="5.5" fill="${ACC}"/>
+      <rect x="170" y="38" width="11" height="34" rx="5.5" fill="${ACC}"/>
+    </g>` },
+
+  // A bicycle: two wheels, a frame triangle, bars and a saddle. The one scene
+  // in the set that is a whole vehicle, because a bike part is unreadable.
+  { id: 'bike-repair-service', kind: 'trade', hue: 'auto', art: (c) => `
+    <circle cx="52" cy="66" r="24" fill="none" stroke="${c.lt}" stroke-width="7"/>
+    <circle cx="148" cy="66" r="24" fill="none" stroke="${c.lt}" stroke-width="7"/>
+    <path d="M52 66l32-30h30l24 30" fill="none" stroke="${c.md}" stroke-width="7"
+          stroke-linejoin="round"/>
+    <path d="M84 36l10 30h44" fill="none" stroke="${c.md}" stroke-width="7"
+          stroke-linejoin="round"/>
+    <circle cx="94" cy="66" r="9" fill="${ACC}"/>
+    <rect x="70" y="28" width="26" height="8" rx="4" fill="${c.lt}"/>
+    <rect x="112" y="24" width="24" height="8" rx="4" fill="${c.lt}"/>` },
+
+  // === home and property =================================================
+  // Fifteen green tiles. Hue holds the category together; the silhouettes have
+  // to do all of the telling apart, so each one is a different overall shape
+  // -- tall, wide, round, diagonal -- before it is a different object.
+
+  // A toolbox with its carrying handle, and a screwdriver and a spanner
+  // standing out of it at opposite angles.
+  //
+  // TWO tools, crossed, not one. A single spanner poking out of a box behind
+  // the handle read as a key sticking out of a basket -- and locksmith, which
+  // is a real key, is in the same category. Two tools at opposing angles is a
+  // shape a key never makes, and it is also what this trade actually is: not
+  // one job, whatever needs doing.
+  { id: 'handyman-and-repair-services', kind: 'trade', hue: 'home', art: (c) => `
+    <path d="M82 22q22-14 44 0" fill="none" stroke="${c.md}" stroke-width="8"/>
+    <g transform="rotate(20 140 40)">
+      <rect x="133" y="14" width="14" height="40" rx="7" fill="${ACC}"/>
+      <circle cx="140" cy="12" r="12" fill="${ACC}"/>
+      <circle cx="140" cy="12" r="5" fill="${c.g[1]}"/>
+    </g>
+    <g transform="rotate(-22 66 40)">
+      <rect x="59" y="10" width="14" height="30" rx="7" fill="${ACC}"/>
+      <rect x="63" y="38" width="6" height="22" rx="3" fill="${c.md}"/>
+    </g>
+    <rect x="40" y="44" width="124" height="18" rx="6" fill="${c.md}"/>
+    <path d="M44 62h116l-8 32H52z" fill="${c.lt}"/>
+    <rect x="72" y="72" width="60" height="9" rx="4.5" fill="${c.md}"/>` },
+
+  // A lance held across the scene with one solid wedge of water off the tip,
+  // and the paving it has already cleaned underneath.
+  //
+  // ONE wedge, not three. The three overlapping fans that were here first read
+  // as a green arrowhead, because at 70px wide three translucent shapes over a
+  // gradient average out into one flat triangle. A single opaque wedge from
+  // the nozzle to the ground, with the clean paving directly under where it
+  // lands, is the whole story: this end dirty, that end done.
+  { id: 'mobile-pressure-washing', kind: 'trade', hue: 'home', art: (c) => `
+    <path d="M10 72h180v22H10z" fill="${c.g[1]}" opacity="0.4"/>
+    <path d="M10 72h80v22H10z" fill="${c.lt}"/>
+    <path d="M34 72v22M58 72v22M82 72v22" stroke="${c.md}" stroke-width="4" opacity="0.45"/>
+    <path d="M140 30L44 70h74z" fill="${BLUE}"/>
+    <path d="M138 38L74 68h48z" fill="#fff" opacity="0.4"/>
+    <path d="M40 64q-14-4-20 6M56 60q-8-12-22-14" stroke="${BLUE}" stroke-width="6"
+          fill="none" stroke-linecap="round"/>
+    <rect x="138" y="22" width="56" height="14" rx="7" fill="${ACC}"/>
+    <rect x="178" y="32" width="14" height="30" rx="7" fill="${ACC}"/>` },
+
+  // A skip with junk standing up out of it: a chair, a box and a board.
+  //
+  // Sides that slope OUTWARD, so the silhouette is a skip and not the bucket,
+  // the crate or the bin -- all three of those taper the other way, and all
+  // three are in this set. The untidy top edge is the rest of it: a container
+  // with a level rim is a container, and a container with a chair sticking out
+  // of it is somebody taking your old furniture away.
+  { id: 'junk-removal', kind: 'trade', hue: 'home', art: (c) => `
+    <path d="M56 46h20V18h9v28" fill="none" stroke="${c.lt}" stroke-width="7"/>
+    <rect x="76" y="34" width="9" height="20" fill="${c.lt}"/>
+    <rect x="92" y="22" width="32" height="28" rx="4" fill="${c.md}"/>
+    <path d="M96 22h24v28H96z" fill="${c.g[1]}" opacity="0.18"/>
+    <g transform="rotate(-24 148 34)">
+      <rect x="124" y="28" width="56" height="11" rx="3" fill="${ACC}"/>
+    </g>
+    <path d="M34 50h132l-16 44H50z" fill="${c.lt}"/>
+    <rect x="30" y="44" width="140" height="11" rx="5" fill="${c.md}"/>
+    <path d="M48 62h104l-6 24H54z" fill="${c.g[1]}" opacity="0.2"/>` },
+
+  // A mower in profile, with the grass it has already cut standing behind it.
+  //
+  // A LOW deck and a handle raised steeply behind, which is the whole
+  // difference between this and a van. The white box on two dark wheels that
+  // was here before was exactly the car in the automotive tile at a different
+  // size; bringing the deck down to a third of the height and sending the
+  // handle up out of the top of the frame is what makes the shape a machine
+  // somebody is pushing.
+  { id: 'landscaping-and-gardening', kind: 'trade', hue: 'home', art: (c) => `
+    <path d="M22 94q6-20 6-32M40 94q5-18 5-27M58 94q4-15 4-22" stroke="${c.md}"
+          stroke-width="7" stroke-linecap="round" fill="none"/>
+    <path d="M148 12h40v11h-40z" fill="${ACC}"/>
+    <path d="M118 66L150 14l11 6-32 52z" fill="${ACC}"/>
+    <path d="M86 64h76v22H86z" fill="${c.lt}"/>
+    <path d="M78 58h50l6 10H78z" fill="${c.md}"/>
+    <rect x="94" y="70" width="42" height="8" rx="4" fill="${c.md}" opacity="0.5"/>
+    <circle cx="96" cy="88" r="10" fill="${c.g[1]}"/>
+    <circle cx="152" cy="88" r="10" fill="${c.g[1]}"/>` },
+
+  // A shrub with one branch being taken off it, and the shears doing it. The
+  // cut limb is drawn already separated, so the scene has a before and after.
+  { id: 'tree-and-shrub-trimming', kind: 'trade', hue: 'home', art: (c) => `
+    <rect x="62" y="62" width="12" height="32" rx="3" fill="${c.md}"/>
+    <circle cx="68" cy="48" r="28" fill="${c.lt}"/>
+    <circle cx="44" cy="58" r="16" fill="${c.md}"/>
+    <circle cx="94" cy="58" r="14" fill="${c.md}"/>
+    <path d="M118 36l26 8" stroke="${c.lt}" stroke-width="7" stroke-linecap="round"/>
+    <path d="M114 60l56-26" stroke="${ACC}" stroke-width="9" stroke-linecap="round"/>
+    <path d="M114 44l56 20" stroke="${ACC}" stroke-width="9" stroke-linecap="round"/>
+    <circle cx="126" cy="52" r="6" fill="${c.g[1]}"/>` },
+
+  // A sloping roof edge with the gutter under it, leaves standing up out of
+  // the channel and the downpipe running away down the corner.
+  //
+  // The roof is a SLOPE now rather than a flat band. Flat, this was a shelf
+  // with crumbs on it, and a shelf is what the massage table and the rug also
+  // are; the slope is what makes the thing under it a gutter and not a trough.
+  // The leaves sit above the rim rather than inside it, because inside the
+  // channel they disappeared into the shadow at thumbnail size.
+  { id: 'gutter-cleaning', kind: 'trade', hue: 'home', art: (c) => `
+    <path d="M10 14h120l44 30H10z" fill="${c.md}"/>
+    <path d="M10 22h104l32 22H10z" fill="${c.lt}" opacity="0.3"/>
+    <path d="M16 52q17-22 34 0-17 18-34 0zM58 46q16-21 32 0-16 17-32 0z
+             M100 52q16-21 32 0-16 17-32 0z" fill="${ACC}"/>
+    <rect x="6" y="56" width="168" height="20" rx="4" fill="${c.lt}"/>
+    <rect x="10" y="62" width="160" height="11" rx="4" fill="${c.g[1]}" opacity="0.38"/>
+    <rect x="152" y="76" width="20" height="18" rx="4" fill="${c.lt}"/>` },
+
+  // A pane with a squeegee drawn down it and one clean stripe behind the
+  // blade. The stripe is the whole idea, so it is the brightest thing here.
+  { id: 'window-cleaning', kind: 'trade', hue: 'home', art: (c) => `
+    <rect x="40" y="20" width="104" height="74" rx="4" fill="${c.md}" opacity="0.6"/>
+    <rect x="40" y="20" width="48" height="74" fill="${c.lt}"/>
+    <rect x="86" y="20" width="10" height="74" fill="${c.g[1]}" opacity="0.35"/>
+    <rect x="40" y="52" width="104" height="8" fill="${c.g[1]}" opacity="0.35"/>
+    <g transform="rotate(12 150 48)">
+      <rect x="120" y="30" width="60" height="12" rx="4" fill="${ACC}"/>
+      <rect x="146" y="40" width="12" height="40" rx="6" fill="${ACC}"/>
+    </g>` },
+
+  // An upright vacuum: grip, a tall body on a wide floor head, and the flex
+  // looping off to a plug.
+  //
+  // The round window in the body has gone. With it the thing read as a blender
+  // on a base -- a circle set in a box is doing too much work in this
+  // category already -- and what actually says "vacuum" is the proportion: a
+  // narrow upright standing on a head much wider than itself, at an angle,
+  // with a cable trailing. So that is all this is.
+  { id: 'house-cleaning', kind: 'trade', hue: 'home', art: (c) => `
+    <path d="M28 44q18 10 16 34" stroke="${c.lt}" stroke-width="7" fill="none"
+          stroke-linecap="round"/>
+    <rect x="16" y="36" width="18" height="12" rx="5" fill="${c.lt}"/>
+    <g transform="rotate(10 106 56)">
+      <rect x="86" y="10" width="40" height="12" rx="6" fill="${ACC}"/>
+      <rect x="100" y="20" width="12" height="30" rx="6" fill="${ACC}"/>
+      <rect x="88" y="44" width="36" height="42" rx="7" fill="${c.lt}"/>
+      <rect x="94" y="52" width="24" height="9" rx="4" fill="${c.md}"/>
+    </g>
+    <path d="M62 84h108l-5 12H67z" fill="${c.md}"/>
+    <rect x="72" y="88" width="88" height="5" rx="2.5" fill="${c.g[1]}" opacity="0.4"/>` },
+
+  // A rug half rolled up, with the extractor wand standing in the flat half.
+  //
+  // The flat rug with a wand on it that was here first read as a shelf: a wide
+  // low slab is the same silhouette as the gutter and the massage table two
+  // scenes away. A roll is a shape nothing else in the set has -- concentric
+  // rings at one end, a flat tongue running out of it -- so it survives being
+  // shrunk in a way a rectangle does not.
+  { id: 'carpet-cleaning', kind: 'trade', hue: 'home', art: (c) => `
+    <path d="M92 66h94l4 28H92z" fill="${c.md}"/>
+    <path d="M92 74h90l2 12H92z" fill="${c.lt}" opacity="0.45"/>
+    <circle cx="60" cy="62" r="34" fill="${c.lt}"/>
+    <circle cx="60" cy="62" r="23" fill="${c.md}"/>
+    <circle cx="60" cy="62" r="12" fill="${c.lt}"/>
+    <circle cx="60" cy="62" r="4" fill="${c.md}"/>
+    <rect x="152" y="16" width="14" height="44" rx="7" fill="${ACC}"/>
+    <rect x="136" y="10" width="46" height="12" rx="6" fill="${ACC}"/>
+    <path d="M140 58h38l7 10h-52z" fill="${ACC}"/>` },
+
+  // A wheelie bin, lid hinged right back, with a jet of water going into it.
+  //
+  // Nearly straight-sided and tall, with two wheels under it, so it is a bin
+  // and not the bucket in car wash or the crate in the market stall -- those
+  // two are the wide trapezoids and this one must not be a third. The lid
+  // standing open at the hinge is the difference between "we clean bins" and
+  // "here is a bin".
+  { id: 'trash-can-cleaning', kind: 'trade', hue: 'home', art: (c) => `
+    <path d="M46 38l58-10 2 64H50z" fill="${c.md}" opacity="0.5"/>
+    <path d="M50 40h56l-3 52H53z" fill="${c.lt}"/>
+    <path d="M64 44v46M78 44v46M92 44v46" stroke="${c.md}" stroke-width="4" opacity="0.45"/>
+    <rect x="44" y="32" width="70" height="12" rx="5" fill="${c.md}"/>
+    <g transform="rotate(-34 112 34)">
+      <rect x="104" y="26" width="64" height="12" rx="5" fill="${c.md}"/>
+    </g>
+    <circle cx="62" cy="90" r="8" fill="${c.g[1]}"/>
+    <circle cx="98" cy="90" r="8" fill="${c.g[1]}"/>
+    <path d="M182 52l-62 6 62 16z" fill="${BLUE}"/>
+    <rect x="170" y="54" width="26" height="12" rx="6" fill="${ACC}"/>` },
+
+  // The concertina duct on its own, with a round brush being pushed into it.
+  //
+  // The dryer itself has been taken out of this scene. It was a box with a big
+  // round door in it, which is the same silhouette as the washing machine in
+  // appliance repair and the camera in photography -- three tiles in one set
+  // reading as "box with a circle" is worse than one tile reading as less.
+  // The ribbed tube is a shape only this trade has, so it is the whole scene:
+  // six heavy segments, a wall plate at one end, and the brush going in.
+  { id: 'dryer-vent-cleaning', kind: 'trade', hue: 'home', art: (c) => `
+    <rect x="16" y="26" width="16" height="70" rx="4" fill="${c.md}"/>
+    <path d="M32 40h13v40H32zM49 38h13v44H49zM66 36h13v48H66zM83 38h13v44H83z
+             M100 40h13v40h-13z" fill="${c.lt}"/>
+    <rect x="32" y="52" width="81" height="16" fill="${c.md}" opacity="0.4"/>
+    <rect x="118" y="46" width="34" height="28" rx="6" fill="${ACC}"/>
+    <path d="M120 40v-10M132 40v-10M144 40v-10M120 80v10M132 80v10M144 80v10"
+          stroke="${ACC}" stroke-width="7" stroke-linecap="round"/>
+    <rect x="152" y="54" width="40" height="12" rx="6" fill="${ACC}"/>` },
+
+  // A pool -- water with one wave line -- and a skimmer net on a long pole
+  // reaching into it. The pole running off the top corner is what makes it a
+  // service rather than a swimming pool.
+  { id: 'pool-service', kind: 'trade', hue: 'home', art: (c) => `
+    <rect x="20" y="58" width="160" height="36" rx="8" fill="${BLUE}" opacity="0.85"/>
+    <path d="M26 72q14-8 28 0t28 0 28 0 28 0 28 0" fill="none" stroke="#fff"
+          stroke-width="5" stroke-linecap="round" opacity="0.6"/>
+    <rect x="20" y="52" width="160" height="10" rx="5" fill="${c.lt}"/>
+    <g transform="rotate(38 120 44)">
+      <rect x="110" y="6" width="11" height="54" rx="5.5" fill="${ACC}"/>
+    </g>
+    <ellipse cx="72" cy="66" rx="22" ry="11" fill="${c.lt}"/>
+    <ellipse cx="72" cy="66" rx="14" ry="6" fill="${BLUE}" opacity="0.8"/>` },
+
+  // A sprayer tank with its wand, and the beetle it is pointed at.
+  //
+  // The bug does the identifying here and it used to be nine units across with
+  // four hairline legs, which at thumbnail size was a smudge. It is a third of
+  // the height of the scene now: two body segments, six heavy legs and two
+  // antennae, set on the floor where the wand is aimed. Without it this is any
+  // sprayer, and the green category already has a pressure washer in it.
+  { id: 'pest-control', kind: 'trade', hue: 'home', art: (c) => `
+    <rect x="26" y="34" width="44" height="58" rx="10" fill="${c.lt}"/>
+    <rect x="34" y="24" width="28" height="14" rx="6" fill="${c.md}"/>
+    <rect x="34" y="48" width="26" height="8" rx="4" fill="${c.g[1]}" opacity="0.3"/>
+    <rect x="68" y="40" width="58" height="12" rx="6" fill="${ACC}"/>
+    <path d="M124 38l16 12-16 10z" fill="${BLUE}"/>
+    <path d="M150 62l-12-8M150 62l-14 2M150 62l-12 10M182 62l12-8M182 62l14 2"
+          stroke="${c.md}" stroke-width="5" stroke-linecap="round"/>
+    <path d="M144 66l-14-6M144 78l-14 8M144 72h-18" stroke="${c.lt}" stroke-width="5"
+          stroke-linecap="round"/>
+    <path d="M180 66l14-6M180 78l14 8" stroke="${c.lt}" stroke-width="5"
+          stroke-linecap="round"/>
+    <ellipse cx="162" cy="74" rx="20" ry="15" fill="${c.lt}"/>
+    <circle cx="162" cy="54" r="11" fill="${c.md}"/>
+    <path d="M156 46l-8-10M168 46l8-10" stroke="${c.md}" stroke-width="5"
+          stroke-linecap="round"/>
+    <path d="M162 60v28" stroke="${c.md}" stroke-width="4" opacity="0.5"/>` },
+
+  // A padlock with the shackle open and a key beside it. Open, not shut: shut
+  // is security, open is somebody letting you back in.
+  { id: 'mobile-locksmith', kind: 'trade', hue: 'home', art: (c) => `
+    <path d="M56 54V40a22 22 0 0 1 44 0v6" fill="none" stroke="${c.md}" stroke-width="11"
+          stroke-linecap="round"/>
+    <rect x="38" y="52" width="80" height="44" rx="10" fill="${c.lt}"/>
+    <circle cx="78" cy="70" r="9" fill="${c.g[1]}"/>
+    <rect x="74" y="70" width="8" height="16" rx="4" fill="${c.g[1]}"/>
+    <circle cx="156" cy="44" r="15" fill="${ACC}"/>
+    <circle cx="156" cy="44" r="6" fill="${c.g[1]}"/>
+    <rect x="150" y="56" width="12" height="36" rx="4" fill="${ACC}"/>
+    <path d="M162 72h12M162 82h12" stroke="${ACC}" stroke-width="6" stroke-linecap="round"/>` },
+
+  // A front-loader stood upright, with the spanner across its door.
+  //
+  // Drawn TALL rather than square, and that is not a style choice. A wide box
+  // with a big circle in it is also the camera in photography and was also the
+  // dryer in vent cleaning; a portrait box with a control strip along the top,
+  // a smaller door low down and short legs under it is an appliance and
+  // nothing else in the set. The spanner crosses the door instead of standing
+  // beside the box, because beside it the handle read as a key.
+  { id: 'appliance-repair', kind: 'trade', hue: 'home', art: (c) => `
+    <rect x="52" y="12" width="82" height="82" rx="9" fill="${c.lt}"/>
+    <rect x="52" y="12" width="82" height="18" rx="9" fill="${c.md}"/>
+    <circle cx="122" cy="21" r="5" fill="${c.g[1]}" opacity="0.45"/>
+    <rect x="60" y="17" width="34" height="8" rx="4" fill="${c.g[1]}" opacity="0.3"/>
+    <circle cx="93" cy="60" r="24" fill="${c.md}"/>
+    <circle cx="93" cy="60" r="12" fill="${c.g[1]}" opacity="0.3"/>
+    <rect x="60" y="88" width="12" height="10" fill="${c.md}"/>
+    <rect x="114" y="88" width="12" height="10" fill="${c.md}"/>
+    <g transform="rotate(-38 132 64)">
+      <rect x="126" y="36" width="14" height="52" rx="7" fill="${ACC}"/>
+      <circle cx="133" cy="34" r="12" fill="${ACC}"/>
+      <circle cx="133" cy="34" r="5" fill="${c.g[1]}"/>
+    </g>` },
+
+  // === pet care ==========================================================
+
+  // Clippers and a comb, crossed. The category tile owns the dog, so these
+  // two are what arrives in the van.
+  //
+  // The clipper body is drawn narrow and upright with the blade combs on top,
+  // so it is not a jar. Wide, it was one -- and the trade beside it in the
+  // same brown category is a vet, which is bottles.
+  { id: 'mobile-pet-grooming', kind: 'trade', hue: 'pets', art: (c) => `
+    <g transform="rotate(-16 80 58)">
+      <rect x="62" y="30" width="36" height="56" rx="9" fill="${c.lt}"/>
+      <rect x="64" y="20" width="32" height="12" rx="4" fill="${ACC}"/>
+      <path d="M68 20v-8M76 20v-8M84 20v-8M92 20v-8" stroke="${ACC}" stroke-width="5"
+            stroke-linecap="round"/>
+      <rect x="66" y="52" width="28" height="8" rx="4" fill="${c.md}"/>
+    </g>
+    <g transform="rotate(22 148 56)">
+      <rect x="120" y="30" width="56" height="14" rx="5" fill="${c.md}"/>
+      <path d="M126 44v20M136 44v20M146 44v20M156 44v20M166 44v20" stroke="${c.md}"
+            stroke-width="5" stroke-linecap="round"/>
+    </g>` },
+
+  // An agility hurdle with a ball in front of it. A jump is the one object
+  // that says exercise without drawing a second dog.
+  { id: 'mobile-dog-gym', kind: 'trade', hue: 'pets', art: (c) => `
+    <rect x="56" y="28" width="11" height="66" rx="5" fill="${c.lt}"/>
+    <rect x="140" y="28" width="11" height="66" rx="5" fill="${c.lt}"/>
+    <rect x="52" y="40" width="104" height="11" rx="5" fill="${ACC}"/>
+    <rect x="52" y="62" width="104" height="11" rx="5" fill="${c.md}"/>
+    <circle cx="103" cy="24" r="8" fill="${c.md}" opacity="0.7"/>
+    <circle cx="176" cy="78" r="14" fill="${c.lt}"/>
+    <path d="M166 70q10 8 20 0M166 86q10-8 20 0" stroke="${c.dk}" stroke-width="4"
+          fill="none" stroke-linecap="round"/>
+    <circle cx="30" cy="80" r="10" fill="${c.md}"/>` },
+
+  // A stethoscope over a paw print. Neither alone is enough -- a stethoscope
+  // is any doctor, a paw is any pet shop -- and together they are only this.
+  { id: 'mobile-veterinary-service', kind: 'trade', hue: 'pets', art: (c) => `
+    <circle cx="70" cy="40" r="11" fill="${c.md}"/>
+    <circle cx="48" cy="56" r="10" fill="${c.md}"/>
+    <circle cx="92" cy="56" r="10" fill="${c.md}"/>
+    <ellipse cx="70" cy="76" rx="22" ry="17" fill="${c.md}"/>
+    <path d="M118 22v26a26 26 0 0 0 52 0V30" fill="none" stroke="${c.lt}" stroke-width="9"
+          stroke-linecap="round"/>
+    <circle cx="144" cy="74" r="18" fill="${ACC}"/>
+    <circle cx="144" cy="74" r="9" fill="${c.lt}"/>
+    <rect x="112" y="16" width="12" height="12" rx="4" fill="${c.lt}"/>
+    <rect x="164" y="22" width="12" height="12" rx="4" fill="${c.lt}"/>` },
+
+  // === personal care and beauty ==========================================
+
+  // Scissors and a comb. Both heavy, both open, crossed at the middle.
+  { id: 'mobile-hair-salon-or-barbershop', kind: 'trade', hue: 'beauty', art: (c) => `
+    <path d="M62 30l64 44M62 74l64-44" stroke="${c.lt}" stroke-width="10"
+          stroke-linecap="round"/>
+    <circle cx="50" cy="26" r="13" fill="none" stroke="${ACC}" stroke-width="9"/>
+    <circle cx="50" cy="78" r="13" fill="none" stroke="${ACC}" stroke-width="9"/>
+    <circle cx="112" cy="52" r="7" fill="${c.md}"/>
+    <g transform="rotate(64 160 58)">
+      <rect x="132" y="42" width="58" height="14" rx="5" fill="${c.md}"/>
+      <path d="M138 56v18M148 56v18M158 56v18M168 56v18M178 56v18" stroke="${c.md}"
+            stroke-width="5" stroke-linecap="round"/>
+    </g>` },
+
+  // A table with a rolled towel on it and two stones stacked beside. The table
+  // is the thing that comes to the door, so it is the biggest shape here.
+  { id: 'mobile-spa-and-massage', kind: 'trade', hue: 'beauty', art: (c) => `
+    <rect x="26" y="52" width="130" height="16" rx="8" fill="${c.lt}"/>
+    <rect x="34" y="68" width="10" height="26" rx="5" fill="${c.md}"/>
+    <rect x="138" y="68" width="10" height="26" rx="5" fill="${c.md}"/>
+    <rect x="44" y="34" width="46" height="20" rx="10" fill="${ACC}"/>
+    <circle cx="67" cy="44" r="6" fill="${c.g[1]}" opacity="0.35"/>
+    <ellipse cx="168" cy="72" rx="20" ry="9" fill="${c.md}"/>
+    <ellipse cx="168" cy="58" rx="15" ry="7" fill="${c.lt}"/>
+    <path d="M112 44q8-10 0-20" stroke="${c.lt}" stroke-width="5" fill="none"
+          stroke-linecap="round" opacity="0.7"/>` },
+
+  // A brush and an open palette of four pans.
+  { id: 'mobile-makeup-artist', kind: 'trade', hue: 'beauty', art: (c) => `
+    <g transform="rotate(-24 68 54)">
+      <rect x="62" y="16" width="14" height="42" rx="7" fill="${ACC}"/>
+      <rect x="60" y="54" width="18" height="10" rx="3" fill="${c.md}"/>
+      <path d="M60 64h18l-4 26h-10z" fill="${c.lt}"/>
+    </g>
+    <rect x="104" y="46" width="76" height="40" rx="8" fill="${c.lt}"/>
+    <circle cx="124" cy="60" r="8" fill="${c.md}"/>
+    <circle cx="146" cy="60" r="8" fill="${ACC}"/>
+    <circle cx="168" cy="60" r="8" fill="${c.md}"/>
+    <rect x="114" y="74" width="56" height="6" rx="3" fill="${c.md}" opacity="0.6"/>
+    <rect x="104" y="36" width="76" height="10" rx="5" fill="${c.md}"/>` },
+
+  // === food and drink ====================================================
+  // The category tile is the truck with its hatch open, so no trade in here
+  // draws a van: two vans in one grid is the mistake this set cannot afford.
+
+  // A burger, built in four bands, under the awning the counter is served from.
+  //
+  // The covered dish on a counter that was here first read as a bench: a low
+  // slab with a dome on it is the massage table with the towel taken off. A
+  // stack of horizontal bands is the one arrangement in this set that is read
+  // top to bottom rather than left to right, so it cannot be confused with
+  // anything else, and it says "food being handed over a counter" without
+  // drawing a second van -- the category tile already owns the van.
+  { id: 'food-trucks', kind: 'trade', hue: 'food', art: (c) => `
+    <path d="M22 14h156l12 20H10z" fill="${ACC}"/>
+    <path d="M10 34h180v8H10z" fill="${c.md}"/>
+    <path d="M50 66a50 26 0 0 1 100 0z" fill="${c.lt}"/>
+    <circle cx="82" cy="52" r="3.5" fill="${c.md}"/>
+    <circle cx="104" cy="46" r="3.5" fill="${c.md}"/>
+    <circle cx="124" cy="52" r="3.5" fill="${c.md}"/>
+    <path d="M44 66h112q-8 12-22 8-16 6-34 0-16 6-34 0-14 4-22-8z" fill="${c.md}"/>
+    <rect x="48" y="74" width="104" height="12" rx="4" fill="${c.dk}" opacity="0.8"/>
+    <path d="M50 86h100a50 20 0 0 1-100 0z" fill="${c.lt}"/>` },
+
+  // A tall lidded cup with a straw out of it and two curls of steam.
+  //
+  // Narrow and tall, not wide: the squat trapezoid that was here first was the
+  // same silhouette as the wash bucket, the junk skip and the crate, all of
+  // which are wide trapezoids. Height plus the straw standing out of the lid
+  // is what makes this one a drink.
+  { id: 'coffee-and-smoothie-trucks', kind: 'trade', hue: 'food', art: (c) => `
+    <path d="M74 38h52l-8 56H82z" fill="${c.lt}"/>
+    <rect x="68" y="28" width="64" height="14" rx="6" fill="${c.md}"/>
+    <g transform="rotate(14 112 20)">
+      <rect x="106" y="-4" width="12" height="34" rx="6" fill="${ACC}"/>
+    </g>
+    <path d="M84 56h32l-4 30H88z" fill="${ACC}" opacity="0.4"/>
+    <rect x="80" y="66" width="40" height="8" rx="4" fill="${c.md}" opacity="0.5"/>
+    <path d="M44 42q-12-12 0-24M156 36q-12-12 0-24" stroke="${c.lt}" stroke-width="7"
+          fill="none" stroke-linecap="round" opacity="0.7"/>` },
+
+  // A cone with two scoops. The only scene in the set that is a single stack,
+  // which is exactly why it is unmistakable at 70px.
+  { id: 'dessert-trucks', kind: 'trade', hue: 'food', art: (c) => `
+    <circle cx="100" cy="36" r="22" fill="${c.lt}"/>
+    <circle cx="82" cy="52" r="19" fill="${c.md}"/>
+    <circle cx="120" cy="52" r="19" fill="${ACC}"/>
+    <path d="M70 62h60l-30 36z" fill="${c.md}"/>
+    <path d="M78 70l44 22M84 62l38 30M92 62l30 24" stroke="${c.g[1]}" stroke-width="4"
+          opacity="0.3"/>
+    <circle cx="100" cy="20" r="7" fill="${ACC}"/>` },
+
+  // A cocktail glass with a slice on the rim, and a shaker beside it.
+  { id: 'mobile-bar-service', kind: 'trade', hue: 'food', art: (c) => `
+    <path d="M40 34h84l-42 38z" fill="${c.lt}"/>
+    <rect x="76" y="70" width="12" height="20" rx="4" fill="${c.lt}"/>
+    <rect x="58" y="88" width="48" height="10" rx="5" fill="${c.lt}"/>
+    <path d="M46 40h72l-36 26z" fill="${ACC}" opacity="0.55"/>
+    <circle cx="118" cy="30" r="12" fill="${ACC}"/>
+    <path d="M118 18v24M106 30h24" stroke="${c.g[1]}" stroke-width="3" opacity="0.4"/>
+    <path d="M142 42h38l-5 52h-28z" fill="${c.md}"/>
+    <rect x="140" y="30" width="42" height="14" rx="5" fill="${c.lt}"/>
+    <rect x="152" y="20" width="18" height="12" rx="4" fill="${c.lt}"/>` },
+
+  // === tech and repair ===================================================
+
+  // A phone, screen up, with a star break in the glass and a driver at the
+  // edge. The category tile owns the laptop.
+  { id: 'phone-and-tablet-repair', kind: 'trade', hue: 'tech', art: (c) => `
+    <rect x="58" y="14" width="66" height="94" rx="10" fill="${c.lt}"/>
+    <rect x="65" y="24" width="52" height="74" rx="4" fill="#3a2f8f"/>
+    <circle cx="91" cy="56" r="8" fill="${c.lt}"/>
+    <path d="M91 56L72 34M91 56l22-18M91 56l-18 24M91 56l20 26" stroke="${c.lt}"
+          stroke-width="5" stroke-linecap="round"/>
+    <g transform="rotate(34 152 58)">
+      <rect x="146" y="20" width="13" height="34" rx="6.5" fill="${ACC}"/>
+      <rect x="150" y="52" width="5" height="30" rx="2.5" fill="#cfd4e4"/>
+    </g>` },
+
+  // A monitor on a stand with a headset hooked over the corner: somebody is
+  // there to answer, which is the whole product.
+  { id: 'tech-support', kind: 'trade', hue: 'tech', art: (c) => `
+    <rect x="30" y="22" width="104" height="66" rx="7" fill="${c.lt}"/>
+    <rect x="38" y="30" width="88" height="50" rx="4" fill="#3a2f8f"/>
+    <path d="M56 70l26-32h14L70 70z" fill="${c.md}" opacity="0.5"/>
+    <rect x="68" y="88" width="28" height="6" fill="${c.md}"/>
+    <path d="M118 62V44a26 26 0 0 1 52 0v18" fill="none" stroke="${ACC}" stroke-width="9"
+          stroke-linecap="round"/>
+    <rect x="110" y="58" width="18" height="26" rx="8" fill="${ACC}"/>
+    <rect x="160" y="58" width="18" height="26" rx="8" fill="${ACC}"/>
+    <path d="M160 82q-16 10-30 2" stroke="${ACC}" stroke-width="6" fill="none"
+          stroke-linecap="round"/>` },
+
+  // === professional and personal =========================================
+
+  // A page with a pressed seal on it and a pen. The seal's ribbon tails are
+  // what make it a notarised document rather than a certificate.
+  { id: 'mobile-notary', kind: 'trade', hue: 'services', art: (c) => `
+    <rect x="42" y="14" width="84" height="80" rx="6" fill="${c.lt}"/>
+    <rect x="54" y="28" width="60" height="7" rx="3.5" fill="${c.md}"/>
+    <rect x="54" y="42" width="60" height="7" rx="3.5" fill="${c.md}"/>
+    <rect x="54" y="56" width="34" height="7" rx="3.5" fill="${c.md}"/>
+    <circle cx="106" cy="74" r="17" fill="${ACC}"/>
+    <path d="M98 88l-6 16 14-7 14 7-6-16z" fill="${ACC}"/>
+    <g transform="rotate(36 156 50)">
+      <rect x="150" y="16" width="12" height="48" rx="6" fill="${c.md}"/>
+      <path d="M150 64h12l-6 14z" fill="${c.lt}"/>
+    </g>` },
+
+  // A dumbbell with a kettlebell set down behind it.
+  { id: 'personal-fitness-training', kind: 'trade', hue: 'services', art: (c) => `
+    <rect x="44" y="44" width="104" height="14" rx="7" fill="${c.md}"/>
+    <rect x="30" y="28" width="20" height="46" rx="8" fill="${c.lt}"/>
+    <rect x="142" y="28" width="20" height="46" rx="8" fill="${c.lt}"/>
+    <rect x="14" y="36" width="14" height="30" rx="6" fill="${ACC}"/>
+    <rect x="164" y="36" width="14" height="30" rx="6" fill="${ACC}"/>
+    <path d="M86 78a22 22 0 0 1 44 0z" fill="${c.md}"/>
+    <ellipse cx="108" cy="82" rx="26" ry="14" fill="${c.lt}"/>
+    <path d="M96 66a12 12 0 0 1 24 0" fill="none" stroke="${c.md}" stroke-width="7"/>` },
+
+  // A camera body with one big lens and a burst off the flash.
+  { id: 'mobile-photography-and-photo-booths', kind: 'trade', hue: 'services', art: (c) => `
+    <rect x="34" y="34" width="120" height="60" rx="10" fill="${c.lt}"/>
+    <rect x="56" y="24" width="38" height="14" rx="6" fill="${c.md}"/>
+    <circle cx="94" cy="64" r="24" fill="${c.md}"/>
+    <circle cx="94" cy="64" r="12" fill="${c.g[1]}" opacity="0.4"/>
+    <rect x="124" y="44" width="20" height="12" rx="4" fill="${ACC}"/>
+    <path d="M160 20l-8 14 14-2zM176 32l-14 4 10 10z" fill="${ACC}"/>
+    <circle cx="164" cy="34" r="5" fill="${ACC}"/>` },
+
+  // An open book with a pencil laid across the fore-edge.
+  { id: 'tutoring', kind: 'trade', hue: 'services', art: (c) => `
+    <path d="M24 42q38-16 76 4v46q-38-18-76-2z" fill="${c.lt}"/>
+    <path d="M176 42q-38-16-76 4v46q38-18 76-2z" fill="${c.md}"/>
+    <rect x="94" y="44" width="12" height="48" rx="3" fill="${c.g[1]}" opacity="0.4"/>
+    <path d="M38 54q26-8 46 4M38 68q26-8 46 4" stroke="${c.md}" stroke-width="5"
+          fill="none" stroke-linecap="round"/>
+    <g transform="rotate(-20 138 30)">
+      <rect x="110" y="24" width="60" height="12" rx="3" fill="${ACC}"/>
+      <path d="M170 24l16 6-16 6z" fill="${c.lt}"/>
+    </g>` },
+
+  // === pop-up retail =====================================================
+  // The category tile is the awning over a rail, so the boutique trade takes
+  // the garment instead of a second rail.
+
+  // A dress on a hanger, with a carrier bag set down beside it.
+  //
+  // The bag's handles are drawn in the same pale tone as the bag rather than
+  // in the yellow accent: a yellow arch over a coloured square was the padlock
+  // in locksmith, and the two are three rows apart on the browse page. The one
+  // accent in this scene is on the garment instead, where the eye goes first.
+  { id: 'fashion-boutique-trucks', kind: 'trade', hue: 'retail', art: (c) => `
+    <path d="M74 26a8 8 0 0 1 16 0" fill="none" stroke="${c.md}" stroke-width="6"/>
+    <path d="M36 40h108l-26 12H62z" fill="${c.md}"/>
+    <path d="M62 50h56l14 44H48z" fill="${c.lt}"/>
+    <path d="M74 50h32l6 34H68z" fill="${ACC}" opacity="0.55"/>
+    <rect x="150" y="54" width="40" height="40" fill="${c.lt}"/>
+    <path d="M158 54v-8a12 12 0 0 1 24 0v8" fill="none" stroke="${c.lt}" stroke-width="5"/>
+    <rect x="150" y="68" width="40" height="9" fill="${c.md}" opacity="0.6"/>` },
+
+  // Three books stacked, spines out, with the top one squared off the edge.
+  { id: 'mobile-bookstore', kind: 'trade', hue: 'retail', art: (c) => `
+    <rect x="34" y="72" width="132" height="22" rx="5" fill="${c.md}"/>
+    <rect x="42" y="76" width="116" height="6" rx="3" fill="${c.g[1]}" opacity="0.3"/>
+    <rect x="44" y="50" width="116" height="22" rx="5" fill="${c.lt}"/>
+    <rect x="52" y="54" width="100" height="6" rx="3" fill="${c.md}" opacity="0.6"/>
+    <rect x="56" y="28" width="96" height="22" rx="5" fill="${ACC}"/>
+    <rect x="64" y="32" width="80" height="6" rx="3" fill="#fff" opacity="0.45"/>
+    <rect x="94" y="16" width="20" height="14" rx="3" fill="${c.lt}"/>` },
+
+  // A crate with three round crops in it and two leaves over the rim.
+  { id: 'mobile-farmer-s-market', kind: 'trade', hue: 'retail', art: (c) => `
+    <circle cx="74" cy="46" r="17" fill="${ACC}"/>
+    <circle cx="106" cy="40" r="19" fill="${c.lt}"/>
+    <circle cx="136" cy="48" r="15" fill="${c.md}"/>
+    <path d="M106 22q14-12 22 2-14 8-22-2z" fill="${c.md}"/>
+    <path d="M40 56h132l-8 38H48z" fill="${c.lt}"/>
+    <rect x="36" y="50" width="140" height="12" rx="5" fill="${c.md}"/>
+    <path d="M62 68h88M70 80h72" stroke="${c.g[1]}" stroke-width="5" opacity="0.28"
+          stroke-linecap="round"/>` },
+];
+
+/* ---------------------------------------------------------------------------
+ * The grammar, applied.
+ *
+ * The gradient id is per-scene even though only one is ever on the page at a
+ * time, because these are also read straight out of this file by eye when a
+ * scene is being drawn, and two <svg> blocks sharing a gradient id is the
+ * classic way for the second one to render flat.
+ * ------------------------------------------------------------------------- */
+function render(scene) {
+  const c = HUE[scene.hue];
+  /*
+    THE SCENE IS DRAWN WHOLE, WITH THE GROUND RUNNING PAST IT.
+
+    Every motif below is drawn in a 200x120 box, and the tiles these files fill
+    are now SQUARE (500x500 — see TRADE_ART_W in src/lib/seo.ts) and are
+    cropped again by the browser into a tall tile. `slice` used to scale the
+    box to cover the plate, which on a square plate cut a third off each side
+    of the motif and beheaded half the set.
+
+    `meet` fits the whole 200x120 scene inside the square instead, and the
+    ground rect is drawn far outside the viewBox so the gradient still reaches
+    every corner rather than leaving bars above and below. The bottom shade is
+    extended the same way. Nothing about the forty-eight motifs changes.
+  */
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 120"
+               preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <linearGradient id="g-${scene.id}" x1="0" y1="0" x2="0.35" y2="1">
+        <stop offset="0" stop-color="${c.g[0]}"/>
+        <stop offset="1" stop-color="${c.g[1]}"/>
+      </linearGradient>
+    </defs>
+    <rect x="-200" y="-200" width="600" height="600" fill="url(#g-${scene.id})"/>
+    <circle cx="166" cy="22" r="40" fill="#fff" opacity="0.08"/>
+    ${scene.art(c)}
+    <rect x="-200" y="94" width="600" height="300" fill="#000" opacity="0.16"/>
+  </svg>`;
+}
+
+/**
+ * What the renderer asks this page.
+ *
+ * `list()` is how tools/art-shot.js learns what there is to draw: the scenes
+ * below are the list, so the script cannot ask for a drawing that does not
+ * exist and cannot silently skip one that does. Whether that list COVERS the
+ * catalogue is test/art.test.ts's job, not the script's.
+ */
+window.artList = () => SCENES.map((s) => ({ id: s.id, kind: s.kind }));
+
+/**
+ * Put one scene on the page at one size, and say whether it worked.
+ *
+ * The plate is sized in CSS pixels and the screenshot is taken at
+ * deviceScaleFactor 1, so the number asked for here is the number of pixels in
+ * the file. Nothing is scaled twice.
+ */
+window.artDraw = (id, w, h) => {
+  const scene = SCENES.find((s) => s.id === id);
+  if (!scene) return false;
+  const plate = document.getElementById('plate');
+  plate.style.width = `${w}px`;
+  plate.style.height = `${h}px`;
+  plate.innerHTML = render(scene);
+  return true;
+};
+
+/**
+ * PNG bytes in, WebP bytes out, in the browser that already drew the picture.
+ *
+ * WHY THE RE-ENCODE HAPPENS HERE. Playwright screenshots PNG or JPEG and
+ * nothing else, and neither is the right file to ship. These scenes have a
+ * gradient ground, which is thousands of subtly different colours, and a
+ * smooth gradient is the one thing PNG compresses badly: the category tile
+ * measured on the run that settled this was 68,692 bytes as a PNG and 8,170 as
+ * a WebP, so PNG would have cost about eight times as much for a picture
+ * nobody could tell apart. JPEG is smaller than PNG here and still wrong,
+ * because it rings along the hard edges that are the whole style.
+ *
+ * Chromium's canvas can encode WebP, and Chromium is already open to take the
+ * screenshot, so the conversion costs no dependency at all: no sharp, no
+ * cwebp, no ImageMagick, nothing a future reader has to install before
+ * `npm run art` works on a machine that can already run og-shot.js.
+ */
+window.artWebp = async (pngDataUrl, quality) => {
+  const img = new Image();
+  img.src = pngDataUrl;
+  await img.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  // The scenes are fully opaque, so there is no alpha to preserve and no
+  // reason to leave the canvas transparent underneath them.
+  ctx.drawImage(img, 0, 0);
+  const url = canvas.toDataURL('image/webp', quality);
+  if (!url.startsWith('data:image/webp')) {
+    throw new Error('this Chromium did not encode WebP');
+  }
+  return url;
+};
+</script>
+</body>
+</html>

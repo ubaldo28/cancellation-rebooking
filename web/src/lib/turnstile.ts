@@ -58,7 +58,7 @@ declare global {
   interface Window {
     turnstile?: TurnstileApi;
     /** Named in the script URL below, so api.js can call back when it is ready. */
-    __slotfillTurnstileReady?: () => void;
+    __roundthewayTurnstileReady?: () => void;
   }
 }
 
@@ -79,7 +79,7 @@ declare global {
  * is not getting one for this.
  */
 const SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
-  + '?render=explicit&onload=__slotfillTurnstileReady';
+  + '?render=explicit&onload=__roundthewayTurnstileReady';
 
 let loading: Promise<TurnstileApi> | null = null;
 
@@ -89,7 +89,7 @@ export function loadTurnstile(): Promise<TurnstileApi> {
   loading = new Promise<TurnstileApi>((resolve, reject) => {
     if (window.turnstile) { resolve(window.turnstile); return; }
 
-    window.__slotfillTurnstileReady = () => {
+    window.__roundthewayTurnstileReady = () => {
       if (window.turnstile) resolve(window.turnstile);
       else reject(new Error('Turnstile loaded but did not register.'));
     };

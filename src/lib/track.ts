@@ -1,8 +1,9 @@
 import type { Env, Point } from '../types';
-import { threadByToken } from './chat';
+import { threadByToken, type ThreadRef } from './chat';
 import { driveSeconds, estimateDriveSeconds } from './geo';
 import { localDayStart } from './tz';
-import { badRequest, haversineMeters, now } from './util';
+import { badRequest, haversineMeters, now, sessionPepper } from './util';
+import { vehicleKindOr } from './vehicles';
 
 /**
  * "Build some sort of tracking so we can see the van moving."
@@ -410,8 +411,8 @@ export type CustomerView =
  * -- nobody has to remember to switch anything off. That is what stops this
  * being a link that follows a person around after the job is done.
  */
-export async function customerView(env: Env, threadToken: string): Promise<CustomerView> {
-  const thread = await threadByToken(env, threadToken ?? '');
+export async function customerView(env: Env, ref: ThreadRef): Promise<CustomerView> {
+  const thread = await threadByToken(env, ref);
   if (!thread) return { visible: false, reason: 'no_thread' };
   if (!thread.appointment_id) return { visible: false, reason: 'no_appointment' };
 
@@ -495,4 +496,255 @@ export async function customerView(env: Env, threadToken: string): Promise<Custo
     dest_lat: appointment.lat,
     dest_lng: appointment.lng,
   };
+}
+
+// ---------------------------------------------------------------------------
+// The public map: who is actually out, right now
+// ---------------------------------------------------------------------------
+
+/**
+ * Decimal places on a coordinate that goes to the OPEN INTERNET.
+ *
+ * Three, about 110 m -- the same as a booked customer gets, and for a related
+ * reason. The customer's rounding is there because knowing WHICH HOUSE a named
+ * operator is outside is a question nobody needs answered. Here the operator is
+ * not named at all, so the remaining question is only "is somebody working
+ * round here", and 110 m answers it while still being far too coarse to tell
+ * which building a van is at.
+ *
+ * It was briefly two decimals -- about a kilometre. That is the wrong trade:
+ * at that grid a van in traffic does not visibly move for ten minutes, so the
+ * map says "nobody is doing anything" about a city full of people working. A
+ * map that lies in that direction is still a map that lies.
+ */
+export const PUBLIC_DECIMALS = 3;
+
+/**
+ * How long a van keeps the same public handle before it gets a new one.
+ *
+ * Ten minutes. The handle exists so the map can move a dot smoothly from one
+ * fix to the next instead of teleporting it -- without something to match on,
+ * every poll is an unrelated set of dots and the map twitches. It is a hash of
+ * the operator id, a Worker secret and the current ten-minute bucket, so:
+ *
+ *   inside a bucket, the browser can follow a dot and draw it moving;
+ *   across buckets, the handle changes and nothing links yesterday's dot to
+ *   today's, or this hour's to the next.
+ *
+ * Ten minutes is roughly one leg of a journey, which is exactly as much
+ * continuity as drawing motion needs and no more.
+ *
+ * THE ROTATION IS STAGGERED PER OPERATOR, and it was not. `floor(t / 600)` is
+ * the same number for every van on the map, so every handle on the map changed
+ * on the same tick -- which gives the rotation away entirely. A poller watching
+ * that moment sees one set of dots disappear and an identically-shaped set
+ * appear in the same places, and matching them by nearest neighbour re-links
+ * every van across the boundary. Repeat that six times an hour and the handle
+ * has not rotated at all: one vehicle can be followed until it stops moving,
+ * and where an unbooked van stops at the end of a day is usually the
+ * operator's own home. See handleOffset.
+ */
+export const HANDLE_SECONDS = 600;
+
+/**
+ * A per-operator offset into the handle rotation, in [0, HANDLE_SECONDS).
+ *
+ * FNV-1a over the operator id, which is all this needs to be: it is not a
+ * secret and it does not have to be one. The secret is still SESSION_PEPPER
+ * inside vanRef, which is what stops a handle being traced back to a business.
+ * What this does is decide WHEN each van's handle changes, so that rotations
+ * are spread evenly across the ten minutes instead of landing together. With
+ * them spread, a boundary carries one van at a time out of however many are on
+ * screen, and nearest-neighbour matching across it has nothing to lock onto.
+ *
+ * Stable per operator on purpose -- a random offset per read would rotate the
+ * handle on every poll and the map would twitch, which is the thing
+ * HANDLE_SECONDS exists to prevent.
+ *
+ * Exported only so the test can assert that two vans do not share a boundary.
+ * Nothing outside this module should call it: the handle is what callers use.
+ */
+export function handleOffset(operatorId: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < operatorId.length; i++) {
+    h ^= operatorId.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h % HANDLE_SECONDS;
+}
+
+/** One vehicle on the public map. Deliberately carries no identity. */
+export interface LiveVan {
+  /**
+   * A rotating handle, NOT an id. See HANDLE_SECONDS. It exists only so the
+   * browser can tell that the dot it drew a moment ago and this one are the
+   * same vehicle, and it stops meaning that after ten minutes.
+   */
+  ref: string;
+  lat: number;
+  lng: number;
+  /** Compass degrees, when the phone reported one. Null means "do not turn it". */
+  heading: number | null;
+  /** What to draw: a slug from lib/vehicles.ts. */
+  kind: string;
+}
+
+/**
+ * The rotating handle for one van.
+ *
+ * Keyed on SESSION_PEPPER, the same Worker secret the sign-in codes are
+ * hashed with, so somebody holding a list of operator ids still cannot work
+ * out which handle belongs to whom. Without the secret this would be a
+ * plain hash of an id -- a lookup, not a blind.
+ *
+ * AND THAT LAST SENTENCE IS THE BUG THIS LINE USED TO HAVE. The secret was
+ * reached by casting env to a shape that declares it OPTIONAL and then
+ * defaulting it away: `(env as unknown as { SESSION_PEPPER?: string })
+ * .SESSION_PEPPER ?? ''`. The cast is what made that compile -- `Env` types the
+ * field as required, so a plain read could never have been `?? ''`-ed -- and
+ * the effect was that a deployment with the secret unset appended an EMPTY
+ * suffix. The handle became precisely the "plain hash of an id" the paragraph
+ * above says it must not be: `sha256('van-ref:<id>:<bucket>')`, computable by
+ * anybody who can see an operator id, which is every listing page on the site.
+ * Ten minutes of the public map plus a list of the businesses on it is then a
+ * map of WHICH BUSINESS is where -- and an unbooked van is followed to
+ * wherever it stops, which is usually the operator's own home. Nothing failed
+ * while that was true, because a blind that is not blinding anything still
+ * produces a stable, correct-looking handle.
+ *
+ * sessionPepper in ./util.ts refuses instead, and here the refusal is caught
+ * by the per-van `catch` in livePositions -- one throw is one missing dot, so a
+ * misconfigured deployment serves an EMPTY map rather than a de-blinded one.
+ * For this particular feature that is the right failure: no dots is a visibly
+ * broken front page somebody will fix, and traceable dots are a privacy
+ * promise broken invisibly.
+ */
+async function vanRef(env: Env, operatorId: string, bucket: number): Promise<string> {
+  const data = new TextEncoder().encode(
+    `van-ref:${operatorId}:${bucket}:${sessionPepper(env)}`,
+  );
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return [...new Uint8Array(digest).slice(0, 8)]
+    .map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * EVERY VAN THAT IS ACTUALLY OUT, for the front page map.
+ *
+ * WHAT THIS IS. Real positions from real phones. An operator who has switched
+ * location sharing on and is out working appears here, moving, and nothing on
+ * this path invents, simulates or smooths anything: no fix, no van.
+ *
+ * WHAT IT DELIBERATELY IS NOT: a list of people. There is no operator id here,
+ * no business name, no profile link and no trail. A dot is a dot. The whole
+ * value of the public map is "somebody is working round here", and that is
+ * answerable without telling the internet WHO, and the difference between the
+ * two is the difference between a marketplace and a tool for following a
+ * named person home.
+ *
+ * FOUR GATES, all of which must hold:
+ *
+ *   1. share_location = 1 -- the operator switched it on themselves. Nothing
+ *      in this codebase sets that column except their own action.
+ *   2. Listed and taking bookings -- somebody who has left, been suspended or
+ *      never finished signing up is not part of the picture.
+ *   3. online_until in the future -- they are switched on and working. A van
+ *      parked at home with the phone still pinging is not "out", and their
+ *      driveway is the last place this should be drawing a dot.
+ *   4. A fix fresher than STALE_AFTER_SECONDS -- enforced inside the object.
+ *
+ *   5. NOT BOOKED RIGHT NOW. The moment a job is on, that operator comes off
+ *      the public map. This is the gate that matters most and it is the one
+ *      that makes the whole feature safe, so it is worth saying plainly why.
+ *
+ *      An anonymous dot moving through a neighbourhood is nothing. The same
+ *      dot arriving somewhere and stopping is an address. Anybody watching the
+ *      public map could otherwise follow a vehicle to the doorstep it pulls up
+ *      at, and that doorstep is a customer's home -- the exact thing the whole
+ *      rest of this file is built to prevent. Off the map before the approach
+ *      begins, and the trip that ends at somebody's house is never drawn.
+ *
+ *      It is also what keeps the product's own promise true. An operator is
+ *      either ON the public map, free and unbooked, or VISIBLE TO ONE
+ *      CUSTOMER through customerView -- never both, because the two use the
+ *      same window. The public map is a map of who is AVAILABLE, which is what
+ *      a person looking at it actually wants to know.
+ *
+ * Gates 1, 3 and 5 all close on their own: sharing is a switch they hold,
+ * online expires, and a booking starts. Nobody has to remember to disappear.
+ *
+ * THE ORDER IS SHUFFLED on every read. Positions come back coarsened, but a
+ * stable array position across two reads a minute apart re-links each coarse
+ * dot to the same van and turns a blurred picture back into a track. The
+ * shuffle is what makes the coarsening mean what it says.
+ */
+export async function livePositions(env: Env): Promise<LiveVan[]> {
+  const t = now();
+
+  const rows = await env.DB.prepare(
+    `SELECT o.id, o.vehicle_kind FROM operators o
+      WHERE o.share_location = 1
+        AND o.accept_public_bookings = 1
+        AND o.plan IN ('trial','active')
+        AND o.online_until IS NOT NULL AND o.online_until > ?
+        -- GATE 5: not booked. The window is deliberately the SAME one
+        -- customerView uses, so the two views can never both be on: from
+        -- WINDOW_BEFORE_SECONDS ahead of a job until WINDOW_AFTER_SECONDS
+        -- after it, this operator belongs to that customer and to nobody
+        -- else. Before the window they are on the public map; inside it they
+        -- are on their customer's; after it they come back.
+        AND NOT EXISTS (
+          SELECT 1 FROM appointments a
+           WHERE a.operator_id = o.id
+             AND a.status = 'scheduled'
+             AND a.starts_at - ? <= ?
+             AND a.ends_at + ? >= ?
+        )
+      LIMIT 200`,
+  ).bind(t, WINDOW_BEFORE_SECONDS, t, WINDOW_AFTER_SECONDS, t)
+    .all<{ id: string; vehicle_kind: string | null }>();
+
+  const listed = rows.results ?? [];
+  if (listed.length === 0) return [];
+
+  // One RPC per van, in parallel. Each is a memory read on an object that is
+  // already warm from the pings it is taking, so this is a fan-out of cheap
+  // calls rather than a query -- which is the trade the move to Durable
+  // Objects bought: no database write per ping, one call per van per read.
+  const reads = await Promise.all(listed.map(async (op) => {
+    const stub = vanFor(env, op.id);
+    if (!stub) return null;
+    try {
+      const { position } = await stub.read();
+      if (!position) return null;
+      // Each van's own bucket, offset by a stable hash of its operator id, so
+      // no two vans are guaranteed to rotate on the same tick. See
+      // HANDLE_SECONDS for what rotating together gave away.
+      const bucket = Math.floor((t + handleOffset(op.id)) / HANDLE_SECONDS);
+      return {
+        ref: await vanRef(env, op.id, bucket),
+        // Rounded HERE, on the way out, like every other outward path in this
+        // file. The raw fix never leaves the Worker.
+        lat: roundTo(position.lat, PUBLIC_DECIMALS),
+        lng: roundTo(position.lng, PUBLIC_DECIMALS),
+        heading: position.heading,
+        kind: vehicleKindOr(op.vehicle_kind),
+      } as LiveVan;
+    } catch {
+      // One unreachable object is one missing dot, never a blank map.
+      return null;
+    }
+  }));
+
+  const vans: LiveVan[] = reads.filter((v): v is NonNullable<typeof v> => v !== null);
+
+  // Fisher-Yates. The handle already says which dot is which INSIDE a bucket,
+  // so this is not hiding that -- it is stopping array position from carrying
+  // the same information ACROSS a rotation, which would undo the rotation
+  // entirely and let somebody follow one van all day by watching index 3.
+  for (let i = vans.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [vans[i], vans[j]] = [vans[j]!, vans[i]!];
+  }
+  return vans;
 }

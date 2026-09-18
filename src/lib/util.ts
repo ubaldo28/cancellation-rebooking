@@ -1,7 +1,72 @@
+import type { Env } from '../types';
 import { countryFromE164, getCountry } from './countries';
 import { findCardData, mayContainPan } from './cardscan';
 
 export const now = () => Math.floor(Date.now() / 1000);
+
+// ---------------------------------------------------------------------------
+// Numbers that were written out in more than one module
+// ---------------------------------------------------------------------------
+//
+// Each of these was defined identically in two or more files with nothing
+// importing anything, which is the shape a constant drifts in: somebody edits
+// the copy in front of them and the other one goes on saying the old number.
+// They live here because every module that needs one already imports this file
+// and this file imports almost nothing, so there is no cycle to arrange.
+//
+// A constant belongs here only when the DUPLICATION was the accident. Numbers
+// that are deliberately different in different places — MAX_PRICE_CENTS in
+// online.ts and estimates.ts, for instance — stay where they are, next to the
+// reasoning that makes them different.
+
+/**
+ * A day in seconds, for windows measured in days.
+ *
+ * Was written three times: retention.ts, standing.ts and, in the other tree,
+ * web/src/pages/Schedule.tsx. The browser copy stays a copy — web/ is a
+ * separate build that cannot import a Worker module — and says so where it is
+ * declared. These two are one line.
+ */
+export const DAY = 86_400;
+
+/**
+ * How long to sleep before retrying a provider that answered 429.
+ *
+ * email.ts and sms.ts each had their own copy, with the same number and the
+ * same paragraph of reasoning above it: a per-second send ceiling needs
+ * slightly more than a second to roll over, and the retry happens ONCE rather
+ * than in a loop, because sleeping repeatedly inside a request turns one
+ * person's slow sign-in into everybody's. The reasoning stays at both call
+ * sites; only the number is shared.
+ */
+export const RATE_LIMIT_BACKOFF_MS = 1_100;
+
+/**
+ * The ceiling on a short free-text box somebody types into a form.
+ *
+ * Four copies: a parts note and a parts-quote description in parts.ts, an
+ * estimate description in estimates.ts, and an opening's note in online.ts.
+ * Three hundred characters in every one of them, and all four are the same
+ * decision — a sentence or two of context, not a document — so they are one
+ * number. The description fields import this under this name rather than
+ * keeping a MAX_DESCRIPTION_CHARS alias, because two names for one value is
+ * how four copies happened in the first place.
+ */
+export const MAX_NOTE_CHARS = 300;
+
+/**
+ * How long a single job may be booked for, in seconds.
+ *
+ * A quarter of an hour to twelve hours, identical in online.ts (an operator
+ * posting an opening) and estimates.ts (an operator quoting for one), because
+ * both of them end up as the same kind of row on the same calendar.
+ *
+ * NOTE FOR ANYONE TIDYING NEARBY: the MAX_PRICE_CENTS beside these two in both
+ * files is NOT the same number in both, and is deliberately not here. See the
+ * comment at either declaration.
+ */
+export const MIN_DURATION_SECONDS = 15 * 60;
+export const MAX_DURATION_SECONDS = 12 * 60 * 60;
 
 /** UUIDv7-ish: time-ordered so D1 primary-key inserts stay sequential. */
 export function newId(): string {
@@ -32,6 +97,70 @@ export async function sha256(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
   const digest = await crypto.subtle.digest('SHA-256', data);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * The pepper, or a refusal. EVERY PEPPERED DIGEST IN THIS CODEBASE GOES
+ * THROUGH HERE -- or should; see the note at the bottom.
+ *
+ * `SESSION_PEPPER` is typed as required on Env and the README calls it
+ * required, and neither of those is a runtime check. What the code actually
+ * did was interpolate it: `sha256(\`${token}:${env.SESSION_PEPPER}\`)`. With
+ * the secret unset that template renders the literal text "undefined", so
+ * every hash in the product silently became an UNPEPPERED sha256 of its input
+ * -- and nothing anywhere failed, because an unpeppered digest is stable, so
+ * sessions still resolved, guest links still opened and the tests still
+ * passed. The only observable difference is in the one scenario the pepper
+ * exists for.
+ *
+ * WHY THAT IS WORTH A HARD FAILURE. The pepper is what makes a stolen copy of
+ * this database not also a stolen contact list. Sessions and guest links are
+ * 32 random bytes, so their digests are out of reach either way -- but
+ * `pepperedHash` in ./redact.ts is also used on PHONE NUMBERS and EMAIL
+ * ADDRESSES (claim hashes, erasure receipts, the audit log, and the
+ * rate-limit bucket keys, which are raw mailboxes and raw booking links on
+ * sixteen routes). Those spaces are small enough to enumerate on a laptop:
+ * unpeppered, every one of those digests is reversible by brute force, and
+ * the table that was hashed specifically so it could not be read back becomes
+ * readable again. A deployment can be in that state for its whole life with
+ * no symptom, which is precisely the kind of failure that has to be made
+ * noisy at the point of use rather than left to a checklist.
+ *
+ * Sixteen characters, not thirty-two, because this is a floor against the
+ * genuinely broken cases -- unset, empty, or a placeholder somebody typed to
+ * get a local run working -- and not an attempt to enforce the README's
+ * recommendation. A deployment that clears this bar is making a deliberate
+ * choice; one that does not has made a mistake.
+ *
+ * NOW CALLED FROM EVERY HASH SITE, which is what makes the sentence at the top
+ * of this block true rather than aspirational. ./redact.ts (`pepperedHash`),
+ * ./customers.ts (the customer session and code digests), ./audit.ts (the
+ * subject hash) and ./track.ts (the van reference) each used to interpolate
+ * `env.SESSION_PEPPER` straight into their own template and each carried the
+ * identical silent downgrade -- this note used to list them as outstanding
+ * work, and a reader arriving after they were converted would have gone
+ * looking for four one-line changes that were already made. All four read the
+ * pepper through this function now, so there is one place that decides whether
+ * a deployment is peppered and one place to change if that decision ever moves.
+ *
+ * KEEP IT THAT WAY: a new digest that interpolates `env.SESSION_PEPPER` itself
+ * compiles, passes its tests and is indistinguishable from a correct one until
+ * the day the database is stolen. The check is worth nothing in the one file
+ * that skips it.
+ */
+export function sessionPepper(env: Env): string {
+  const pepper = typeof env.SESSION_PEPPER === 'string' ? env.SESSION_PEPPER.trim() : '';
+  if (pepper.length < 16) {
+    // The length, never the value, and only ever to the log: this line is the
+    // one place that would otherwise be tempted to print the secret it is
+    // complaining about.
+    console.error(
+      `SESSION_PEPPER is missing or too short (${pepper.length} chars). `
+      + 'Every peppered digest would be an unpeppered one. Refusing.',
+    );
+    throw new HttpError(500, 'This deployment is misconfigured.', 'no_session_pepper');
+  }
+  return pepper;
 }
 
 /** Constant-time string compare, for anything derived from a secret. */

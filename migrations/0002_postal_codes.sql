@@ -17,7 +17,7 @@
 -- any public page that shows a map or distance. This is not optional.
 --
 -- Populate with: node scripts/build-postal-codes.mjs GB US CA AU ...
--- then:          wrangler d1 execute gapfiller --remote --file=./seed/postal_codes.sql
+-- then:          wrangler d1 execute roundtheway --remote --file=./seed/postal_codes.sql
 
 CREATE TABLE postal_codes (
   country_code   TEXT NOT NULL,     -- ISO-3166-1 alpha-2

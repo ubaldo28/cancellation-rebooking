@@ -15,11 +15,17 @@ import { useDocumentTitle } from '../lib/title';
  */
 
 const BIO_MAX = 600;
-/** Matches MAX_PHOTO_BYTES on the Worker. A looser number here just moves the
-    rejection to after the upload, which on a phone is a minute wasted. */
-const PHOTO_MAX_BYTES = 5_000_000;
-/** Matches MAX_PHOTOS on the Worker. */
-const PHOTO_MAX_COUNT = 12;
+/** Matches MAX_PHOTO_BYTES in src/lib/profile.ts on the Worker, where the
+    reasoning lives. A looser number here just moves the rejection to after the
+    upload, which on a phone is a minute wasted. Checked AFTER shrinkImage has
+    run, so what it measures is the ~300 KB the browser actually sends and not
+    the camera file — which is why 2 MB refuses nothing real. */
+const PHOTO_MAX_BYTES = 2_000_000;
+/** Matches MAX_PHOTOS in src/lib/profile.ts on the Worker, which is where the
+    reasoning for the number lives. Five, not twelve, since 13 September 2026.
+    These two must move together: a bigger number here offers a slot the Worker
+    refuses, and a smaller one hides one it would have taken. */
+const PHOTO_MAX_COUNT = 5;
 /** The most years the Worker will take. Past it the save is refused. */
 const YEARS_MAX = 80;
 const ACCEPT = 'image/jpeg,image/png,image/webp';

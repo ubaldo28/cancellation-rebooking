@@ -39,11 +39,26 @@ const PREV = { lat: 34.1500, lng: -118.4490 };
 const NEXT = { lat: 34.1520, lng: -118.4400 };
 const NEAR = { lat: 34.1510, lng: -118.4450 };
 
+/** The address Rosa proved with a code. Her identity, and what standing hangs on. */
+const LOGIN = 'rosa@mailbox.test';
+
 const BUYER = {
   guest_name: 'Rosa',
   phone: '(818) 555-0142',
   address_line: '15200 Ventura Blvd',
   postcode: '91403',
+  /**
+   * The account a real checkout resolves before a single row is written.
+   *
+   * Since migration 0038 the number above is a contact detail nobody has
+   * proved, so the no-show ladder further down this file counts against
+   * login_email instead — and a booking carrying no account would produce a
+   * report with nobody to apply to. checkoutAccount refuses without a verified
+   * code, so there is no path that books without one of these.
+   */
+  account: {
+    id: 'acct-rosa', phone: '+18185550142', login_email: LOGIN,
+  },
 };
 
 const one = async <T>(sql: string, ...args: unknown[]) =>
@@ -73,6 +88,14 @@ async function seed(opts: { startsInSeconds?: number } = {}) {
   await saveVehicle(env, MECHANIC, {
     make: 'Ford', model: 'Transit', color: 'White', plate: '8ABC123',
   });
+
+  // And somewhere to send the money, for the same reason: every booking is
+  // paid up front and a business that cannot be paid cannot list. See
+  // NEEDS_PAYOUTS_OPERATOR.
+  await env.DB.prepare(
+    `UPDATE operators SET stripe_account_id = ?, stripe_payouts_enabled = 1,
+       stripe_charges_enabled = 1 WHERE id = ?`,
+  ).bind(`acct_${MECHANIC}`, MECHANIC).run();
 
   // One service of each policy, because the whole point is that a single price
   // list holds all three: this mechanic carries oil and filters, and cannot
@@ -206,6 +229,28 @@ describe('sending a quote', () => {
     await expect(sendQuote(env, MECHANIC, {
       order_item_id: itemId, description: '  ', parts_cents: 18000,
     })).rejects.toThrow(/what the parts are/i);
+  });
+
+  it('refuses a total that looks like a typo, not each half of one', async () => {
+    // The guard was applied per field, so the real ceiling was $10,000 rather
+    // than the $5,000 it is written as: a decimal point in the wrong place in
+    // both boxes went straight through it. This is an off-session charge
+    // against a card nobody is looking at, so that one line is all there is
+    // between a fat finger and a five-figure debit.
+    const { gapId } = await seed();
+    const { itemId } = await book(gapId);
+
+    await expect(sendQuote(env, MECHANIC, {
+      order_item_id: itemId, description: 'alternator and fitting',
+      parts_cents: 400000, labor_cents: 400000,
+    })).rejects.toThrow(/typo/i);
+
+    // Each half on its own is fine, and so is a total that reaches the line.
+    const ok = await sendQuote(env, MECHANIC, {
+      order_item_id: itemId, description: 'alternator and fitting',
+      parts_cents: 400000, labor_cents: 100000,
+    });
+    expect(ok.total_cents).toBe(500000);
   });
 
   it('never confirms whether another business booking exists', async () => {
@@ -398,6 +443,32 @@ describe('the doorstep bypass', () => {
 
     const owed = await feesOwed(env, MECHANIC);
     expect(owed.count).toBe(1);
+  });
+
+  it('will not let a business list with nowhere to be paid', async () => {
+    // THE GATE THAT REMOVES A BROKEN STATE RATHER THAN REPORTING ONE.
+    //
+    // Every booking here is paid up front and the business's share is
+    // transferred afterwards. A business that could be booked without an
+    // account to transfer to would leave a customer's money sitting in the
+    // platform balance with nowhere to go and nothing in the product to
+    // resolve it — the customer has paid, the operator is owed, and the money
+    // waits until somebody happens to open a settings page.
+    //
+    // Blocking the listing means the situation cannot arise at all.
+    await env.DB.prepare(
+      `UPDATE operators SET stripe_payouts_enabled = 0 WHERE id = ?`,
+    ).bind(MECHANIC).run();
+    await expect(listingBlock(env, MECHANIC)).resolves.toMatch(/bank account/i);
+
+    // And it lifts the moment they have one. Asserted as "not this message"
+    // rather than as null: other blockers in the same chain may be standing
+    // from earlier in this file, and what is being pinned here is the payout
+    // gate and not the whole ladder.
+    await env.DB.prepare(
+      `UPDATE operators SET stripe_payouts_enabled = 1 WHERE id = ?`,
+    ).bind(MECHANIC).run();
+    await expect(listingBlock(env, MECHANIC)).resolves.not.toMatch(/bank account/i);
   });
 
   it('stops the account listing until the fee is settled, and says so plainly', async () => {
@@ -747,27 +818,37 @@ describe('the 48-hour line, from the customer side', () => {
 });
 
 describe('a card on file', () => {
-  it('stops an operator listing until they have one', async () => {
+  /**
+   * A BUSINESS IS NOT ASKED FOR A CARD BEFORE IT CAN WORK.
+   *
+   * This used to be the first gate in listingBlock and it was the wrong one.
+   * What a business has to have is somewhere to be PAID — that is the bank
+   * account, and it is still required. Demanding a card as well means asking
+   * somebody self-employed to hand over a payment instrument before they have
+   * earned anything, against a late cancellation they have not made. It is
+   * the step people leave at.
+   *
+   * The customer side is the opposite and is tested separately: no card, no
+   * booking, because theirs is the money that has to be there on the day.
+   */
+  it('does not stop an operator listing', async () => {
     await seed();
     await env.DB.prepare(`UPDATE operators SET payment_ref = NULL WHERE id = ?`)
       .bind(MECHANIC).run();
-    expect(await listingBlock(env, MECHANIC)).toMatch(/Add a card/i);
+    expect(await listingBlock(env, MECHANIC)).toBeNull();
   });
 
-  it('says what the card is for, and that nothing is charged to it today', async () => {
+  it('still leaves the bank account required', async () => {
     await seed();
-    await env.DB.prepare(`UPDATE operators SET payment_ref = NULL WHERE id = ?`)
-      .bind(MECHANIC).run();
+    // No card AND no payouts: the refusal must be about the bank account,
+    // which is the one that genuinely cannot be skipped, and must not mention
+    // a card at all.
+    await env.DB.prepare(
+      `UPDATE operators SET payment_ref = NULL, stripe_payouts_enabled = 0 WHERE id = ?`,
+    ).bind(MECHANIC).run();
     const msg = (await listingBlock(env, MECHANIC))!;
-    // Somebody is being asked for a card, so the sentence has to say both
-    // halves: nothing is charged to it, and the ladder it will one day be
-    // charged on. Stating the ladder in the present tense is the drift that
-    // took four other surfaces with it — see PaymentState.tsx.
-    expect(msg).toMatch(/Nothing is charged to it/i);
-    expect(msg).toMatch(/no money moves through Slotfill yet/i);
-    expect(msg).toMatch(/once payment is switched on/i);
-    expect(msg).toMatch(/48 hours/);
-    expect(msg).not.toMatch(/is a quarter of the job/);
+    expect(msg).toMatch(/bank account/i);
+    expect(msg).not.toMatch(/add a card/i);
   });
 
   it('refuses anything shaped like a card number instead of storing it', async () => {
@@ -807,7 +888,7 @@ describe('no-shows', () => {
 
     // An operator who did the job and forgot the button leaves the same trace
     // as one who never went. A filing must not be able to suspend anybody.
-    const standing = await customerStanding(env, '+18185550142');
+    const standing = await customerStanding(env, LOGIN);
     expect(standing.blocked).toBe(false);
     expect(standing.no_show_strikes).toBe(0);
   });
@@ -815,23 +896,27 @@ describe('no-shows', () => {
   it('walks the ladder 3, 7, 30, banned', async () => {
     const { gapId } = await seed({ startsInSeconds: 72 * 3600 });
     const { itemId } = await finished(gapId);
-    const phone = '+18185550142';
 
     const days: Array<number | null> = [];
     for (let i = 0; i < 4; i += 1) {
       // A fresh report each time: one booking gets one report per side.
+      //
+      // Both columns are written because a real report carries both: the
+      // number is what the operator saw on the job and is what makes a decided
+      // report legible months later, and login_email is what the ladder counts
+      // on because it is the only one of the two anybody has proved.
       const id = newId();
       const t = now();
       await env.DB.prepare(
         `INSERT INTO no_show_reports (id, order_item_id, against, operator_id,
-           phone_e164, status, created_at, updated_at)
-         VALUES (?,?, 'customer', ?,?, 'open', ?,?)`,
-      ).bind(id, itemId + i, MECHANIC, phone, t, t).run();
+           phone_e164, login_email, status, created_at, updated_at)
+         VALUES (?,?, 'customer', ?,?,?, 'open', ?,?)`,
+      ).bind(id, itemId + i, MECHANIC, '+18185550142', LOGIN, t, t).run();
       days.push((await confirmNoShow(env, id)).days);
     }
 
     expect(days).toEqual([3, 7, 30, null]);
-    const standing = await customerStanding(env, phone);
+    const standing = await customerStanding(env, LOGIN);
     expect(standing.banned_at).not.toBeNull();
     expect(standing.blocked).toBe(true);
     expect(standing.message).toMatch(/cannot book here/i);
@@ -890,7 +975,7 @@ describe('no-shows', () => {
       { order_item_id: itemId, against: 'customer' })).rejects.toThrow(/not finished/i);
   });
 
-  it('stops a suspended number booking again', async () => {
+  it('stops a suspended address booking again', async () => {
     const { n, gapId } = await seed({ startsInSeconds: 72 * 3600 });
     const { itemId } = await finished(gapId);
     const report = await reportNoShow(env, 'operator',

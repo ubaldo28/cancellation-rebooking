@@ -236,3 +236,153 @@ describe('the sample data reaches a database that was already seeded', () => {
     expect(await seedDemoIfEmpty(env)).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Seeding once, and only once
+// ---------------------------------------------------------------------------
+
+describe('seedDemoIfEmpty knows when it has already run', () => {
+  /**
+   * THIS WENT WRONG THE DAY A METRO WAS HIDDEN, and nothing failed loudly.
+   *
+   * The freshness check compares the operator rows in the database against a
+   * length. It compared against DEMO_OPERATOR_IDS — every business the demo
+   * OWNS — while the seeder had started skipping the six based in a metro that
+   * is no longer open. Sixteen measured against twenty-two is never equal, so
+   * the branch that says "already seeded" became unreachable and every call
+   * fell through to a full wipe and rebuild.
+   *
+   * The caller is GET /api/public/map, described in its own comment as the
+   * busiest read in the product. So in demo mode every uncached map request was
+   * deleting and re-inserting several hundred rows and re-randomising which
+   * vans were online, under whoever was looking at the page.
+   *
+   * The cost was invisible: the site looked right, because a rebuild produces
+   * the same data. What is pinned here is that the SECOND call does nothing,
+   * which is the only symptom the bug ever had.
+   */
+  it('rebuilds on the first call and leaves it alone on the second', async () => {
+    const env = { ...makeEnv(ALL_MIGRATIONS), DEMO_MODE: 'on' } as unknown as Env;
+    expect(await seedDemoIfEmpty(env)).toBe(true);
+    expect(await seedDemoIfEmpty(env)).toBe(false);
+    expect(await seedDemoIfEmpty(env)).toBe(false);
+  });
+
+  it('counts what the seeder creates, not what the demo owns', async () => {
+    // The two numbers differ whenever a metro is hidden, and the check has to
+    // use the smaller one. Asserted against the database rather than against a
+    // constant, so it stays true whichever metros are open.
+    const env = await seeded();
+    const n = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM operators WHERE id LIKE 'demo-operator%'`,
+    ).first<{ n: number }>();
+    expect(n!.n).toBeGreaterThan(0);
+    expect(await seedDemoIfEmpty(env)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A real business in the table must not stop the demo maintaining itself
+// ---------------------------------------------------------------------------
+
+describe('the demo lives alongside real businesses', () => {
+  /**
+   * THE GUARD THAT FROZE THE LIVE SITE.
+   *
+   * seedDemoIfEmpty used to refuse outright if any operator existed whose id
+   * was not a demo id. The intent was that a rebuild must never reach somebody's
+   * actual business, which is right — but the effect was that the FIRST REAL
+   * BUSINESS TO SIGN UP froze the demo permanently. Every later change to the
+   * sample data looked correct on every developer's machine, which starts empty
+   * and always seeds fresh, and reached the live site never.
+   *
+   * It was found by accident: a sign-in test put one operator row on the
+   * production database, and six sample businesses that had just been taken off
+   * the site went on being served for hours, by code that was correct and
+   * could not run.
+   *
+   * The protection is structural instead, and these tests are what say so:
+   * every statement in the seeder is scoped to the ids it owns, so a real
+   * business's rows are untouched by a rebuild that happens right beside them.
+   */
+  const realOperator = async (env: Env, id = 'op-a-real-business') => {
+    const t = now();
+    await env.DB.prepare(
+      `INSERT INTO operators (id,email,business_name,timezone,country,currency,
+         location_mode,fill_model,sms_mode,plan,created_at,updated_at)
+       VALUES (?,?,?, 'America/Los_Angeles','US','USD','mobile','both','device','active',?,?)`,
+    ).bind(id, `${id}@example.com`, 'A Real Business', t, t).run();
+    return id;
+  };
+
+  it('still seeds when somebody has signed up', async () => {
+    const env = { ...makeEnv(ALL_MIGRATIONS), DEMO_MODE: 'on' } as unknown as Env;
+    await realOperator(env);
+
+    expect(await seedDemoIfEmpty(env)).toBe(true);
+    const n = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM operators WHERE id LIKE 'demo-operator%'`,
+    ).first<{ n: number }>();
+    expect(n!.n).toBeGreaterThan(0);
+  });
+
+  it('leaves the real business exactly where it was', async () => {
+    // The whole reason the guard existed. It has to be true without it.
+    const env = { ...makeEnv(ALL_MIGRATIONS), DEMO_MODE: 'on' } as unknown as Env;
+    const id = await realOperator(env);
+    await seedDemoIfEmpty(env);
+
+    const before = await env.DB.prepare(
+      `SELECT business_name, plan FROM operators WHERE id = ?`,
+    ).bind(id).first<{ business_name: string; plan: string }>();
+    expect(before).toMatchObject({ business_name: 'A Real Business', plan: 'active' });
+
+    // And again through a rebuild, which is the dangerous one: this call finds
+    // the demo present but out of date and wipes it.
+    await env.DB.prepare(`UPDATE demo_seed SET version = 1 WHERE id = 1`).run();
+    expect(await seedDemoIfEmpty(env)).toBe(true);
+
+    const after = await env.DB.prepare(
+      `SELECT business_name, plan FROM operators WHERE id = ?`,
+    ).bind(id).first<{ business_name: string; plan: string }>();
+    expect(after).toMatchObject({ business_name: 'A Real Business', plan: 'active' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A hidden metro's postcodes are removed, not merely left unwritten
+// ---------------------------------------------------------------------------
+
+describe('postcodes of a metro that is not open', () => {
+  it('are deleted from a database that was seeded while it was open', async () => {
+    // WIPE CANNOT DO THIS AND THAT IS THE POINT. Every delete in wipe is keyed
+    // on operator_id, and a postcode belongs to no operator — so a code seeded
+    // while Santa Maria was live survived every rebuild, INSERT OR IGNORE never
+    // overwrote it, and somebody in Santa Maria typing 93454 was placed in a
+    // neighbourhood with nothing in it on a site that says it is testing in
+    // Los Angeles.
+    const env = { ...makeEnv(ALL_MIGRATIONS), DEMO_MODE: 'on' } as unknown as Env;
+    await env.DB.prepare(
+      `INSERT INTO postal_codes (country_code,postal_code,place_name,lat,lng,accuracy)
+       VALUES ('US','93454','Downtown Santa Maria',34.95,-120.43,6)`,
+    ).run();
+
+    await seedDemoIfEmpty(env);
+
+    const left = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM postal_codes WHERE postal_code = '93454'`,
+    ).first<{ n: number }>();
+    expect(left!.n).toBe(0);
+  });
+
+  it('does not take a live metro\'s codes with them', async () => {
+    // A code can cover neighbourhoods in more than one place. Deleting a live
+    // one because a hidden area happens to share it would break postcode search
+    // for somebody we do serve.
+    const env = await seeded();
+    const la = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM postal_codes WHERE postal_code = '91403'`,
+    ).first<{ n: number }>();
+    expect(la!.n).toBe(1);
+  });
+});

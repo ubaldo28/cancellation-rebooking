@@ -4,7 +4,7 @@ import { api, type TrackView } from '../api';
 // the guest thread page, which knows nothing about the alerts stylesheet.
 import '../styles-alerts.css';
 import { prefersReducedMotion } from '../lib/motion';
-import { MAP_STYLE, mapLib } from '../lib/map';
+import { MAP_STYLE, useMapLib } from '../lib/map';
 
 
 /**
@@ -45,11 +45,17 @@ const REASONS: Record<string, string> = {
 const UNKNOWN_REASON = 'The van cannot be shown right now.';
 
 export interface VanTrackProps {
-  /** The guest thread token from the customer's link. Their only identity. */
-  token: string;
+  /**
+   * Which conversation this van is coming to, in the form the Worker's path
+   * wants: the token out of a /c/:token link, or the thread id when a
+   * signed-in customer opened it from their account. See the long note on
+   * `ref` above guestMessagePhotoUrl in api.ts for why one parameter carries
+   * both and why it is not called `token` any more.
+   */
+  threadRef: string;
 }
 
-export default function VanTrack({ token }: VanTrackProps) {
+export default function VanTrack({ threadRef }: VanTrackProps) {
   const [view, setView] = useState<TrackView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +63,7 @@ export default function VanTrack({ token }: VanTrackProps) {
   const read = useCallback(async (quiet: boolean) => {
     if (!quiet) { setLoading(true); setError(null); }
     try {
-      setView(await api.trackCustomer(token));
+      setView(await api.trackCustomer(threadRef));
       setError(null);
     } catch (e) {
       // A dropped poll while the phone changes cell is not news. Only the
@@ -67,7 +73,7 @@ export default function VanTrack({ token }: VanTrackProps) {
     } finally {
       if (!quiet) setLoading(false);
     }
-  }, [token]);
+  }, [threadRef]);
 
   useEffect(() => { void read(false); }, [read]);
 
@@ -156,17 +162,27 @@ export default function VanTrack({ token }: VanTrackProps) {
  * to, so there is no honest way to draw the destination pin — see the note in
  * the report. The figures above the map carry the "how far" half instead.
  *
- * MapLibre is loaded from a CDN in index.html, exactly as the discover map is,
- * so this reaches it through `mapLib()` and falls back to the sentence above
- * if the script never arrived.
+ * MapLibre is a dependency fetched in a chunk of its own, exactly as the
+ * discover map's is, so this reaches it through `useMapLib()` and renders
+ * nothing at all until the chunk lands — the figures above carry the page on
+ * their own, which is why there is no fallback sentence here.
+ *
+ * IT USED TO COME FROM unpkg.com, as a script in the SPA shell, which meant
+ * this page — the one a customer opens on their driveway, on a phone, on
+ * whatever signal the street has — paid for it in the head before it could
+ * paint, and so did every page that has no map on it at all. Now nothing is
+ * fetched until a van is actually being shown, and what is fetched comes from
+ * this origin. See web/src/lib/map.ts.
  */
 function VanMap({ lat, lng }: { lat: number; lng: number }) {
   const host = useRef<HTMLDivElement | null>(null);
   const map = useRef<any>(null);
   const marker = useRef<any>(null);
+  // Null until the map chunk has arrived, so it is a dependency of the effect
+  // that builds the map and the gate on rendering the element at all.
+  const { gl } = useMapLib();
 
   useEffect(() => {
-    const gl = mapLib();
     if (!gl || !host.current || map.current) return;
 
     const m = new gl.Map({
@@ -190,7 +206,10 @@ function VanMap({ lat, lng }: { lat: number; lng: number }) {
     // Re-running this on every new fix would re-download the map style twice a
     // minute. lat/lng are read here only for the first frame.
     return () => { m.remove(); map.current = null; marker.current = null; };
-  }, []);
+    // `gl` is the one dependency, and it changes at most once: null on the
+    // first pass, the library on the second. lat and lng are deliberately not
+    // here — see above.
+  }, [gl]);
 
   // A new fix moves the marker and the frame; it does not rebuild anything.
   useEffect(() => {
@@ -201,15 +220,24 @@ function VanMap({ lat, lng }: { lat: number; lng: number }) {
 
   // MapLibre measures its container once. Mounted inside a card that is itself
   // revealed by a poll, that measurement can happen at zero width.
+  //
+  // `gl` is a dependency because the element this observes does not exist until
+  // the library has arrived — the component renders null before that. Run once
+  // on mount and it would find no element, bail, and never look again, leaving
+  // a map that keeps whatever size the card happened to have when it appeared.
   useEffect(() => {
     const el = host.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => map.current?.resize());
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [gl]);
 
-  if (!mapLib()) return null;
+  // Nothing while the chunk is still coming, and nothing if it never does. The
+  // figures above the map already say how far away the van is and how long it
+  // will be, so an empty frame or an apology would add nothing a person waiting
+  // on their driveway can use.
+  if (!gl) return null;
   return (
     <div className="vt-map" ref={host}
       role="img" aria-label="Map showing where the van is now" />

@@ -6,6 +6,8 @@ import {
   ApiError, api, durationLabel,
   type PricedItem, type PricedOrder, type PricedService, type PublicSlot,
 } from '../api';
+import CardField from '../components/CardField';
+import PayPanel from '../components/PayPanel';
 import CodeSignIn, { CODE_DIGITS } from '../components/CodeSignIn';
 import PaymentState from '../components/PaymentState';
 import SiteHeader from '../components/SiteHeader';
@@ -63,30 +65,38 @@ import { useDocumentTitle } from '../lib/title';
  *
  * WHERE THE ACCOUNT COMES IN, AND WHY IT IS NOT A FIFTH STEP.
  *
- * Booking needs an account and, once payment is switched on, a card. The model
+ * Booking needs an account and a card, and both are enforced today. The model
  * this page was written on — "no account to create, here or later" — was never
  * the model, and that sentence was on the step below until now.
  *
  * What is true is that neither is asked for until somebody has decided to buy
  * something, which is exactly what arriving at the confirm step means. So the
  * sign-up lives ON that step, in the same action as the card and under the same
- * button: the mobile number was already answered two steps back, so all that is
- * added is the six digits texted to it, and `placeOrder` creates the account
- * and holds the appointments in one request. A fifth step headed "Create an
+ * button: the email address was already answered two steps back, so all that is
+ * added is the six digits sent to it, and `placeOrder` creates the account and
+ * holds the appointments in one request. A fifth step headed "Create an
  * account" would be the separate journey the owner explicitly does not want,
  * and it would put a wall between a decision and the thing it was a decision
  * about.
  *
- * Somebody already signed in is not asked again — a customer's session lasts a
- * year and is extended on use, so the ordinary case for a returning customer is
- * that this step says who they are and moves on.
+ * THE ADDRESS IS THE ACCOUNT AND THE NUMBER IS NOT, since migration 0038. Both
+ * are asked for on the "where you are" step and they do different jobs: the
+ * code goes to the address, so the address is what a suspension and a booking
+ * history hang off; the number is what the business rings when they are outside,
+ * and nothing checks it. Read that migration before moving either field — the
+ * arrangement where a code went to one and the account hung off the other is an
+ * account takeover, not a shortcut.
  *
- * AND TODAY NONE OF IT CAN COMPLETE. No text-message provider is configured on
- * this deployment, so no account can be created and nothing can be booked. That
- * is read off the Worker rather than assumed — see `api.bookingState` — and it
- * is said at the top of this page rather than discovered at the bottom of it,
- * because letting somebody fill a basket in first and then refusing them is the
- * one thing worse than saying so.
+ * Somebody already signed in is not asked for a code again — a customer's
+ * session lasts a year and is extended on use, so the ordinary case for a
+ * returning customer is that this step says who they are and moves on.
+ *
+ * AND TODAY NONE OF IT CAN COMPLETE. No email provider is configured on this
+ * deployment, so no code can be sent, no account can be created and nothing can
+ * be booked. That is read off the Worker rather than assumed — see
+ * `api.bookingState` — and it is said at the top of this page rather than
+ * discovered at the bottom of it, because letting somebody fill a basket in
+ * first and then refusing them is the one thing worse than saying so.
  */
 
 /** The four questions, in the order they are asked. */
@@ -114,8 +124,9 @@ const STEP_SUB: Record<Step, string> = {
   what: 'Tick what you want from this opening. You can add openings from other '
     + 'businesses and other days before you go on.',
   where: 'Asked once, and it covers every appointment in your basket. The '
-    + 'mobile number is also the account you book against — we text a code to '
-    + 'it on the last step.',
+    + 'email address is also the account you book against — we send a code to '
+    + 'it on the last step. The number is so the business can ring you on the '
+    + 'day.',
   extra: 'Optional. Skip it and nothing is lost — you can write to them in your '
     + 'messages the moment this is booked.',
   confirm: 'Nothing is booked until you press the button at the bottom. Every '
@@ -132,7 +143,7 @@ const MAX_SERVICES = 10;
 /** Long enough that a fast clicker fires one request, short enough to feel live. */
 const DEBOUNCE_MS = 350;
 
-const KEY = 'slotfill.basket';
+const KEY = 'roundtheway.basket';
 
 interface BasketItem { gap_id: string; service_ids: string[] }
 
@@ -157,7 +168,15 @@ const PROBLEM: Record<string, string> = {
     + 'Book one currency at a time.',
   too_far: 'This business cannot reach your address and still keep the rest of '
     + 'their day. Try an opening closer to you.',
+  // STILL RETURNED, AND NO LONGER ABOUT THE ACCOUNT. Since migration 0038 the
+  // number on a booking is a contact detail the Worker parses and stores; it is
+  // not what receives the code and not what the account hangs off. So this is
+  // "we cannot read that number", which is a different sentence from a sign-in
+  // failure and belongs beside the number field rather than beside the code.
   bad_phone: 'That mobile number does not look right. Include the area code.',
+  bad_email: 'That email address does not look right — check it and ask for '
+    + 'the code again. It is where your code goes and it is the account this '
+    + 'books against.',
   no_address: 'At least one of these businesses comes to you, so they need a '
     + 'street address or a postcode.',
   bad_address: 'We could not find that address. Check the street and the postcode.',
@@ -184,21 +203,48 @@ const PROBLEM: Record<string, string> = {
     + 'Nothing is lost — wait a few seconds and press Book again.',
   // The account, at the moment it is needed. None of these is a dead end: the
   // fields that answer all three are on this same step.
-  account_required: 'Type the six digits we texted you, and the account is '
+  account_required: 'Type the six digits we emailed you, and the account is '
     + 'created as this books. Nothing in your basket has been taken.',
   bad_code: 'That code is wrong or has expired. Ask for a new one — the button '
     + 'above sends another, and nothing you have typed is lost.',
-  sms_not_configured: 'We cannot send a text message on this deployment, so an '
-    + 'account cannot be created and nothing can be booked yet. That is our end '
-    + 'rather than anything you did.',
+  email_not_configured: 'We cannot send an email on this deployment, so no code '
+    + 'can reach you, an account cannot be created and nothing can be booked '
+    + 'yet. That is our end rather than anything you did.',
   card_required: 'A card is needed to finish this, and there is nowhere on this '
     + 'site to add one yet. Nothing in your basket has been taken.',
+  // `sample_listing` IS DELIBERATELY NOT IN THIS MAP, AND MUST NOT BE ADDED.
+  //
+  // Every other line above is a general sentence that fits any basket, which is
+  // why writing it here beats the Worker's API-shaped copy. That refusal is the
+  // opposite: priceOrder builds it around the business's own name — "Roscoe
+  // Mobile Mechanic is sample data, not a real business, so it cannot be
+  // booked. It is listed so the map is not blank before anyone has signed up."
+  // A static sentence here would win over it in `say` below and throw the name
+  // away, so a basket holding one sample among four real appointments would say
+  // "this is sample data" with nothing to tell the reader WHICH line it is
+  // about. An unrecognised code falls through to the server's message, so
+  // leaving it out is what makes it render correctly.
 };
 
 const say = (code: string, fallback: string) => PROBLEM[code] ?? fallback;
 
-/** Codes nothing on this page can fix. The only way forward is to drop the item. */
-const FATAL = new Set(['slot_gone', 'slot_taken', 'slot_passed', 'duplicate_gap', 'too_far']);
+/**
+ * Codes nothing on this page can fix. The only way forward is to drop the item.
+ *
+ * `sample_listing` belongs here for the same reason the other five do, and it
+ * is the only one of them that was never a race: the others are an opening that
+ * has gone since it was picked, and this is an opening that was never for sale.
+ * Either way the customer's move is the same — take the line out and keep the
+ * rest — so it gets the same treatment: the line is drawn as broken, its price
+ * and time are suppressed rather than shown as though they meant something, and
+ * its button reads "Remove and keep the rest". That last part is the whole
+ * point. Somebody holding nine real appointments must never have to empty the
+ * basket to get past one seeded listing that wandered into it.
+ */
+const FATAL = new Set([
+  'slot_gone', 'slot_taken', 'slot_passed', 'duplicate_gap', 'too_far',
+  'sample_listing',
+]);
 
 // --- the basket, kept across a trip back to the map -------------------------
 // sessionStorage, not localStorage: a basket is one visit's worth of intent.
@@ -237,9 +283,34 @@ interface Menu {
   /** The whole opening, start to far edge. What "does it still fit" is measured against. */
   windowSeconds: number;
   slot: PublicSlot | null;
+  /**
+   * The business's public page, when they have published one.
+   *
+   * Read off the gap detail the Worker answers with rather than off `slot`
+   * above, because the detail is what this page actually fetches and it carries
+   * the slug on every request. It is the onward link a sample opening is given
+   * in place of a checkout, so a page that could not name it would have nowhere
+   * to send the reader.
+   */
+  profileSlug: string | null;
 }
 
-type MenuState = 'loading' | 'ready' | 'nolist' | 'gone' | 'error';
+/**
+ * 'sample' is a state and not a flag, on purpose.
+ *
+ * Every branch on this page is already written as "which of these states is the
+ * opening in", and a sample is its own answer to that question: not loading,
+ * not ready, not gone. Making it a state means every gate that asks for 'ready'
+ * or 'nolist' excludes it without being touched — the service list, the basket's
+ * empty line, the four-step wizard and the heading over it all stop being drawn
+ * for a seeded listing because none of them ever claimed to cover this case.
+ *
+ * It is deliberately NOT 'gone'. "This opening has gone. Somebody took it, or
+ * the business put the time back into their day" would be a second untruth
+ * stacked on the first: nobody took it, there is no business, and the sentence
+ * sends a reader off to wait for a relisting that is never coming.
+ */
+type MenuState = 'loading' | 'ready' | 'nolist' | 'sample' | 'gone' | 'error';
 
 export default function Book() {
   const { gapId } = useParams<{ gapId: string }>();
@@ -288,6 +359,16 @@ export default function Book() {
   }, [priced]);
 
   const [name, setName] = useState('');
+  /**
+   * The account this books against, and the mailbox the code is sent to.
+   *
+   * Asked on the "where you are" step rather than beside the code field on the
+   * last one, so that the code has somewhere to go the moment somebody reaches
+   * the confirm step and presses the button that sends it. The number below is
+   * a separate answer doing a separate job — see the note at the top of this
+   * file, and migration 0038 behind it.
+   */
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [zip, setZip] = useState(params.get('postcode') ?? '');
@@ -332,10 +413,12 @@ export default function Book() {
    * What the Worker said when the code request itself turned out to be
    * impossible.
    *
-   * `bookingState.sms_ready` answers that before anything is pressed, and this
-   * is the same answer arriving late — the state request failed, or the
-   * provider went away since it was asked. Without it the page would go on
-   * telling somebody to type digits that are never going to arrive.
+   * `bookingState.sms_ready` answers that before anything is pressed — it is
+   * named after the channel the code used to go down and answers for the email
+   * provider now, see BookingState — and this is the same answer arriving late,
+   * because the state request failed or the provider went away since it was
+   * asked. Without it the page would go on telling somebody to type digits that
+   * are never going to arrive.
    */
   const [signUpBlocked, setSignUpBlocked] = useState<string | null>(null);
 
@@ -343,8 +426,41 @@ export default function Book() {
   const [step, setStep] = useState<Step>('what');
   /** Whatever stopped the step being left, said next to the control. */
   const [stepError, setStepError] = useState<string | null>(null);
+
+  /**
+   * The card this booking will be charged to, once one has been given here.
+   *
+   * Held in memory for this checkout and nowhere else. What it holds is the
+   * processor's reference to a card — never a card number, which nothing in
+   * this codebase is allowed to touch — and it travels with the order so the
+   * card and the booking arrive in one request rather than two that can half
+   * succeed.
+   */
+  const [cardAdded, setCardAdded] = useState<
+    { ref: string; brand: string | null; last4: string | null } | null
+  >(null);
+
+  /**
+   * The order that exists but has not been paid for yet.
+   *
+   * WHY THERE IS A STEP HERE AT ALL. Placing the order and charging the card
+   * are two requests, in that order, because the charge needs an order id and
+   * an amount that came off the stored order rather than off this page. In
+   * between them the appointments are held and nobody has been charged, which
+   * is the only moment in the whole journey with that shape — so it gets its
+   * own screen rather than a spinner, and the screen says what it is.
+   *
+   * IT USED TO NOT EXIST, AND THAT WAS THE BUG. The booking took a card, saved
+   * it, wrote an order marked 'pending' and went straight to the conversation.
+   * Nothing anywhere called the pay route. Every booking on the site was
+   * unpaid while every page said the customer had paid at checkout.
+   */
+  const [unpaid, setUnpaid] = useState<
+    { orderId: string; total: string; threadToken: string; note: string } | null
+  >(null);
   const heading = useRef<HTMLHeadingElement | null>(null);
   const nameField = useRef<HTMLInputElement | null>(null);
+  const emailField = useRef<HTMLInputElement | null>(null);
   const phoneField = useRef<HTMLInputElement | null>(null);
   /**
    * Whether a step has been changed yet.
@@ -416,6 +532,41 @@ export default function Book() {
     try {
       const detail = await api.gapServices(gapId);
 
+      // A SEEDED SAMPLE STOPS HERE, BEFORE THE PROBE AND BEFORE THE WIZARD.
+      //
+      // The businesses in src/lib/demo.ts are on the map so it is not blank
+      // before anybody has signed up, and on the live site they are very nearly
+      // all of it — around a hundred and forty openings. Every one of them
+      // reached this page, drew the four steps, let somebody tick services and
+      // type an address, and was refused by priceOrder at the moment the money
+      // was about to be discussed. A checkout that runs to the end and then
+      // says the company does not exist is the worst possible place to say it.
+      //
+      // The page did print a paragraph saying this was sample data — but it was
+      // read off `menu.slot`, which is set to null a few lines below and has
+      // been for as long as this component has existed, so the condition could
+      // never come out true and nobody ever saw it. The fact is on the detail
+      // payload the page already fetches, which is where it is read from now.
+      //
+      // Returning here also skips the probe: an extra request whose only
+      // possible answer is a refusal we have already worked out for ourselves.
+      if (detail.is_sample) {
+        setMenu({
+          gapId,
+          businessName: detail.business_name,
+          // Deliberately empty. There is a real service list on the payload and
+          // it is exactly the thing that must not be put in front of anybody —
+          // a tickable menu of work that will never be done by a company that
+          // does not exist.
+          services: [],
+          windowSeconds: detail.window_seconds,
+          slot: null,
+          profileSlug: detail.profile_slug,
+        });
+        setMenuState('sample');
+        return;
+      }
+
       // Priced with everything ticked, purely to catch a slot that is already
       // claimed. Hearing that on arrival is bad; hearing it after picking
       // three services and typing an address is worse.
@@ -436,6 +587,7 @@ export default function Book() {
         services: detail.services,
         windowSeconds: detail.window_seconds,
         slot: null,
+        profileSlug: detail.profile_slug,
       });
       // The opening is real but the business has nothing that fits it. Said
       // plainly rather than shown as an empty list that looks broken.
@@ -560,6 +712,18 @@ export default function Book() {
         nameField.current?.focus();
         return;
       }
+      // Checked here as well as on the last step, and deliberately not left to
+      // the code field to discover. The address is where the code goes, so
+      // somebody who reaches the confirm step without one meets a Send button
+      // that cannot do anything and no explanation on the step that would fix
+      // it. The shape of it is the browser's job and the Worker's; this only
+      // catches the empty box `required` lets through when it holds spaces.
+      if (!email.trim()) {
+        setStepError('Add an email address. The code that signs you in goes to '
+          + 'it, and it is the account your bookings are kept under.');
+        emailField.current?.focus();
+        return;
+      }
       if (!phone.trim()) {
         setStepError('Add a mobile number, so the business can reach you on the day.');
         phoneField.current?.focus();
@@ -567,7 +731,7 @@ export default function Book() {
       }
     }
     go(stepAfter(step));
-  }, [step, name, phone, go]);
+  }, [step, name, email, phone, go]);
 
   const submit = useCallback(async (e: FormEvent) => {
     e.preventDefault();
@@ -579,16 +743,34 @@ export default function Book() {
       const res = await api.placeOrder({
         items: wanted,
         guest_name: name.trim(),
+        // Both go every time, and neither is what decides whose account this
+        // is. The number is the one the business rings on the day; the address
+        // is the contact address on the order. For a signed-in caller the
+        // ACCOUNT is the cookie and nothing in this body can change it, which
+        // is what stops a suspended customer booking under somebody else's
+        // address.
         phone: phone.trim(),
+        email: email.trim(),
         ...(address.trim() ? { address_line: address.trim() } : {}),
         ...(zip.trim() ? { postcode: zip.trim() } : {}),
         ...(threadToken ? { thread_token: threadToken } : {}),
         ...(captcha.current ? { turnstile_token: captcha.current } : {}),
-        // Only when this device is not signed in. A signed-in caller's order is
-        // written against the account and not against anything in this body —
-        // which is what stops a suspended customer booking under somebody
-        // else's mobile — so sending digits as well would be noise.
+        // Only when this device is not signed in: the digits that turn the
+        // address above into an account, and how to read the national number
+        // beside it. A signed-in caller has an account already, so sending
+        // either would be noise.
         ...(account ? {} : { code, country: 'US' }),
+        // Only when a card was added on this screen. An account that already
+        // has one sends nothing: the Worker reads the card off the account,
+        // and re-sending a reference the browser is merely holding is how a
+        // stale one overwrites a newer one.
+        ...(cardAdded
+          ? {
+              card_ref: cardAdded.ref,
+              ...(cardAdded.brand ? { card_brand: cardAdded.brand } : {}),
+              ...(cardAdded.last4 ? { card_last4: cardAdded.last4 } : {}),
+            }
+          : {}),
       });
       // The Worker set the session cookie on that response when the account was
       // created here, so this page stops asking for a code the moment it knows
@@ -603,21 +785,20 @@ export default function Book() {
           + `conversation. Keep this reference and contact the business: ${res.order_id}`);
         return;
       }
-      // What they wrote on the optional step, posted into the conversation the
-      // order just opened. Deliberately after the order and deliberately
-      // swallowed on failure: the appointment is booked either way, and
-      // showing somebody an error over a courtesy note would tell them the
-      // booking failed when it did not. They land in the thread a second
-      // later and can see whether it is there.
-      const aside = note.trim();
-      if (aside) {
-        try { await api.guestSend(res.thread_token, aside); } catch { /* see above */ }
-      }
       // The basket is spent. Leaving it would re-offer slots that are now
       // theirs the next time they open the site in this tab.
       writeBasket([]);
       setBasket([]);
-      navigate(`/c/${res.thread_token}`);
+      // Over to the charge. The note they wrote is carried rather than sent
+      // now: it belongs in the conversation they are about to land in, and
+      // posting it before the money has moved would put a message on a booking
+      // that might still fail to pay.
+      setUnpaid({
+        orderId: res.order_id,
+        total: res.total,
+        threadToken: res.thread_token,
+        note: note.trim(),
+      });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : undefined;
       const fallback = err instanceof Error ? err.message : 'That did not go through.';
@@ -646,15 +827,29 @@ export default function Book() {
     } finally {
       setPlacing(false);
     }
-  }, [placing, wanted, name, phone, address, zip, note, threadToken, navigate,
-    account, code, refreshAccount]);
+  }, [placing, wanted, name, email, phone, address, zip, note, threadToken,
+    navigate, account, code, refreshAccount]);
+
+  /**
+   * Whether the opening in the URL belongs to a seeded sample business.
+   *
+   * Read from the state rather than from a field on `menu`, so there is one
+   * answer to the question and everything below agrees with what the page is
+   * actually drawing. The old line read `menu?.slot?.is_sample`, and `slot` is
+   * set to null wherever a menu is built, so it answered false for every
+   * sample on the site — which is why the paragraph it guarded was never seen.
+   */
+  const isSample = menuState === 'sample';
 
   // Named after the business once we know it. An opening that has gone says so
-  // in the tab too, because that is the branch the page renders.
+  // in the tab too, because that is the branch the page renders — and so does a
+  // sample, which must not sit in a tab strip promising "Book Roscoe Mobile
+  // Mechanic" when the page underneath it refuses to book anything.
   useDocumentTitle(
-    menu ? `Book ${menu.businessName}`
-      : menuState === 'gone' ? 'This opening has gone'
-        : 'Book an appointment');
+    isSample ? `${menu?.businessName ?? 'This listing'} is a sample listing`
+      : menu ? `Book ${menu.businessName}`
+        : menuState === 'gone' ? 'This opening has gone'
+          : 'Book an appointment');
 
   const orderProblems = priced?.problems ?? [];
 
@@ -704,9 +899,67 @@ export default function Book() {
   const needsCode = !sessionLoading && !account;
   const codeReady = !needsCode || code.length === CODE_DIGITS;
 
+  /**
+   * Whether this checkout still needs a card before it can be sent.
+   *
+   * Three things have to be true: the Worker says a card is required on this
+   * deployment, the account does not already have one, and none has been added
+   * on this screen. Asked in that order because the first is the only one that
+   * can be false for reasons outside the customer's control.
+   *
+   * THE SAME QUESTION THE WORKER ASKS. checkoutCard refuses an order with
+   * 402 card_required under exactly these conditions, so a page that drew no
+   * card field while the Worker wanted one would be a button that fails every
+   * time it is pressed, with a message about a field nobody was shown.
+   */
+  const needsCard = Boolean(bookingState?.card_required)
+    && !account?.payment_last4 && cardAdded === null;
+
+  /**
+   * SIGNING IN BEFORE THE CARD, WITHOUT ASKING TWICE.
+   *
+   * A card is saved against an account, and until now this checkout did not
+   * create one until the order itself: the six digits went WITH the booking
+   * and the Worker made the account on the way through. That is fine when
+   * nothing has to be stored first — and impossible once a card does, because
+   * the card field needs somewhere to put it before the order exists.
+   *
+   * So when a card is wanted and the digits are already typed, the code is
+   * spent here instead, one step earlier. Nothing is asked of the customer
+   * that was not already asked; they typed the code on the step before and
+   * this is the same code being used for the same purpose, a moment sooner.
+   * Once it lands `account` is set, the order stops sending the code (see
+   * submit), and the card field below has an account to save to.
+   *
+   * Failure is deliberately quiet HERE and loud at the button: a wrong code
+   * already has a message of its own beside the field it belongs to, and the
+   * booking still cannot be sent, so there is no state where this failing
+   * silently lets something through.
+   */
+  const signingIn = useRef(false);
+  useEffect(() => {
+    if (step !== 'confirm' || account || !needsCard) return;
+    if (!codeReady || signingIn.current) return;
+    signingIn.current = true;
+    void (async () => {
+      try {
+        await api.verifyCustomerCode({
+          email: email.trim(),
+          code,
+          country: 'US',
+          ...(name.trim() ? { first_name: name.trim() } : {}),
+          ...(phone.trim() ? { phone: phone.trim() } : {}),
+        });
+        await refreshAccount();
+      } catch {
+        // Left to the button and to CodeSignIn, which already say why.
+        signingIn.current = false;
+      }
+    })();
+  }, [step, account, needsCard, codeReady, email, code, name, phone, refreshAccount]);
+
   const ready = Boolean(priced?.ok) && wanted.length > 0
-    && !sessionLoading && !cannotBook && codeReady;
-  const isSample = menu?.slot?.is_sample ?? false;
+    && !sessionLoading && !cannotBook && codeReady && !needsCard;
 
   const stepNo = STEPS.indexOf(step) + 1;
   /** The businesses in the basket, by name, from the priced rows and nowhere else. */
@@ -716,6 +969,15 @@ export default function Book() {
    * opening that has since gone while a basket built somewhere else is still
    * held. Losing the checkout because the one opening in the URL was claimed
    * would strand a customer holding nine other appointments.
+   *
+   * A SAMPLE IS THE OTHER HALF OF THAT SENTENCE. 'sample' is not in the list
+   * below, so a seeded listing arrived at on its own draws no wizard at all —
+   * no steps, no service list, no address fields, nothing to fill in for a
+   * company that does not exist. But `basket.length > 0` still holds, for
+   * exactly the reason the paragraph above gives: somebody who has nine real
+   * appointments held and then opens a sample listing keeps their checkout.
+   * They lose the sample and nothing else, which is the whole rule this page is
+   * built on — one bad line never costs a customer the other nine.
    */
   const wizard = menuState === 'ready' || menuState === 'nolist' || basket.length > 0;
   /**
@@ -769,11 +1031,11 @@ export default function Book() {
         </Link>
 
         {/* THE FIRST THING ON THE PAGE WHEN NOTHING HERE CAN COMPLETE.
-            No text-message provider is configured on any deployment today, so
-            no account can be created and so nothing can be booked; a suspended
-            number is the other case. Both are said here, in the Worker's own
-            words, rather than left to be discovered by a customer who has
-            already chosen three services and typed their address. */}
+            No email provider is configured on any deployment today, so no code
+            can be sent, no account can be created and so nothing can be booked;
+            a suspended customer is the other case. Both are said here, in the
+            Worker's own words, rather than left to be discovered by a customer
+            who has already chosen three services and typed their address. */}
         {cannotBook && (
           <p className="book-blocked" role="status">
             <strong>{cannotBook.lead}</strong> {cannotBook.note} You can still
@@ -851,13 +1113,77 @@ export default function Book() {
               </div>
             </section>
 
-            {isSample && (
-              <p className="sample-note">
-                <strong>This is sample data.</strong> This business was seeded so
-                the map is not blank before anyone has signed up. It is not a
-                real company, nobody will arrive, and it holds no licence.
+          </>
+        )}
+
+        {/* --- the opening that was never for sale -------------------------
+
+            A SEEDED LISTING GETS A PAGE OF ITS OWN, NOT A WARNING OVER A FORM.
+
+            This paragraph is the one that was already written, word for word.
+            What has changed is everything around it: it used to sit above a
+            running checkout — the service list, the four steps, the address
+            fields, the card — so the page said "nobody will arrive" and then
+            asked where to send them. A customer who believed the paragraph had
+            no reason to read the form, and a customer who believed the form
+            had no reason to read the paragraph; the ones who believed the form
+            were refused at the pricing step, which is the latest possible
+            moment to find out and the one just before the money.
+
+            Underneath is a way onward rather than an apology. Both links go
+            somewhere real: their page, which says the same thing in its first
+            paragraph and is the only honest destination a sample has, and the
+            map, which has whatever genuinely is open on it. The basket line is
+            the same promise the "this opening has gone" panel above makes — a
+            customer holding nine real appointments does not lose them by
+            opening a tenth listing that turned out to be seeded.
+
+            Gated on the first step for the same reason the two panels above
+            are: it is about the opening in the URL, which is the question the
+            first step asks and the later ones have moved past. A customer who
+            arrived here holding nine real appointments and carried on to the
+            confirm step must not read "nobody will arrive" over the summary of
+            what they are about to pay for. With an empty basket there is no
+            wizard and no way off the first step, so this is always on screen
+            for the case it was written for. */}
+        {menu && isSample && step === 'what' && (
+          <>
+            <section className="book-head">
+              <span className="eyebrow">Sample listing</span>
+              <h1>{menu.businessName}</h1>
+            </section>
+
+            <p className="sample-note">
+              <strong>This is sample data.</strong> This business was seeded so
+              the map is not blank before anyone has signed up. It is not a
+              real company, nobody will arrive, and it holds no licence.
+            </p>
+
+            <div className="blank">
+              <p style={{ margin: '0 0 14px' }}>
+                So there is nothing here to book. Nothing has been charged and
+                nothing was held.
               </p>
-            )}
+              <p style={{ margin: '0 0 14px' }}>
+                {basket.length > 0
+                  ? 'Everything else in your basket is still held below.'
+                  : 'The businesses that have signed up take this same checkout, '
+                    + 'and their openings are on the map.'}
+              </p>
+              <div className="book-nav">
+                {/* "See their page" is the same phrase the card this reader
+                    pressed uses, in SlotCard.tsx and in its server-rendered
+                    twin in src/lib/seo.ts. A link that renames itself between
+                    the card and the page it leads to reads as a different
+                    link. */}
+                {menu.profileSlug && (
+                  <Link className="btn quiet sm" to={`/p/${menu.profileSlug}`}>
+                    See their page
+                  </Link>
+                )}
+                <Link className="btn sm" to="/">See what else is open</Link>
+              </div>
+            </div>
           </>
         )}
 
@@ -1169,6 +1495,29 @@ export default function Book() {
                 </p>
               </div>
 
+              {/* THE ACCOUNT, ASKED FOR HERE RATHER THAN ON THE LAST STEP.
+                  The code goes to this address, so it has to be answered before
+                  the confirm step has anywhere to send one. It is also the
+                  account itself: bookings hang off it, a suspension hangs off
+                  it, and a second address is a second account rather than a way
+                  back into the first. The hint says both of those, because
+                  somebody who types a throwaway address to get past a form has
+                  made a decision they were not told they were making. */}
+              <div className="book-field">
+                <label htmlFor="bk-email">
+                  Email address
+                  <input id="bk-email" name="email" type="email" value={email} required
+                    ref={emailField} autoComplete="email" inputMode="email"
+                    enterKeyHint="next" aria-describedby="bk-email-hint"
+                    onChange={(e) => setEmail(e.target.value)} />
+                </label>
+                <p className="book-hint" id="bk-email-hint">
+                  Your account. We send the code that books this to it, and
+                  every booking you make is kept under it — so use the address
+                  you will still have next time.
+                </p>
+              </div>
+
               <div className="book-field">
                 <label htmlFor="bk-phone">
                   Mobile number
@@ -1178,7 +1527,8 @@ export default function Book() {
                     onChange={(e) => setPhone(e.target.value)} />
                 </label>
                 <p className="book-hint" id="bk-phone-hint">
-                  How the business reaches you on the day.
+                  How the business reaches you on the day — no code is sent to
+                  it and it is not what you sign in with.
                 </p>
               </div>
 
@@ -1252,7 +1602,7 @@ export default function Book() {
         )}
 
         {/* --- 4. confirm --------------------------------------------------- */}
-        {wizard && step === 'confirm' && wanted.length > 0 && (
+        {wizard && step === 'confirm' && wanted.length > 0 && unpaid === null && (
           <form className="card book-card book-step" onSubmit={submit}
             aria-labelledby="book-step">
             <h3>What you are booking</h3>
@@ -1302,6 +1652,7 @@ export default function Book() {
                 <dt>Booked for</dt>
                 <dd>
                   {name.trim() || '—'}
+                  {email.trim() ? ` · ${email.trim()}` : ''}
                   {phone.trim() ? ` · ${phone.trim()}` : ''}
                   {address.trim() ? ` · ${address.trim()}` : ''}
                   {zip.trim() ? ` · ${zip.trim()}` : ''}
@@ -1365,17 +1716,19 @@ export default function Book() {
                 and it is the single most predictable complaint this product
                 can generate. Said plainly here, it is a deal; said later, it
                 is a trap.
-                Every line is future tense, because that is what it is: these
-                are the amounts the code in src/lib/bypass.ts computes, and none
-                of them can move a penny until the payment seam above is built.
-                A customer is told them now anyway — agreeing to an appointment
-                under rules nobody mentioned is the thing this box exists to
-                prevent, and they do not become fairer for being sprung later. */}
+                Every line is present tense, because every one of these now
+                moves real money: the amounts are what refundFor in
+                src/lib/bypass.ts computes and what refundItem in
+                src/lib/checkout.ts sends back to the card. This box was
+                written in the future tense while nothing could move, and it
+                stayed in the future tense for a while after that — which is
+                how a customer came to be told that cancelling cost nothing on
+                the same screen that charged them. */}
             <div className="book-terms">
-              <strong>How cancelling will work, once payment is switched on</strong>
+              <strong>How cancelling works</strong>
               <ul>
                 <li>
-                  The price above is what will be taken when you book, and the
+                  The price above is what is taken when you book, and the
                   amounts below are worked out from it.
                 </li>
                 <li>
@@ -1404,10 +1757,13 @@ export default function Book() {
                   happens.
                 </li>
                 <li>
-                  Not being there when they arrive pauses this number from
-                  booking — 3 days the first time, then 7, then 30. That one
-                  applies today: it is a suspension rather than a charge, and
-                  nothing about it needs money to have moved.
+                  Not being there when they arrive pauses this account from
+                  booking — 3 days the first time, then 7, then 30. That is a
+                  suspension rather than a charge, and it comes on top of
+                  whatever the cancellation itself cost. It is recorded against
+                  your email address rather than against this browser, so
+                  closing the account and signing up again with the same
+                  address lands back on it.
                 </li>
               </ul>
             </div>
@@ -1415,26 +1771,28 @@ export default function Book() {
             {/* Parts, at the checkout, only for a basket that has a job in it
                 whose part cannot be priced until somebody looks. The approval
                 rule is real and runs today — the quote card in the booking's
-                own messages exists — but the charge at the end of it is the
-                same unbuilt seam as the one above, so the sentence says which
-                half happens now. */}
+                own messages exists. The second charge for an approved part is
+                the one thing on this screen that is still not wired: see the
+                PAYMENT SEAM comment in src/lib/parts.ts. The sentence below
+                says which half happens, and must not be widened until that
+                seam lands. */}
             {partsLines.length > 0 && (
               <p className="book-pay">
                 <strong>If the job needs a part.</strong> The business sends you
                 the price in your messages, and nothing is fitted until you tap
-                approve. Once payment is switched on that approval is also what
-                charges you for the part, and it is the only thing you can ever
-                be charged for beyond the price above — either way you will have
-                seen the number first.
+                approve. An approved part is added to what the booking comes to
+                and is the only thing you can ever owe beyond the price above —
+                never more than the figure you approved, and you always see it
+                first.
               </p>
             )}
 
             {/* --- the account, and the card --------------------------------
                 The sign-up, at the moment it belongs and nowhere else: after
                 every question has been answered, in the same action as the
-                card, under the same button. The mobile number was answered two
+                card, under the same button. The email address was answered two
                 steps back and is shown here with its own way back to that
-                step, so all this adds is the six digits texted to it — and a
+                step, so all this adds is the six digits sent to it — and a
                 customer who is already signed in is not asked anything at all.
             */}
             <section className="book-account" aria-labelledby="bk-acct">
@@ -1444,25 +1802,25 @@ export default function Book() {
                 <p className="book-hint">Checking whether you are signed in…</p>
               ) : account ? (
                 <p className="book-hint">
-                  Signed in as <strong>{account.phone_e164}</strong>. Nothing
-                  else is asked for — this device stays signed in, so the next
-                  booking is one button.
+                  Signed in as <strong>{account.email}</strong>. Nothing else is
+                  asked for — this device stays signed in, so the next booking
+                  is one button.
                 </p>
               ) : (
                 <>
                   <p className="book-hint">
                     Booking needs an account, and this is the whole of making
-                    one. We text six digits to{' '}
-                    <strong>{phone.trim() || 'the number you gave'}</strong> and
+                    one. We email six digits to{' '}
+                    <strong>{email.trim() || 'the address you gave'}</strong> and
                     you type them in below; the account is created as this books,
                     in the same press.{' '}
                     <button type="button" className="linkish" onClick={() => go('where')}>
-                      Use a different number
+                      Use a different address
                       <span className="sr-only"> — go back to where you are</span>
                     </button>
                   </p>
                   <CodeSignIn
-                    phone={phone} code={code} onCode={setCode}
+                    email={email} code={code} onCode={setCode}
                     state={bookingState} codeError={codeError}
                     turnstileToken={() => captcha.current}
                     onTokenSpent={() => {
@@ -1478,22 +1836,60 @@ export default function Book() {
                 </>
               )}
 
-              {/* THE CARD SEAM, and the honest description of it. There is
-                  deliberately no card number field here: the processor's own
-                  element will own that box, the Worker refuses anything shaped
-                  like a card number at ingress, and a dead-looking card form
-                  would say the opposite of both. The sentence about what the
-                  card is for is the Worker's own, so this page and the account
-                  page cannot come to describe it differently. */}
+              {/* WHAT THE CARD IS AND WHERE IT GOES.
+                  There is deliberately no card number field of ours anywhere on
+                  this page: the processor's own element owns that box, and the
+                  Worker refuses anything shaped like a card number at ingress,
+                  at every database write and on the way out again.
+
+                  This paragraph said "No card is asked for today, and none can
+                  be taken" for months, and went on saying it after the card
+                  form directly beneath it went live — so a customer read that
+                  sentence with a working card box under it. Copy about a
+                  switchable state has to move in the same commit as the switch.
+
+                  The sentence is the Worker's own, so this page and the account
+                  page cannot come to describe the same card differently. */}
               <p className="book-seam">
-                <strong>No card is asked for today, and none can be taken.</strong>
+                <strong>Your card is charged the total above when you book.</strong>
                 {' '}
                 {bookingState?.card_note
-                  ?? 'A card is what you will pay with, and it is not charged '
-                    + 'when you add it. Nothing can be taken from one until '
-                    + 'payment is switched on.'}
+                  ?? 'The number goes straight to our payment processor and '
+                    + 'never touches this site; what we keep is their '
+                    + 'reference, the brand and the last four digits.'}
               </p>
             </section>
+
+            {/* THE CARD, and it sits here rather than on a step of its own.
+                A card asked for three screens before the total is a card asked
+                for before anybody knows what they are agreeing to, and it is
+                the step people leave at. Here it is directly under the price,
+                the lines and the cancellation rules — everything a person
+                needs in order to decide.
+
+                It draws only when one is actually wanted: a deployment that
+                cannot take cards, or an account that already has one, shows
+                nothing at all and the screen is exactly what it was.
+
+                Saving is separate from booking on purpose. The card is stored
+                against the account the moment it is accepted, so somebody who
+                adds a card and then loses the slot to a faster customer still
+                has their card on file and does not type it again. */}
+            {needsCard && (
+              <CardField label="Card for this booking"
+                onSaved={(card) => { setCardAdded(card); setPlaceError(null); }} />
+            )}
+
+            {/* Confirmation that it landed, in the words a person recognises
+                their own card by. Deliberately not a second copy of the field:
+                a form that stays on screen after it succeeded reads as though
+                it did not. */}
+            {cardAdded && (
+              <p className="faint" style={{ margin: 0 }}>
+                Card saved{cardAdded.brand ? ` — ${cardAdded.brand}` : ''}
+                {cardAdded.last4 ? ` ending ${cardAdded.last4}` : ''}.
+              </p>
+            )}
 
             {/* Last thing before the button, which is where it belongs: after
                 everything the customer types, and in front of the one control
@@ -1518,7 +1914,9 @@ export default function Book() {
                 Back
               </button>
               <button className="btn" type="submit" disabled={!ready || placing}>
-                {placing ? 'Holding your appointments…' : 'Book — no payment taken yet'}
+                {placing
+                  ? 'Holding your appointments…'
+                  : `Book and pay ${priced?.total ?? ''}`.trim()}
               </button>
             </div>
 
@@ -1534,14 +1932,66 @@ export default function Book() {
                   : sessionLoading
                     ? 'Checking whether you are already signed in…'
                     : !codeReady
-                      ? `Type the ${CODE_DIGITS} digits we texted you and this `
+                      ? `Type the ${CODE_DIGITS} digits we emailed you and this `
                         + 'button turns on. Ask for the code with the button above.'
+                      : needsCard
+                        ? 'Add a card above and this button turns on. It is what '
+                          + 'the business is paid from when the work is done.'
                       : pricing
                         ? 'Checking your basket is still bookable…'
                         : 'Sort out the notes above and this button turns on.'}
               </p>
             )}
           </form>
+        )}
+
+        {/* --- 5. pay ------------------------------------------------------- */}
+        {/* THE STEP THAT WAS MISSING. The appointments are held and the order
+            exists; this is the charge. PayForm opens a PaymentIntent against
+            that order, mounts the processor's own fields on this page and
+            confirms without ever sending the browser anywhere else.
+
+            The booking is NOT confirmed by this screen. What confirms it is
+            the processor telling the Worker, server to server — so a customer
+            whose phone dies the second after they press Pay still ends up with
+            a booking. onPaid is a screen change and nothing more.
+
+            There is no Back. Going back from here would mean cancelling an
+            order that already exists, and the honest thing to do with an
+            unpaid booking is to say what it is: held, not confirmed, and
+            reachable from the conversation link either way. */}
+        {unpaid !== null && (
+          /* THE PANEL IS PayPanel NOW, and the markup that used to be written
+             out here moved into it unchanged. Not for tidiness: accepting a
+             price quote on the conversation page now ends in this same state —
+             an order that exists with nobody charged for it — and a second
+             hand-written copy of "here is the card form, and here is what
+             happens if you close the tab" is how the two screens end up making
+             different promises about the same money. See PayPanel.tsx. */
+          <PayPanel
+            className="card book-card book-step"
+            orderId={unpaid.orderId}
+            total={unpaid.total}
+            title={`Pay for your appointment${wanted.length === 1 ? '' : 's'}`}
+            lead={<>
+              Your {wanted.length === 1 ? 'appointment is' : 'appointments are'}{' '}
+              held. Paying now is what confirms{' '}
+              {wanted.length === 1 ? 'it' : 'them'} with the business.
+            </>}
+            comeBack={<>
+              If you close this page, your booking is held under{' '}
+              <Link to={`/c/${unpaid.threadToken}`}>your conversation</Link> and
+              you can pay from there.
+            </>}
+            onPaid={() => {
+              // The courtesy note goes in now rather than at placement, and
+              // failing to post it must never look like the payment failed.
+              if (unpaid.note) {
+                void api.guestSend(unpaid.threadToken, unpaid.note).catch(() => {});
+              }
+              navigate(`/c/${unpaid.threadToken}`);
+            }}
+          />
         )}
       </main>
     </div>

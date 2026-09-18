@@ -16,14 +16,18 @@ import { api, type BookingState, type CustomerAccount, type Standing } from '../
  * the ordinary state of this session, so it is a null account rather than an
  * error; a call that fails for any other reason lands in the same place, which
  * is right here — the worst it costs is that somebody who is signed in is
- * asked for their number again, and the Worker will still recognise the
+ * asked for their email address again, and the Worker will still recognise the
  * cookie when the order is placed.
  */
 
 export interface CustomerSession {
   /** Null while loading and null when signed out. `loading` tells them apart. */
   account: CustomerAccount | null;
-  /** Their no-show standing, so a suspension is met before a basket is filled. */
+  /**
+   * Their no-show standing, so a suspension is met before a basket is filled.
+   * Keyed on the account's email address since migration 0038, which is what
+   * stops a second account walking away from a strike.
+   */
   standing: Standing | null;
   /** The Worker's own sentence about what the card is for. Never written here. */
   cardNote: string | null;
@@ -74,7 +78,7 @@ export function useCustomer(): CustomerSession {
  *
  * NOT A CONSTANT, which is the whole reason it is a request. Whether a card is
  * needed depends on a Worker secret and whether an account can be created at
- * all depends on whether a text message can be delivered — neither of which a
+ * all depends on whether the sign-in code can be emailed — neither of which a
  * bundle can know, and both of which a page has to state correctly or it is
  * lying to somebody about to spend money. A hard-coded answer to this question
  * is exactly how the site came to promise a thing that was never the model.

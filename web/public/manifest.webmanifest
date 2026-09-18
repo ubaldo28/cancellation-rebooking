@@ -1,12 +1,12 @@
 {
-  "name": "Slotfill",
-  "short_name": "Slotfill",
-  "description": "Book the hour a cancellation left open, from a van already coming to your street.",
+  "name": "Round The Way",
+  "short_name": "Round The Way",
+  "description": "Book an appointment a cancellation left open, from a solo trade working near you.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f6f7f9",
-  "theme_color": "#0d1117",
+  "theme_color": "#0A1929",
   "icons": [
     {
       "src": "/icon.svg",

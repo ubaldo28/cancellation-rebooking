@@ -1,0 +1,84 @@
+-- ---------------------------------------------------------------------------
+-- 0048 — the plaintext in rate_limits, and the rows no sweep could reach
+-- ---------------------------------------------------------------------------
+--
+-- A privacy audit found five things this file has to finish in the database,
+-- because none of them can be fixed by changing code alone: code decides what
+-- happens next, and all five are about what is already sitting on disk.
+
+-- ---------------------------------------------------------------------------
+-- 1. Every bucket key ever written, which was a plaintext secret
+-- ---------------------------------------------------------------------------
+--
+-- rate_limits.bucket_key is whatever string the caller passed. Look at what
+-- the callers pass: `erase:<token>`, `thread-read:<token>`, `guest-msg:<token>`,
+-- `offer-view:<token>`, `review:<token>`, `watch-edit:<token>` and five more
+-- are RAW BEARER SECRETS -- the link that opens a booking, carrying the
+-- address, the conversation, the photographs and the door code -- and
+-- `auth:<email>`, `otp-send:<email>`, `otp-verify:<email>` and
+-- `watch-email:<email>` are somebody's mailbox. Every one of them was stored
+-- verbatim, and nothing in this product had ever deleted a row from this
+-- table, so a read-only copy of the database yielded working /c/:token links
+-- for every booking whose page had been opened, plus a list of every address
+-- that had tried to sign in.
+--
+-- lib/ratelimit.ts now stores a peppered digest of the key instead, and a
+-- sweep deletes windows that have closed. Neither of those touches what is
+-- already here: a hash written from tomorrow does not unwrite the token
+-- written yesterday. This does.
+--
+-- THE COST, SAID PLAINLY: every counter in flight when this runs is reset, so
+-- an allowance somebody had partly spent starts again. The worst case is one
+-- person getting a few more sign-in emails than they should have in the
+-- fifteen minutes after a deploy. That is the entire downside, and it is not
+-- close to a reason to leave working booking links in a table.
+DELETE FROM rate_limits;
+
+-- ---------------------------------------------------------------------------
+-- 2. clients.platform_introduced now has a reader, and 0023 asked to be told
+-- ---------------------------------------------------------------------------
+--
+-- Migration 0023 added that column, marked it READ BY NOTHING, and asked that
+-- nobody add a reader without saying so. This is saying so.
+--
+-- The erasure in lib/retention.ts deleted a customer's client rows with
+-- `WHERE phone_e164 IN (the numbers this person gave) AND acquired = 'public'`.
+-- That could never match a single row, and 0023 is itself the reason: a
+-- platform-created client is written with phone_e164 NULL -- see the inserts in
+-- lib/public.ts and lib/orders.ts, which spell out the NULLs on purpose -- and
+-- the UPDATE in 0023 cleared the column on every row that already existed.
+-- `NULL IN (...)` is never true in SQL. So "Delete my data" left the customer's
+-- first name, street line, postcode and five-decimal-place coordinates on every
+-- business's client list, on every booking they had ever made, while the button
+-- and the privacy page both said "Deleted outright".
+--
+-- The rows are now found by `order_items.client_id`, which is the only key that
+-- leads back to them, and `platform_introduced = 1` is what keeps an operator's
+-- own imported list out of the delete. It is the flag those same two inserts
+-- set, on the same statement, so it says exactly what `acquired = 'public'`
+-- says about the same rows -- the sweeps still branch on `acquired` and both
+-- remain true of the same set. If they are ever consolidated, consolidate them
+-- in one migration rather than letting the two drift.
+
+-- ---------------------------------------------------------------------------
+-- 3. Two indexes for two sweeps that had nothing to seek on
+-- ---------------------------------------------------------------------------
+--
+-- Both of these back a new pass in lib/retention.ts, and both are on a table
+-- that grows without bound. Deliberately only two: no_show_reports and
+-- suspensions also gained a sweep, and both hold one row per dispute rather
+-- than one per booking, so a scan of either is cheaper than the write cost of
+-- carrying another B-tree -- see 0045 for the reasoning this follows.
+
+-- gaps.prev_lat/prev_lng/next_lat/next_lng are a full-precision copy of the
+-- previous and next customer's front door, copied on by detectGaps and, until
+-- now, scrubbed by nothing at all. The new pass filters on the gap's own end
+-- time and no existing index on this table leads with it -- every one of them
+-- starts with operator_id or status.
+CREATE INDEX idx_gaps_ends ON gaps (ends_at);
+
+-- estimates.request is what the customer asked for in their own words, on a
+-- thread_id that is not a foreign key, so it outlived the conversation it
+-- belonged to and had no sweep of its own. The new pass filters on created_at;
+-- the three indexes from 0029 all lead with thread_id or operator_id.
+CREATE INDEX idx_estimates_created ON estimates (created_at);

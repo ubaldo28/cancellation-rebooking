@@ -54,7 +54,7 @@ async function signIn(email: string, businessName: string) {
      VALUES (?,?,?,?,?)`,
   ).bind(newId(), opId, hash, t + 86400, t).run();
 
-  return { opId, cookie: `gf_session=${raw}` };
+  return { opId, cookie: `__Host-gf_session=${raw}` };
 }
 
 /** A regular client on the operator's books, the way a manual booking has one. */

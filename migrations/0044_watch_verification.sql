@@ -1,0 +1,80 @@
+-- ---------------------------------------------------------------------------
+-- 0044 — an alert only goes to an address somebody proved is theirs
+-- ---------------------------------------------------------------------------
+--
+-- Migration 0018 added watches.email_verified_at and said, in its own comment,
+-- that nothing sets it: "an address typed by the person sitting in front of the
+-- form is usually simply correct, and a confirmation email that has to arrive
+-- before alerts can start is one more place the whole thing quietly fails."
+-- That was wrong about who types it. A watch needs no account and no proof of
+-- anything, so the box takes any address at all — and what is stored is not one
+-- message but a standing instruction to keep sending them, up to five a day,
+-- from our domain, for as long as the watch lives. Pointed at a stranger it is
+-- a mail bomb somebody else built out of our sending reputation, and the only
+-- way out is a link at the foot of mail they never asked for. The rate limits
+-- on the route do not touch it: they slow down the making of watches, not the
+-- sending one watch goes on doing by itself.
+--
+-- So the column 0018 left for later is now the gate, exactly where 0018 said it
+-- would go — read in matchWatches, and again in the send itself. NULL means
+-- nothing is delivered. One confirmation email goes out when the address is
+-- given, and opening its link is what turns an address into a channel. The
+-- abuse that is left is bounded and survivable: a stranger's mailbox gets a
+-- single message, once, saying what was asked for and that ignoring it ends the
+-- matter.
+--
+-- This costs something real and it is worth naming. An address that is never
+-- confirmed never hears anything, which includes the customer who typed their
+-- own address correctly and then did not open the email. They will conclude the
+-- feature does not work, which is the failure 0018 was trying to avoid. The
+-- trade is deliberate: that person still has push, still has the manage link
+-- they were given, and can be asked again — whereas there is no version of
+-- "we mail strangers until they make us stop" that is worth keeping.
+
+-- Where the confirmation link is checked against.
+--
+-- A HASH, not the key itself, and that is the whole difference between this
+-- column and the one below it. The key that goes in the link is worked out from
+-- the watch id, the address and SESSION_PEPPER (see unsubTokenFor in
+-- src/lib/alerts.ts); this column holds the peppered SHA-256 of it, the same
+-- way token_hash holds the watch's own. A read-only copy of this table is
+-- therefore a column of hashes and not a set of working links, and because the
+-- key is bound to the ADDRESS as well as the watch, changing the address makes
+-- the link already sent to the old one stop working — without that, a customer
+-- could confirm their own mailbox and then re-point the watch at somebody
+-- else's.
+ALTER TABLE watches ADD COLUMN email_confirm_hash TEXT;
+
+-- One watch per confirmation key. Nullable plus a partial unique index, the
+-- same pattern as idx_watch_unsub in 0019: every watch with no address sits
+-- here as NULL at once, while a real key confirms exactly one row.
+CREATE UNIQUE INDEX idx_watch_email_confirm ON watches (email_confirm_hash)
+  WHERE email_confirm_hash IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- And the unsubscribe key stops being readable
+-- ---------------------------------------------------------------------------
+--
+-- 0019 stored unsub_token in plain text on purpose, and its reasoning was
+-- sound as far as it went: the matcher sends the alert weeks after the watch
+-- was made and needs a working unsubscribe link in every message, and the
+-- watch's own token cannot supply one because only its hash is kept. What the
+-- argument missed is that the column is also in WATCH_FIELDS, so the key was
+-- handed back in the watch payload as well — and either way, one read-only leak
+-- of this table was a working unsubscribe link for every subscriber the site
+-- has. Every other bearer token here is a peppered SHA-256.
+--
+-- It is one now too, and the link half is derived rather than stored, so the
+-- matcher can still build the link from a row it can no longer read a key out
+-- of.
+--
+-- THE EXISTING VALUES ARE DESTROYED RATHER THAN CONVERTED. SQLite has no
+-- SHA-256, so there is no way to rewrite them in place here, and leaving
+-- readable keys in a column that is supposed to hold hashes is the defect, not
+-- a smaller version of it. The links already in people's inboxes stop working,
+-- and that is survivable for one reason: not one of these rows has a confirmed
+-- address, because until this migration nothing ever set email_verified_at. Not
+-- a single one of them can be sent another alert email, so there is nothing
+-- left for an unsubscribe link to stop. Anyone who does hold a live watch still
+-- has their own alert link and can pause it there.
+UPDATE watches SET unsub_token = NULL;

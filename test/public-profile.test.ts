@@ -60,13 +60,18 @@ const get = (path: string) =>
 
 async function makeOperator(id: string, businessName: string) {
   const n = now();
+  // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+  // must have somewhere to be paid before its work can be sold, so priceOrder
+  // treats an opening for an operator without it as unlisted. Drop it and every
+  // booking in this file comes back slot_gone.
   await env.DB.prepare(
     `INSERT INTO operators (id,email,business_name,trade,timezone,country,currency,language,
        location_mode,fill_model,sms_mode,plan,accept_public_bookings,is_published,
        share_location,tagline,bio,years_experience,work_location,employees,
-       years_in_business,payment_methods,hired_count,created_at,updated_at)
+       years_in_business,payment_methods,hired_count,created_at,updated_at,
+       stripe_payouts_enabled)
      VALUES (?,?,?, 'mobile car wash and detailing','America/Los_Angeles','US','USD','en',
-       'mobile','both','device','active',1,1,1,?,?,?, 'both',3,12,'Zelle, cash',41,?,?)`,
+       'mobile','both','device','active',1,1,1,?,?,?, 'both',3,12,'Zelle, cash',41,?,?,1)`,
   ).bind(id, `${id}@x.com`, businessName,
     'Paint correction and ceramic coating',
     'Fifteen years of it, mostly in the Valley.', 15, n, n).run();

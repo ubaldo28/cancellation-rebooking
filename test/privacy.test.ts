@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, beforeEach } from 'vitest';
 import { ALL_MIGRATIONS, makeEnv } from './d1';
+import { fakeKV, type FakeKV } from './kv';
 import worker from '../src/index';
 import type { Env } from '../src/types';
 import { firstNameOnly, maskCustomerRow, redactContact } from '../src/lib/redact';
@@ -23,17 +24,9 @@ import { newId, now, sha256 } from '../src/lib/util';
 
 const BASE = 'https://gap.test';
 let env: Env;
-let objects: Map<string, Uint8Array>;
-
-function fakeBucket() {
-  objects = new Map();
-  return {
-    put: async (key: string) => { objects.set(key, new Uint8Array()); return {}; },
-    get: async (key: string) => (objects.has(key)
-      ? { body: new Blob([new Uint8Array()]).stream() } : null),
-    delete: async (key: string) => { objects.delete(key); },
-  };
-}
+let photos: FakeKV;
+/** The backing map, named as it was when this was a fake R2 bucket. */
+let objects: FakeKV['entries'];
 
 function makeReq(method: string, path: string, opts: {
   body?: unknown; cookie?: string; ip?: string;
@@ -56,11 +49,16 @@ const one = <T>(sql: string, ...args: unknown[]) =>
 
 async function signIn(email: string, opId = newId()) {
   const t = now();
+  // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+  // must have somewhere to be paid before its work can be sold, so priceOrder
+  // treats an opening for an operator without it as unlisted. Drop it and every
+  // booking in this file comes back slot_gone.
   await env.DB.prepare(
     `INSERT INTO operators (id,email,business_name,timezone,country,currency,
-       location_mode,fill_model,sms_mode,plan,accept_public_bookings,created_at,updated_at)
+       location_mode,fill_model,sms_mode,plan,accept_public_bookings,created_at,updated_at,
+       stripe_payouts_enabled)
      VALUES (?,?, 'A Business','America/Los_Angeles','US','USD','mobile','both','device',
-       'active',1,?,?)`,
+       'active',1,?,?,1)`,
   ).bind(opId, email, t, t).run();
 
   const raw = `sess-${opId}`;
@@ -69,11 +67,13 @@ async function signIn(email: string, opId = newId()) {
     `INSERT INTO sessions (id,operator_id,token_hash,expires_at,created_at)
      VALUES (?,?,?,?,?)`,
   ).bind(newId(), opId, hash, t + 86400, t).run();
-  return { opId, cookie: `gf_session=${raw}` };
+  return { opId, cookie: `__Host-gf_session=${raw}` };
 }
 
 beforeEach(() => {
-  env = { ...makeEnv(ALL_MIGRATIONS), PHOTOS: fakeBucket() } as unknown as Env;
+  photos = fakeKV();
+  objects = photos.entries;
+  env = { ...makeEnv(ALL_MIGRATIONS), PHOTOS: photos } as unknown as Env;
 });
 
 // ---------------------------------------------------------------------------
@@ -264,7 +264,7 @@ describe('photographs taken inside somebody\'s house', () => {
          content_type,bytes,created_at,public_on_review)
        VALUES (?,?,?, 'customer','after',?, 'image/jpeg',1024,?,?)`,
     ).bind(id, `item-${id}`, opId, `j/${opId}/${id}`, t, released).run();
-    objects.set(`j/${opId}/${id}`, new Uint8Array());
+    photos.seed(`j/${opId}/${id}`, 'image/jpeg');
   }
 
   it('serves the one the customer published on their own review', async () => {
@@ -315,8 +315,8 @@ describe('the admin surface leaves a record of itself', () => {
   it('records a read of the queue, not only a decision on it', async () => {
     const victim = await signIn('victim@example.com');
     await openReport(victim.opId);
-    const admin = await signIn('ops@slotfill.app');
-    env.ADMIN_EMAILS = 'ops@slotfill.app';
+    const admin = await signIn('ops@roundtheway.app');
+    env.ADMIN_EMAILS = 'ops@roundtheway.app';
 
     expect((await call('GET', '/api/admin/no-shows', { cookie: admin.cookie })).status).toBe(200);
 
@@ -332,8 +332,8 @@ describe('the admin surface leaves a record of itself', () => {
   it('does not hand the admin the customer\'s number to decide a no-show with', async () => {
     const victim = await signIn('victim@example.com');
     await openReport(victim.opId);
-    const admin = await signIn('ops@slotfill.app');
-    env.ADMIN_EMAILS = 'ops@slotfill.app';
+    const admin = await signIn('ops@roundtheway.app');
+    env.ADMIN_EMAILS = 'ops@roundtheway.app';
 
     const res = await call('GET', '/api/admin/no-shows', { cookie: admin.cookie });
     const body = await res.text();
@@ -347,8 +347,8 @@ describe('the admin surface leaves a record of itself', () => {
   it('records a decision, and does not copy the dispute into the log', async () => {
     const victim = await signIn('victim@example.com');
     const reportId = await openReport(victim.opId);
-    const admin = await signIn('ops@slotfill.app');
-    env.ADMIN_EMAILS = 'ops@slotfill.app';
+    const admin = await signIn('ops@roundtheway.app');
+    env.ADMIN_EMAILS = 'ops@roundtheway.app';
 
     await call('POST', `/api/admin/no-shows/${reportId}`, {
       cookie: admin.cookie, body: { decision: 'confirmed', note: 'Rosa on 310 555 0147 confirmed' },
@@ -379,8 +379,8 @@ describe('the admin surface leaves a record of itself', () => {
   });
 
   it('hashes a customer subject rather than storing the number', async () => {
-    const admin = await signIn('ops@slotfill.app');
-    env.ADMIN_EMAILS = 'ops@slotfill.app';
+    const admin = await signIn('ops@roundtheway.app');
+    env.ADMIN_EMAILS = 'ops@roundtheway.app';
     const { recordAdminAction } = await import('../src/lib/audit');
     await recordAdminAction(env, admin.opId, {
       action: 'confirm_no_show', subject_kind: 'customer', subject_phone: '+13105550147',
@@ -532,8 +532,8 @@ describe('a customer saying the van was not the one on the app', () => {
       { body: { note: 'It was a red hire van with no signwriting.' } });
     expect(res.status).toBe(200);
 
-    const admin = await signIn('ops@slotfill.app');
-    env.ADMIN_EMAILS = 'ops@slotfill.app';
+    const admin = await signIn('ops@roundtheway.app');
+    env.ADMIN_EMAILS = 'ops@roundtheway.app';
     const queue = await (await call('GET', '/api/admin/flags',
       { cookie: admin.cookie })).json() as any;
 
@@ -826,6 +826,12 @@ describe('the doorstep a cancellation could not reach: the notifications feed', 
     phone: '(818) 555-0142',
     address_line: ADDRESS,
     postcode: '91403',
+    // The account the checkout has already resolved. Since migration 0038 the
+    // proved address on it, not the number in the form, is what an erasure
+    // follows back to this booking and everything hanging off it.
+    account: {
+      id: 'acct-rosa', phone: '+18185550142', login_email: 'rosa@mailbox.test',
+    },
   });
 
   /**

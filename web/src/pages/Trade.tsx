@@ -17,10 +17,10 @@ import PublicPage from '../components/PublicPage';
 import PostcodeFinder from '../components/PostcodeFinder';
 import MetroLinks from '../components/MetroLinks';
 import SlotCard from '../components/SlotCard';
-import SlotFilters, { useSlotFilters } from '../components/SlotFilters';
+import { useSlotFilters } from '../components/SlotFilters';
 import { ErrorNote, Spinner, Stars } from '../components/ui';
 import '../styles-trade.css';
-import { jsonLd, nearTradeHref } from '../lib/seo';
+import { costHref, jsonLd, nearTradeHref, storedTradeSlug, tradeHref } from '../lib/seo';
 import { distinctGaps } from '../lib/slots';
 import { useDocumentTitle } from '../lib/title';
 
@@ -45,9 +45,9 @@ import { useDocumentTitle } from '../lib/title';
  * page and a better one.
  *
  * The FAQ answers are held to the same standard. Every one of them describes
- * something this product actually does — the parts quote, the start code, the
- * vehicle check, the photographs — or says plainly which part of it is not
- * built yet, which is the case for everything to do with money. See
+ * something this product actually does — the card charged at the moment of
+ * booking, the parts quote, the start code, the vehicle check, the
+ * photographs, the refund ladder. See
  * PaymentState.tsx: the two answers here that touch payment take their first
  * sentence from it, so a visitor comparing this FAQ with /help or /covered
  * finds the same words rather than three versions of the same claim. Nothing
@@ -175,7 +175,7 @@ const reviewDate = (s: number) =>
  * search engine quoting an answer the page does not contain is worse than no
  * structured data at all.
  *
- * Every answer here is a fact about how Slotfill works, and each one is
+ * Every answer here is a fact about how Round The Way works, and each one is
  * checkable against the product. There is deliberately nothing about vetting,
  * insurance, licensing, guarantees or how fast anyone replies.
  */
@@ -193,15 +193,14 @@ function faqsFor(tradeName: string): { q: string; a: string }[] {
     },
     {
       q: 'How do I pay?',
-      a: `${PAY_TODAY_SHORT} The design is that the labour is paid for here, on `
-        + `the site, at the moment you book — with no cash and nothing paid at `
-        + `the door — but that part is not built yet.`,
+      a: `${PAY_TODAY_SHORT} The labour is paid for here, on the site, at the `
+        + `moment you book — with no cash and nothing paid at the door.`,
     },
     {
       q: 'What happens if the job needs a part?',
       a: `The business sends you a price for the part in your messages. Nothing `
-        + `is fitted until you approve that price, and once paying on the site `
-        + `is switched on that approval is also what charges you for it.`,
+        + `is fitted until you approve that price, and approving it is also `
+        + `what charges you for it.`,
     },
     {
       q: `Who sets the price for ${tradeName}?`,
@@ -221,22 +220,28 @@ function faqsFor(tradeName: string): { q: string; a: string }[] {
     },
     {
       q: 'What does it cost to cancel?',
-      a: `Nothing today, because nothing has been paid. Once paying on the site `
-        + `is switched on, cancelling close to the appointment will cost a `
-        + `graduated fee: a quarter of the job inside 48 hours, three quarters `
-        + `inside 12 hours, and the whole amount once they have arrived. It `
-        + `works the same way in both directions — a business that cancels on `
-        + `you pays the same.`,
+      a: `It depends how close to the appointment you are. More than 48 hours `
+        + `away, all of it comes back. Inside 48 hours, three quarters comes `
+        + `back. Inside 12 hours, a quarter — the business has kept that time `
+        + `free and turned other work away for it. Change your mind within 30 `
+        + `minutes of booking and you get all of it back, as long as the `
+        + `appointment is still at least three hours away. It works the same `
+        + `way in both directions: a business that cancels on you pays the `
+        + `same.`,
     },
   ];
 }
 
 export default function Trade() {
   const { trade } = useParams<{ trade: string }>();
-  // The stored value on an operator row is lower case and the slug in the URL
-  // may not be, so everything downstream compares against this and never the
-  // raw parameter.
-  const slug = (trade ?? '').trim().toLowerCase();
+  /**
+   * The URL segment, lower-cased. THIS IS NOT THE STORED SLUG — see `slug`.
+   *
+   * The stored value on an operator row is lower case and the segment in the
+   * URL may not be, so nothing downstream compares against the raw parameter.
+   * It does not compare against this one either.
+   */
+  const segment = (trade ?? '').trim().toLowerCase();
 
   const [slots, setSlots] = useState<PublicSlot[]>([]);
   /**
@@ -267,6 +272,28 @@ export default function Trade() {
    * a typo.
    */
   const [cats, setCats] = useState<TradeCategory[] | null>(null);
+
+  /**
+   * THE STORED SLUG, RESOLVED OUT OF THE CATALOGUE RATHER THAN OFF THE URL.
+   *
+   * The Worker canonicalised these addresses to the hyphenated form — /s/
+   * junk-removal — while the value on an operator row, in `slot.trade` and in
+   * the catalogue is still 'junk removal'. Everything below wants the stored
+   * one: `s.trade === slug`, `api.tradeReviews(slug)`, `costsFor(slug)`, the
+   * catalogue lookup. Taking the segment at face value is why a direct load or
+   * a click from a search result rendered "we do not have this trade" while
+   * in-app navigation, which happened to pass the stored spelling, did not.
+   *
+   * Deliberately keyed on `cats`: until the catalogue lands there is nothing
+   * here that knows the real stored values, so this is the segment meanwhile
+   * and becomes the stored slug the moment the answer arrives. Every effect
+   * and memo below keys on THIS rather than on the parameter, which is what
+   * makes them re-fire with the right value once it does.
+   */
+  const slug = useMemo(
+    () => storedTradeSlug(segment, cats?.flatMap((c) => c.trades)),
+    [segment, cats],
+  );
 
   /**
    * Recent reviews from every business doing this work.
@@ -524,7 +551,7 @@ export default function Trade() {
    * places, and the obvious version of that here would repeat the "where this
    * trade is open right now" list a few inches above it, link for link. This
    * is the other half of that list instead — the neighbourhoods that have an
-   * appointment open on Slotfill but none in this trade — so the two blocks
+   * appointment open on Round The Way but none in this trade — so the two blocks
    * partition the map between them rather than saying the same thing twice.
    * A visitor who has read the listing and found nothing near them is exactly
    * who this is for.
@@ -556,7 +583,7 @@ export default function Trade() {
       <PublicPage className="tr-page">
         {/*
           No breadcrumb on this branch. The trail this page used to draw here
-          was the word "Slotfill" and nothing else, which is a second link to
+          was the word "Round The Way" and nothing else, which is a second link to
           the page the wordmark two inches above already goes to; Crumbs
           renders nothing for an empty list for exactly that reason, so there
           is no call to make.
@@ -564,7 +591,7 @@ export default function Trade() {
         <section className="tr-empty">
           <h1>We do not have this trade</h1>
           <p>
-            Nothing on Slotfill is listed under that name. Everything that is
+            Nothing on Round The Way is listed under that name. Everything that is
             open right now is on the front page, grouped by the kind of job
             it is.
           </p>
@@ -578,7 +605,7 @@ export default function Trade() {
 
   return (
     <PublicPage className="tr-page">
-      {/* Crumbs prepends Slotfill itself, so the trail starts at the
+      {/* Crumbs prepends Round The Way itself, so the trail starts at the
           category. It also emits the BreadcrumbList the hand-rolled markup
           never did, which is the point: this is the page most search traffic
           lands on, and a trail a crawler cannot read is decoration. */}
@@ -720,7 +747,8 @@ export default function Trade() {
           </div>
         ) : (
           <>
-            <SlotFilters filters={filters} />
+            {/* Removed with the pair on the home page — see the note there.
+                `filters` still orders and narrows the rows below. */}
 
             {shown.length === 0 ? (
               /*
@@ -775,17 +803,17 @@ export default function Trade() {
           in the trade, and it is the one piece of evidence a listing page
           cannot produce for itself: a card can say a business is rated 4.8,
           but only a review says what the work was like. Every row here was
-          left by somebody who booked on Slotfill — that is the only way one
+          left by somebody who booked on Round The Way — that is the only way one
           can exist — and every one links to the business that earned it.
 
           There is no aggregate above them and there never will be. An average
-          across a trade would be a number about Slotfill rather than about
+          across a trade would be a number about Round The Way rather than about
           anybody's work, and it would move every time a business joined. */}
       {reviews.length > 0 && (
         <section className="tr-sec" aria-labelledby="tr-reviews">
           <h2 id="tr-reviews">
             {reviews.length === 1
-              ? `A review of ${lower} on Slotfill`
+              ? `A review of ${lower} on Round The Way`
               : `Recent reviews of ${lower}`}
           </h2>
           <p className="tr-sec-sub">
@@ -871,18 +899,18 @@ export default function Trade() {
             ))}
           </ul>
           <p className="tr-areas-foot">
-            <a href="/near">Every neighbourhood Slotfill covers</a><MetroLinks />
+            <a href="/near">Every neighbourhood Round The Way covers</a><MetroLinks />
           </p>
         </section>
       )}
 
       {/* --- the cost guide --------------------------------------------- */}
-      <Link className="tr-cross" to={`/cost/${encodeURIComponent(slug)}`}>
+      <Link className="tr-cross" to={costHref(slug)}>
         <span className="tr-cross-t">
           <b>What does {lower} cost?</b>
           <span>
             Every price listed for this trade right now — the lowest, the
-            highest and the middle — counted from the businesses on Slotfill.
+            highest and the middle — counted from the businesses on Round The Way.
           </span>
         </span>
         <span className="tr-cross-go" aria-hidden="true">›</span>
@@ -890,10 +918,69 @@ export default function Trade() {
 
       {/* --- how booking this works ------------------------------------- */}
       <section className="tr-sec" aria-labelledby="tr-faq">
-        <h2 id="tr-faq">Booking {lower} on Slotfill</h2>
+        <h2 id="tr-faq">Booking {lower} on Round The Way</h2>
         <p className="tr-sec-sub">
           What happens after you press book, and what it costs if plans change.
         </p>
+
+        {/*
+          THEIR "HOW IT WORKS" BAND, WITH OUR FACTS IN IT.
+
+          The reference marketplace pairs the FAQ on every one of these landing
+          pages with a short strip of steps above it, and the pairing is the
+          point rather than the decoration: the strip is what somebody reads,
+          and the questions underneath are what they open when one of the three
+          steps is the one they are unsure about. This page had the questions
+          and not the strip, so a visitor who had never booked anything here had
+          to open seven disclosures to work out what pressing the button does.
+
+          The words are CostGuide's word for word, and the class is the one
+          CostGuide's band already uses. /s/<trade> and /cost/<trade> are two
+          halves of the same visit and a reader crossing between them must not
+          find booking described two ways.
+
+          Three steps, each one something the product does today. Nothing about
+          vetting, insurance or how fast anybody replies, because the band is the
+          most confident-looking thing on the page and it is exactly where an
+          untrue claim would do the most damage.
+        */}
+        <ol className="tr-steps">
+          <li>
+            <h3>Find an hour that is already free</h3>
+            <span>
+              Every listing above is unbooked working time — a job that
+              cancelled, or a day that did not fill. You are choosing a
+              particular hour from a particular business, not asking around for
+              quotes.
+            </span>
+          </li>
+          <li>
+            <h3>Book it, and it is held</h3>
+            {/* Deliberately silent about money. What this site claims about
+                paying is one answer in the questions below, taken from
+                PaymentState so that every surface says it in the same words;
+                a second telling of it here is how a page ends up with two
+                versions of one promise. */}
+            <span>
+              The hour comes off that business's day the moment you book it and
+              stops being offered to anybody else. What happens about money is
+              answered in the questions below.
+            </span>
+          </li>
+          <li>
+            <h3>They arrive, and the work is recorded</h3>
+            <span>
+              The vehicle at your door has to match the details you were shown,
+              you give them a start code, and photographs are taken before,
+              during and after the work.
+            </span>
+          </li>
+        </ol>
+
+        {/* A heading over the disclosures, because the band above is now the
+            first thing under the section's own h2 and an unlabelled run of
+            <details> after it reads as a continuation of the third step. */}
+        <h3 className="tr-sub-h">Questions about booking {lower}</h3>
         <div className="tr-faq">
           {faqs.map((f) => (
             <details className="tr-q" key={f.q}>
@@ -904,9 +991,10 @@ export default function Trade() {
         </div>
 
         {/*
-          The same six answers, for a search engine. Built from the array
-          above rather than written out again, so the two can never say
-          different things.
+          The same answers, for a search engine. Built from the array above
+          rather than written out again, so the two can never say different
+          things — and counted rather than named, because this comment used to
+          say "six" and the array has grown since.
         */}
         <script
           type="application/ld+json"
@@ -933,16 +1021,16 @@ export default function Trade() {
         <LinkBlock id="tr-guides" heading="Related cost information"
           items={guides.map((t) => ({
             key: t.slug,
-            href: `/cost/${encodeURIComponent(t.slug)}`,
+            href: costHref(t.slug),
             name: `What ${t.label.toLowerCase()} costs`,
             note: t.n > 0
               ? `${t.n} ${t.n === 1 ? 'price' : 'prices'} listed`
               : 'nothing listed today',
           }))}
           sub={'What the work next to this one is listed at today. Every one of '
-            + 'these pages counts its figures off the businesses on Slotfill the '
+            + 'these pages counts its figures off the businesses on Round The Way the '
             + 'moment you open it — none of them quotes an average or a survey.'}
-          foot={<Link to="/cost">Every cost guide on Slotfill</Link>} />
+          foot={<Link to="/cost">Every cost guide on Round The Way</Link>} />
       )}
 
       {/* --- the rest of the category ----------------------------------- */}
@@ -952,7 +1040,7 @@ export default function Trade() {
           sub={null}
           items={siblings.map((t) => ({
             key: t.slug,
-            href: `/s/${encodeURIComponent(t.slug)}`,
+            href: tradeHref(t.slug),
             name: t.label,
             note: t.n > 0 ? String(t.n) : '',
           }))} />
@@ -971,7 +1059,7 @@ export default function Trade() {
           sub={`Nothing in ${lower} is open in these at the moment, but something `
             + `else is. Each one goes to everything open in that neighbourhood`
             + `${located ? `, and all of it can reach ${near}` : ''}.`}
-          foot={<><a href="/near">Every neighbourhood Slotfill covers</a><MetroLinks /></>} />
+          foot={<><a href="/near">Every neighbourhood Round The Way covers</a><MetroLinks /></>} />
       )}
 
       {/* --- what else is open across the site ---------------------------
@@ -988,15 +1076,15 @@ export default function Trade() {
         <LinkBlock id="tr-busy" heading="Most appointments open right now"
           items={popular.map((t) => ({
             key: t.slug,
-            href: `/s/${encodeURIComponent(t.slug)}`,
+            href: tradeHref(t.slug),
             name: t.label,
             note: `${t.n} ${t.n === 1 ? 'appointment open' : 'appointments open'}`,
           }))}
-          sub={'The trades with the most free hours on Slotfill at this moment, '
+          sub={'The trades with the most free hours on Round The Way at this moment, '
             + 'counted from the same rows as everything else on this page. It is a '
             + 'count of what is open today, not a measure of what is popular — we '
             + 'do not have one of those.'}
-          foot={<Link to="/browse">Every service Slotfill lists</Link>} />
+          foot={<Link to="/browse">Every service Round The Way lists</Link>} />
       )}
 
       <footer className="tr-foot">
@@ -1019,7 +1107,7 @@ export default function Trade() {
             </>
           )}
           {' · '}
-          <Link to={`/cost/${encodeURIComponent(slug)}`}>{name} prices</Link>
+          <Link to={costHref(slug)}>{name} prices</Link>
         </p>
       </footer>
     </PublicPage>

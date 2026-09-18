@@ -56,6 +56,44 @@ export function formatMoney(cents: number, currency: string, locale = 'en-US'): 
 }
 
 /**
+ * When a job is, in the timezone the van will be standing in.
+ *
+ * THIS LIVED IN GuestThread.tsx AND NOW HAS TWO READERS, which is the whole
+ * reason it moved. The conversation page prints it under a booking that has
+ * already been made; the estimate card a few inches above prints it on a quote
+ * that has not, and the two are the same appointment described before and
+ * after the customer says yes. A quote reading "Thursday, 08:00 to 10:00" over
+ * a confirmation reading "Thursday, 07:00 to 09:00" — which is exactly what a
+ * second copy drifting onto the device clock would produce — is a customer who
+ * cannot tell which of the two times anybody is coming at.
+ *
+ * It used to use the device clock outright, under a comment saying the guest
+ * payload carried no timezone. It does: guestView in src/index.ts puts the
+ * business's `timezone` and `locale` on every guest thread for exactly this,
+ * and says in as many words that without it an 08:00 job renders as 07:00 and
+ * somebody misses it. A customer reading this on a phone still on last week's
+ * holiday timezone, or on a laptop set wrong, was being given an hour that
+ * nobody is coming at.
+ *
+ * Both fields stay optional because an older Worker may not send them, so the
+ * device's own zone remains the fallback — the customer and the van are
+ * usually in the same place, which is what made the old behaviour right far
+ * more often than not rather than always.
+ */
+export function bookingWhen(
+  startSeconds: number, endSeconds: number, tz?: string, locale?: string,
+): string {
+  const opts: Intl.DateTimeFormatOptions = tz ? { timeZone: tz } : {};
+  const day = new Intl.DateTimeFormat(locale, {
+    ...opts, weekday: 'long', day: 'numeric', month: 'long',
+  }).format(new Date(startSeconds * 1000));
+  const at = (s: number) => new Intl.DateTimeFormat(locale, {
+    ...opts, hour: '2-digit', minute: '2-digit',
+  }).format(new Date(s * 1000));
+  return `${day}, ${at(startSeconds)} to ${at(endSeconds)}`;
+}
+
+/**
  * The middle listed price, from an already-sorted array.
  *
  * Median rather than mean: one full-day job listed at ten times everything

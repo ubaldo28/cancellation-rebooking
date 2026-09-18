@@ -54,11 +54,17 @@ async function operator(id: string, opts: {
 } = {}) {
   const n = now();
   await env.DB.prepare(
+    // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+    // must have somewhere to be paid before its work can be sold, so claimSlot
+    // treats an opening for an operator without it as unlisted. Drop it and the
+    // claim tests here come back "no longer listed" instead of the answer they
+    // are about.
     `INSERT INTO operators (id,email,business_name,trade,timezone,country,currency,language,
        location_mode,fill_model,sms_mode,plan,accept_public_bookings,is_published,
-       profile_slug,suspended_until,banned_at,share_location,created_at,updated_at)
+       profile_slug,suspended_until,banned_at,share_location,created_at,updated_at,
+       stripe_payouts_enabled)
      VALUES (?,?,?,?, 'America/Los_Angeles','US','USD','en','mobile','both','device',
-       ?,?,?,?,?,?,1,?,?)`,
+       ?,?,?,?,?,?,1,?,?,1)`,
   ).bind(id, `${id}@x.com`, opts.name ?? id,
     opts.trade === undefined ? 'window cleaning' : opts.trade,
     opts.plan ?? 'active',

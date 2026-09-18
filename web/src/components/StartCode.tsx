@@ -19,7 +19,7 @@ import '../styles-parts.css';
  * It disappears once used. A code still on screen after the job started is a
  * number people write down and try to reuse, and it means nothing by then.
  */
-export default function StartCode({ token }: { token: string }) {
+export default function StartCode({ threadRef }: { threadRef: string }) {
   const [job, setJob] = useState<JobCode | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [reporting, setReporting] = useState(false);
@@ -29,12 +29,12 @@ export default function StartCode({ token }: { token: string }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.jobCode(token);
+      const res = await api.jobCode(threadRef);
       setJob(res.job);
     } catch {
       // Not worth an error box on a page whose main job is the conversation.
     } finally { setLoaded(true); }
-  }, [token]);
+  }, [threadRef]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -50,7 +50,7 @@ export default function StartCode({ token }: { token: string }) {
   const report = async () => {
     setError(null);
     try {
-      await api.reportVehicle(token, job.order_item_id, note.trim() || undefined);
+      await api.reportVehicle(threadRef, job.order_item_id, note.trim() || undefined);
       setSent(true); setReporting(false);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'That did not send.');

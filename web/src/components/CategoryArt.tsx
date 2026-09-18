@@ -1,11 +1,34 @@
 import { memo, type ReactElement, type ReactNode } from 'react';
 
 /**
- * Drawn artwork for a category tile.
+ * Drawn artwork for a category tile — now the FALLBACK for it.
+ *
+ * WHAT THIS IS FOR SINCE THE TILE ART BECAME FILES. The eight category tiles
+ * and the "Everything" tile on the front page are .webp files under /art now,
+ * drawn by tools/trade-art.html and rendered by `npm run art`; the trades have
+ * one each as well, which is thirty-nine more pictures than could reasonably
+ * be inline SVG in a bundle every visitor downloads. The paths arrive on the
+ * catalogue payload as `art`, computed by `tradeArt` and `categoryArt` in
+ * src/lib/seo.ts.
+ *
+ * This component still renders when that field is absent, which is not a
+ * hypothetical: /api/trade-catalog is served `public, max-age=3600`, so for up
+ * to an hour after a deploy a browser can hand the front page a catalogue it
+ * fetched before the field existed. Eight empty boxes above eight labels is a
+ * broken front page; the same eight drawings, drawn rather than fetched, is
+ * not. web/src/components/TileArt.tsx is where the two meet.
+ *
+ * SO THE SCENES BELOW AND THE FILES ARE ONE PICTURE, and must stay so. The
+ * scene table in tools/trade-art.html carries these same coordinates and says
+ * why: a fallback that looks different from the thing it stands in for makes
+ * the front page change appearance an hour after a deploy, which is worse than
+ * either version on its own. Edit a scene here and the matching scene there.
  *
  * A sibling component drew one scene per trade rather than per category, and
  * nothing rendered it once the front page went from a wall of trades to eight
- * category tiles; it has been deleted, so this is the only tile art there is.
+ * category tiles; it was deleted. The trades have pictures again, and they are
+ * files — there is no per-trade fallback and none is wanted: a browse row is a
+ * name and a count, and it reads perfectly with no thumbnail at all.
  *
  * The tiles are large -- roughly 300x180 on the landing page, half that on a
  * phone -- so every scene is drawn calm and empty. A tile that big invites
@@ -17,7 +40,8 @@ import { memo, type ReactElement, type ReactNode } from 'react';
  *  1. Nothing is built per render. Every scene is created once at module load
  *     and handed back by reference; the component is memoised on top of that.
  *  2. The svg covers its box with `slice`, so the tile treats it as a
- *     background layer and real photography could drop into the same slot.
+ *     background layer — which is exactly what let an <img> drop into the same
+ *     slot with no layout change when these became files.
  *  3. One ground gradient, one soft disc, one motif, one floor band, so eight
  *     tiles side by side read as one set.
  *
@@ -214,7 +238,7 @@ const SERVICES = scene('svc', '#4a5567', '#212832', (
     <rect x="76" y="54" width="26" height="7" rx="3.5" fill="#c9d4e2" />
     <path
       d="M76 74l12 12 26-28"
-      stroke="#16e08e"
+      stroke="#4CB3F0"
       strokeWidth="9"
       fill="none"
       strokeLinecap="round"
@@ -263,8 +287,8 @@ const NEUTRAL = scene('all', '#3d4757', '#1c222b', (
     <rect x="104" y="26" width="40" height="32" rx="7" fill="#c7d2e0" />
     <rect x="56" y="62" width="40" height="32" rx="7" fill="#c7d2e0" />
     <rect x="104" y="62" width="40" height="32" rx="7" fill="#eef2f7" />
-    <circle cx="168" cy="74" r="8" fill="#16e08e" />
-    <circle cx="30" cy="46" r="5" fill="#16e08e" opacity="0.7" />
+    <circle cx="168" cy="74" r="8" fill="#4CB3F0" />
+    <circle cx="30" cy="46" r="5" fill="#4CB3F0" opacity="0.7" />
   </>
 ));
 

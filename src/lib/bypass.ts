@@ -1,12 +1,12 @@
 import type { Env } from '../types';
-import { threadByToken } from './chat';
+import { threadByToken, type ThreadRef } from './chat';
 import { formatMoney, localeFor } from './countries';
 import { notify } from './feed';
 import { redactContact } from './redact';
 import { flag, holdStatement } from './settlement';
 import {
-  hasOperatorCard, NEEDS_CARD_OPERATOR, NEEDS_LOCATION_OPERATOR,
-  NEEDS_VEHICLE_OPERATOR, operatorStanding,
+  NEEDS_LOCATION_OPERATOR,
+  NEEDS_PAYOUTS_OPERATOR, NEEDS_VEHICLE_OPERATOR, operatorStanding,
 } from './standing';
 import { getVehicle, vehicleComplete } from './startcode';
 import { badRequest, conflict, newId, notFound, now } from './util';
@@ -277,6 +277,12 @@ export interface LeadFee {
   reason: FeeReason;
   status: 'owed' | 'paid' | 'waived';
   note: string | null;
+  /**
+   * How much of it has already come off a payout. Shown to the operator, not
+   * only counted, because a fee being paid down over two payouts is exactly
+   * the case where a balance with no history of it looks like a second bill.
+   */
+  settled_cents: number;
   settled_at: number | null;
   created_at: number;
   updated_at: number;
@@ -284,7 +290,7 @@ export interface LeadFee {
 
 const FEE_FIELDS =
   `id, operator_id, order_item_id, cents, currency, reason, status, note,
-   settled_at, created_at, updated_at`;
+   settled_cents, settled_at, created_at, updated_at`;
 
 /**
  * The fee for one job, from its booked price and how late the cancellation is.
@@ -322,6 +328,8 @@ interface ItemRow {
   starts_at: number; ends_at: number; price_cents: number; created_at: number;
   arrived_at: number | null; arrival_confirmed_at: number | null;
   code_verified_at: number | null; cancelled_at: number | null;
+  /** Set once this line's share has left the platform for the operator's bank. */
+  transfer_id: string | null;
   currency: string; guest_name: string | null; order_status: string;
 }
 
@@ -329,6 +337,7 @@ const ITEM_SELECT =
   `SELECT oi.id, oi.order_id, oi.operator_id, oi.gap_id, oi.appointment_id, oi.client_id,
           oi.starts_at, oi.ends_at, oi.price_cents, oi.created_at,
           oi.arrived_at, oi.arrival_confirmed_at, oi.code_verified_at, oi.cancelled_at,
+          oi.transfer_id,
           o.currency, o.guest_name, o.status AS order_status
      FROM order_items oi JOIN orders o ON o.id = oi.order_id`;
 
@@ -414,6 +423,55 @@ function feeFor(item: ItemRow, at: number): FeeReason | null {
   return null;
 }
 
+/**
+ * Refuses a cancellation on a booking whose money has already gone out.
+ *
+ * THIS IS THE ONE THAT COSTS THE PLATFORM REAL MONEY. A $200 job finishes on
+ * Monday, the sweep transfers $170 to the operator on Monday evening, and on
+ * Tuesday somebody cancels — an operator tidying a calendar, a customer having
+ * second thoughts about a job that already happened. refundFor sees a start
+ * time in the past, returns 100%, the hold lifts a minute later because the
+ * slot is long gone, and the customer is refunded the whole $200. The operator
+ * keeps the $170. A Transfer that has landed in somebody's bank account is not
+ * something this product can take back, so the $170 comes out of the platform,
+ * silently, on a path where every screen involved looks completely ordinary.
+ *
+ * Refused rather than repriced, and deliberately: a cancellation whose only
+ * honest outcome is "nothing happens" is not a cancellation, and telling
+ * somebody so is better than recording one that changes nothing. Whatever
+ * genuinely needs undoing after a payout is a refund somebody decides by hand,
+ * with the operator's side of it in the conversation — which is the shape that
+ * argument has anyway.
+ */
+function assertNotPaidOut(item: { transfer_id: string | null }): void {
+  if (!item.transfer_id) return;
+  throw conflict(
+    'That booking has already been paid out to the business, so it cannot be '
+    + 'cancelled here. Message them — anything owed after a payout has to be '
+    + 'sorted out between you.',
+    'already_paid_out',
+  );
+}
+
+/**
+ * Says why a guarded cancellation matched nothing, by reading the row rather
+ * than assuming.
+ *
+ * Both cancel paths read the booking and then write it under a WHERE clause,
+ * which is two round trips, so the loser of a race lands here — and the race
+ * now has two possible winners. Another cancellation is one of them; the payout
+ * sweep, which runs every quarter of an hour, is the other. "That booking is
+ * already cancelled" is a false sentence for the second, and a customer told
+ * their booking is cancelled when it is not is worse off than one told nothing.
+ */
+async function refuseCancellation(env: Env, orderItemId: string): Promise<never> {
+  const row = await env.DB.prepare(
+    `SELECT cancelled_at, transfer_id FROM order_items WHERE id = ?`,
+  ).bind(orderItemId).first<{ cancelled_at: number | null; transfer_id: string | null }>();
+  if (row && row.cancelled_at == null) assertNotPaidOut(row);
+  throw conflict('That booking is already cancelled.', 'already_cancelled');
+}
+
 export interface CancelResult {
   order_item_id: string;
   fee: LeadFee | null;
@@ -446,6 +504,7 @@ export async function cancelByOperator(
   ).bind(orderItemId, operatorId).first<ItemRow>();
   if (!item) throw notFound('That booking is not yours.');
   if (item.cancelled_at) throw conflict('That booking is already cancelled.', 'already_cancelled');
+  assertNotPaidOut(item);
 
   const why = cancelReason(reason);
   const feeReason = feeFor(item, t);
@@ -461,9 +520,13 @@ export async function cancelByOperator(
 
   const writes = [
     env.DB.prepare(
+      // transfer_id in the WHERE as well as in the read above, because the two
+      // are separate round trips and the payout sweep runs every quarter of an
+      // hour: a transfer landing in between would otherwise be cancelled out
+      // from underneath, which is the expensive case this guard is for.
       `UPDATE order_items SET cancelled_at=?, cancelled_by='operator', cancel_reason=?,
          address_released_at=NULL, refund_cents=?, refund_reason='operator_cancelled'
-        WHERE id=? AND cancelled_at IS NULL`,
+        WHERE id=? AND cancelled_at IS NULL AND transfer_id IS NULL`,
     ).bind(t, why, refund.cents, orderItemId),
 
     // Both sides freeze here, inside the same batch as the cancellation. A
@@ -507,6 +570,7 @@ export async function cancelByOperator(
         : feeReason === 'cancelled_last_hours'
           ? 'Cancelled within 12 hours of the appointment.'
           : 'Cancelled within 48 hours of the appointment.',
+      settled_cents: 0,
       settled_at: null,
       created_at: t,
       updated_at: t,
@@ -528,30 +592,33 @@ export async function cancelByOperator(
   }
 
   // ---------------------------------------------------------------------
-  // PAYMENT SEAM — the refund, and then the fee.
+  // WHERE THE TWO AMOUNTS RAISED HERE ACTUALLY GO.
   //
-  // The money flow here is not a shop's. The platform took the customer's
-  // payment up front, holds it, and pays the operator after the job. So a
-  // cancellation on the doorstep means the platform refunds the customer in
-  // full out of money it is already holding, and eats the processing on both
-  // legs, while the customer blames the platform rather than the operator.
-  // The fee is what covers that, and it is not conditional on anything: a
-  // customer is refunded in full whatever their operator owes.
+  // The money flow is not a shop's. The platform took the customer's payment
+  // up front, holds it, and pays the operator after the job. So a cancellation
+  // on the doorstep means the platform refunds the customer in full out of
+  // money it is already holding, and eats the processing on both legs, while
+  // the customer blames the platform rather than the operator. The fee is what
+  // covers that, and it is not conditional on anything: a customer is refunded
+  // in full whatever their operator owes.
   //
-  // HOW THE FEE IS COLLECTED, IN ORDER:
+  // THE REFUND: frozen here, released when the hold lifts, and sent to the
+  // card by sweepRefunds. refund_cents written below is what is sent.
   //
-  //   1. Off the operator's next payout. This is the money the platform is
-  //      already holding on their behalf, it costs nothing to collect, it
-  //      cannot fail, and it cannot be disputed as a card charge can. Every
-  //      gig platform settles this way for exactly those reasons, and the
-  //      card was the wrong first instinct.
-  //   2. The card on file, only when there is no pending payout to take it
-  //      from — a brand new operator, or one who has already been paid out
-  //      for everything else.
+  // THE FEE: netted off the operator's next payout, in settleOrder. That is
+  // money the platform is already holding on their behalf, so it costs nothing
+  // to collect, it cannot fail, and it cannot be disputed the way a card debit
+  // can — every gig platform settles this way for those reasons, and it is
+  // what the Terms say happens. A payout smaller than the fee pays down what
+  // it can and the rest comes off the one after; see applyFeesTo.
   //
-  // Charging the card first would be strictly worse: a debit an operator did
-  // not initiate is the single most chargeback-prone transaction a platform
-  // can make, and losing that dispute costs the fee plus the dispute fee.
+  // THE CARD ON FILE IS STILL NOT CHARGED FOR A FEE, and it is the deliberate
+  // second choice rather than an unbuilt one. A debit an operator did not
+  // initiate is the most chargeback-prone transaction a platform can make, and
+  // losing that dispute costs the fee plus the dispute fee. It is worth
+  // building only for the operator who has no payout coming at all — a brand
+  // new account, or one already paid out for everything — and until then that
+  // fee sits owed and stops them listing, which is enforcement enough.
   // ---------------------------------------------------------------------
 
   const res = await env.DB.batch(writes);
@@ -563,7 +630,7 @@ export async function cancelByOperator(
   // against whatever this function hands back — which is the customer being
   // paid out twice for one booking.
   if ((res[0]?.meta.changes ?? 0) === 0) {
-    throw conflict('That booking is already cancelled.', 'already_cancelled');
+    await refuseCancellation(env, orderItemId);
   }
 
   // Recorded after the cancellation lands, never as part of it: a flag that
@@ -625,10 +692,10 @@ export async function cancelByOperator(
  * customer does here.
  */
 export async function cancelByCustomer(
-  env: Env, rawToken: string, orderItemId: string, reason?: string | null,
+  env: Env, ref: ThreadRef, orderItemId: string, reason?: string | null,
 ): Promise<CancelResult> {
   const t = now();
-  const thread = await threadByToken(env, rawToken);
+  const thread = await threadByToken(env, ref);
   if (!thread) throw notFound('That link is not valid any more.');
 
   const item = await env.DB.prepare(
@@ -638,6 +705,7 @@ export async function cancelByCustomer(
   ).bind(orderItemId, thread.operator_id, thread.appointment_id).first<ItemRow>();
   if (!item) throw notFound('That booking is not on your order.');
   if (item.cancelled_at) throw conflict('That booking is already cancelled.', 'already_cancelled');
+  assertNotPaidOut(item);
 
   const refund = refundFor(item, t);
 
@@ -655,9 +723,12 @@ export async function cancelByCustomer(
 
   const res = await env.DB.batch([
     env.DB.prepare(
+      // Guarded on transfer_id for the same reason the operator's side is: the
+      // read and this write are two round trips, and a payout landing between
+      // them must not be cancelled out from underneath.
       `UPDATE order_items SET cancelled_at=?, cancelled_by='customer', cancel_reason=?,
          address_released_at=NULL, refund_cents=?, refund_reason=?
-        WHERE id=? AND cancelled_at IS NULL`,
+        WHERE id=? AND cancelled_at IS NULL AND transfer_id IS NULL`,
     ).bind(t, why, refund.cents, refund.reason, orderItemId),
 
     // The customer's refund freezes too. The bypass in this direction is a
@@ -687,7 +758,7 @@ export async function cancelByCustomer(
   // against, so a second cancellation that changed nothing must not come back
   // carrying a refund figure.
   if ((res[0]?.meta.changes ?? 0) === 0) {
-    throw conflict('That booking is already cancelled.', 'already_cancelled');
+    await refuseCancellation(env, orderItemId);
   }
 
   await env.DB.prepare(
@@ -716,9 +787,9 @@ export async function cancelByCustomer(
  * they are refunded cannot disagree.
  */
 export async function quoteRefund(
-  env: Env, rawToken: string, orderItemId: string,
+  env: Env, ref: ThreadRef, orderItemId: string,
 ): Promise<RefundDecision> {
-  const thread = await threadByToken(env, rawToken);
+  const thread = await threadByToken(env, ref);
   if (!thread) throw notFound('That link is not valid any more.');
   const item = await env.DB.prepare(
     `${ITEM_SELECT}
@@ -743,7 +814,13 @@ export interface FeesOwed {
 
 export async function feesOwed(env: Env, operatorId: string): Promise<FeesOwed> {
   const row = await env.DB.prepare(
-    `SELECT COALESCE(SUM(cents),0) AS cents, COUNT(*) AS n, MIN(currency) AS currency
+    // What is LEFT, not what was raised. A fee is collected off payouts and a
+    // payout is often smaller than the fee, so a row can be half paid for days
+    // — and an operator told they owe the whole $200 after $170 of it has
+    // already been taken out of their money would reasonably conclude they were
+    // being billed twice. See settled_cents in migration 0046.
+    `SELECT COALESCE(SUM(cents - settled_cents),0) AS cents, COUNT(*) AS n,
+            MIN(currency) AS currency
        FROM lead_fees WHERE operator_id = ? AND status = 'owed'`,
   ).bind(operatorId).first<{ cents: number; n: number; currency: string | null }>();
 
@@ -784,7 +861,16 @@ export async function feesOwed(env: Env, operatorId: string): Promise<FeesOwed> 
  * Returns null when they are clear, so callers read as a guard.
  */
 export async function listingBlock(env: Env, operatorId: string): Promise<string | null> {
-  if (!(await hasOperatorCard(env, operatorId))) return NEEDS_CARD_OPERATOR;
+  // A CARD IS NOT REQUIRED OF A BUSINESS. This check used to sit right here
+  // and it was wrong. What a business must have is somewhere to be PAID — the
+  // bank account checked further down. Demanding a card on top means asking a
+  // self-employed person to hand over a payment instrument before they have
+  // earned a penny, against a late cancellation they have not made. That is
+  // the wall people walk away at. They are encouraged to add one in settings,
+  // and encouragement is where it stops.
+  //
+  // The customer side is the opposite and stays required: no card on file, no
+  // booking. Theirs is the money that has to be there when the work is done.
 
   // Location moved from a feature to a requirement when it became the evidence
   // that decides whether somebody is charged. An operator with it off cannot
@@ -797,6 +883,24 @@ export async function listingBlock(env: Env, operatorId: string): Promise<string
   // The van a customer is told to look for. Cheap to fill in, and the thing
   // somebody standing behind their own front door actually checks.
   if (!vehicleComplete(await getVehicle(env, operatorId))) return NEEDS_VEHICLE_OPERATOR;
+
+  // SOMEWHERE TO SEND THE MONEY, and this is the gate that removes a whole
+  // class of broken state rather than merely reporting one. Every booking is
+  // paid up front and the business's share is transferred afterwards; a
+  // business that can be booked without an account to transfer to leaves the
+  // customer's money sitting in the platform balance with nowhere to go and
+  // nothing in the product to resolve it. No account, no listing — so the
+  // situation cannot arise. See NEEDS_PAYOUTS_OPERATOR.
+  //
+  // Deliberately reads the CACHED flag rather than calling Stripe. This runs
+  // on every listing check; the flag is refreshed by the account.updated
+  // webhook and whenever the operator opens their settings, and being an hour
+  // stale here costs an operator an hour of listing rather than costing a
+  // customer their money.
+  const payouts = await env.DB.prepare(
+    `SELECT stripe_payouts_enabled FROM operators WHERE id = ?`,
+  ).bind(operatorId).first<{ stripe_payouts_enabled: number }>();
+  if (payouts?.stripe_payouts_enabled !== 1) return NEEDS_PAYOUTS_OPERATOR;
 
   const owed = await feesOwed(env, operatorId);
   if (owed.cents > 0) {
@@ -823,15 +927,33 @@ export async function listFees(
 }
 
 /**
- * Settles a fee.
+ * Settles a fee by hand.
  *
  * 'waived' exists because the first version of a rule like this is wrong about
  * somebody — the operator who arrived, found a dog loose in the yard and left,
  * and is now being billed for it. The alternative to a waiver is deleting the
  * row, which destroys the record of what happened along with the charge.
  *
- * PAYMENT SEAM: 'paid' is written by the charge, not by a person deciding it
- * was paid. Until the charge exists this is the manual path.
+ * NOT THE ORDINARY WAY A FEE IS PAID ANY MORE. It used to be the only way:
+ * nothing in the product could collect one, so the comment here said 'paid'
+ * was written by a charge that did not exist yet. A fee is now netted off the
+ * business's next payout by settleOrder — which is what the Terms have always
+ * said happens — and this is what is left: an appeal, a fee settled some other
+ * way, a decision a person takes for a reason the schema does not hold.
+ *
+ * STILL REACHED BY NO ROUTE, and it is worth being exact about why rather than
+ * leaving it looking forgotten. A waiver is an admin action, every admin action
+ * in this Worker is written to admin_actions, and the action and subject kinds
+ * that table accepts are a closed list in lib/audit.ts. Adding a door for this
+ * means adding 'settle_fee' to that list in the same change — an unlogged
+ * admin cancelling somebody's debt is precisely what that log exists to
+ * prevent — so the route lands with the audit entry or not at all.
+ *
+ * 'paid' fills settled_cents in, so a fee marked paid here and one collected
+ * off a payout describe themselves the same way to feesOwed. 'waived' leaves
+ * it alone: whatever was already collected before somebody decided to waive
+ * the rest really was collected, and rewriting it to the full amount would
+ * claim money that never moved.
  */
 export async function settleFee(
   env: Env, feeId: string, status: 'paid' | 'waived', note?: string | null,
@@ -842,10 +964,138 @@ export async function settleFee(
   const t = now();
   const res = await env.DB.prepare(
     `UPDATE lead_fees SET status=?, settled_at=?, updated_at=?,
+        settled_cents = CASE WHEN ? = 'paid' THEN cents ELSE settled_cents END,
         note = COALESCE(?, note)
       WHERE id=? AND status='owed'`,
-  ).bind(status, t, t, (note ?? '').trim() || null, feeId).run();
+  ).bind(status, t, t, status, (note ?? '').trim() || null, feeId).run();
   if ((res.meta.changes ?? 0) === 0) {
     throw conflict('That fee is already settled.', 'already_settled');
   }
+}
+
+// ---------------------------------------------------------------------------
+// Collecting it off the next payout
+// ---------------------------------------------------------------------------
+
+/** One unpaid fee, as much of it as is still outstanding. */
+export interface OwedFee {
+  id: string;
+  cents: number;
+  /** How much has already come off earlier payouts. See migration 0046. */
+  settled_cents: number;
+}
+
+/** What one payout takes off one fee, and what is left of the payout after. */
+export interface FeeNetting {
+  /** The transfer amount after the fees below have been taken off it. Never negative. */
+  net: number;
+  credits: Array<{ fee: OwedFee; take: number }>;
+}
+
+/**
+ * The fees this business still owes, oldest first.
+ *
+ * Scoped to one currency because a payout is in one currency and a debt in
+ * another cannot be taken out of it without an exchange rate this product does
+ * not have and should not invent. A fee in the wrong currency stays owed and
+ * keeps blocking the listing, which is the honest outcome: somebody has to
+ * deal with it by hand.
+ */
+export async function unsettledFees(
+  env: Env, operatorId: string, currency: string,
+): Promise<OwedFee[]> {
+  const rows = await env.DB.prepare(
+    `SELECT id, cents, settled_cents FROM lead_fees
+      WHERE operator_id = ? AND status = 'owed' AND currency = ?
+        AND cents > settled_cents
+      ORDER BY created_at`,
+  ).bind(operatorId, currency).all<OwedFee>();
+  return rows.results ?? [];
+}
+
+/**
+ * How much of a payout goes to the fees owed against it.
+ *
+ * A TRANSFER NEVER GOES BELOW ZERO, which is the whole reason this is
+ * arithmetic rather than a subtraction. The ladder's top rung is the whole job
+ * while a payout is that job less the platform's share, so a doorstep
+ * cancellation routinely costs more than the next payout can cover — and
+ * "reduce the transfer by what they owe" taken literally would ask Stripe to
+ * move a negative amount. What is not covered stays owed, keeps the account
+ * from listing, and comes off the payout after that.
+ *
+ * Oldest debt first, so a business paying down several fees sees them close in
+ * the order they were raised rather than at random.
+ *
+ * Pure, so the same arithmetic answers "what will this payout be" on a screen
+ * and "what is this payout" in the transfer. Two versions of that sum is how a
+ * business is quoted one figure and paid another.
+ */
+export function applyFeesTo(amount: number, fees: OwedFee[]): FeeNetting {
+  let left = Math.max(0, Math.round(amount));
+  const credits: FeeNetting['credits'] = [];
+  for (const fee of fees) {
+    if (left <= 0) break;
+    const take = Math.min(left, Math.max(0, fee.cents - fee.settled_cents));
+    if (take <= 0) continue;
+    credits.push({ fee, take });
+    left -= take;
+  }
+  return { net: left, credits };
+}
+
+/**
+ * Credits one fee with what a payout just covered.
+ *
+ * Returned as a statement rather than run, so the credit goes into the SAME
+ * batch as the rows recording the payout it came out of. A fee credited in its
+ * own round trip is a fee that can be credited against a payout that then
+ * failed to be written down, and the operator would have paid it twice.
+ *
+ * The WHERE clause carries the settled_cents THAT WAS READ, which is what makes
+ * two sweeps racing on one payout safe: they both compute the same reduced
+ * transfer, Stripe's idempotency key gives them one transfer between them, and
+ * only the first credit matches a row. The second changes nothing instead of
+ * collecting the same debt a second time.
+ */
+export function creditFeeStatement(
+  env: Env, fee: OwedFee, take: number, at: number,
+): D1PreparedStatement {
+  const settled = fee.settled_cents + take;
+  return env.DB.prepare(
+    `UPDATE lead_fees
+        SET settled_cents = ?,
+            status = CASE WHEN ? >= cents THEN 'paid' ELSE status END,
+            settled_at = CASE WHEN ? >= cents THEN ? ELSE settled_at END,
+            updated_at = ?
+      WHERE id = ? AND status = 'owed' AND settled_cents = ?`,
+  ).bind(settled, settled, settled, at, at, fee.id, fee.settled_cents);
+}
+
+/**
+ * Hands a credit back, for a payout that then did not happen.
+ *
+ * The credit above has to be CLAIMED before the transfer it is netted out of
+ * is built, because it is the claim that stops two overlapping sweeps taking
+ * the same debt out of two different payouts — a D1 batch does not roll back
+ * because one statement matched nothing, so a credit sitting in the same batch
+ * as the payout rows loses the race silently and the business is short. See
+ * payLabour in checkout.ts.
+ *
+ * Claiming first means there is a moment where the debt is collected and the
+ * money it was collected out of has not moved, and this is what closes it: if
+ * the transfer fails or cannot be written down, the fee goes back to being
+ * owed in full rather than being marked as paid by a payout that never
+ * happened. Guarded on the value the claim wrote, so it can only ever undo
+ * that exact claim and never somebody else's.
+ */
+export function releaseFeeStatement(
+  env: Env, fee: OwedFee, take: number, at: number,
+): D1PreparedStatement {
+  const claimed = fee.settled_cents + take;
+  return env.DB.prepare(
+    `UPDATE lead_fees
+        SET settled_cents = ?, status = 'owed', settled_at = NULL, updated_at = ?
+      WHERE id = ? AND settled_cents = ?`,
+  ).bind(fee.settled_cents, at, fee.id, claimed);
 }

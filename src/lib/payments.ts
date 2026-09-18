@@ -178,7 +178,7 @@ export function cardSafeDb(db: D1Database): D1Database {
 // ---------------------------------------------------------------------------
 
 /**
- * Stripe's webhook signature, verified the way Twilio's is in ./twilio.ts.
+ * Stripe's webhook signature.
  *
  * Built now, before a single charge exists, because the alternative is
  * building it on the day money starts moving — which is the day an unsigned
@@ -222,15 +222,33 @@ export const stripeWebhooksConfigured = (env: Env): boolean =>
  * flag would create a state where the two disagree and the product claims to
  * be taking payment while nothing can confirm one.
  *
- * FALSE IN EVERY ENVIRONMENT TODAY. What it gates is the customer's card at
- * checkout: while this is false a booking is placed with no card and the order
- * says 'pending', which is exactly what happens now and is the truth about it.
- * When it is true a card is required before an opening is claimed, because at
- * that point a booking without one is an appointment nobody can be charged
- * for — which is the situation the whole cancellation ladder in bypass.ts is
- * written to prevent.
+ * What it gates is the customer's card at checkout — but only together with
+ * CARD_CAPTURE_SHIPPED below, which is the other half of that gate and exists
+ * because this flag on its own once stopped the site taking bookings.
  */
 export const paymentsLive = (env: Env): boolean => stripeWebhooksConfigured(env);
+
+/**
+ * WHETHER ANYTHING IN THIS PRODUCT CAN ACTUALLY TAKE A CARD FROM A CUSTOMER.
+ *
+ * This constant exists because of a real outage, and its shape is the lesson.
+ * checkoutCard refused every booking with 402 card_required the moment
+ * paymentsLive() went true — and paymentsLive() is only "is the webhook secret
+ * set". So setting one Worker secret, a configuration step with no visible
+ * relationship to booking, switched on a requirement that NOTHING in the
+ * product could satisfy: there was no card field anywhere for a customer. The
+ * site stopped taking bookings and nothing said why.
+ *
+ * A refusal must never ship ahead of the thing that satisfies it. The gate now
+ * needs both: money can move AND there is somewhere to type a card. This flips
+ * to true in the same change that lands the card field, never before, and a
+ * test pins the pair together so it cannot be forgotten in either direction.
+ */
+export const CARD_CAPTURE_SHIPPED = true;
+
+/** A customer needs a card before booking — once there is a way to give one. */
+export const customerCardRequired = (env: Env): boolean =>
+  paymentsLive(env) && CARD_CAPTURE_SHIPPED;
 
 /** Pulls `t` and every `v1` out of the Stripe-Signature header. */
 export function parseStripeSignature(header: string | null): {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, type PartsQuote } from '../api';
 import { formatMoney as money } from '../lib/format';
+import { onDay } from '../lib/money';
 import '../styles-parts.css';
 
 /**
@@ -30,14 +31,37 @@ import '../styles-parts.css';
 const STATUS_WORDS: Record<PartsQuote['status'], string> = {
   sent: 'Waiting on you',
   approved: 'You approved this',
-  declined: 'You declined this',
+  declined: 'You declined this — nothing was charged',
   // "Taken back" rather than "withdrawn": a customer who saw a number and then
   // sees it marked withdrawn will assume something went wrong with their tap.
   withdrawn: 'The business took this back',
   expired: 'Expired — ask them to resend',
 };
 
-export default function PartsQuotes({ token }: { token: string }) {
+/**
+ * What happened to an answered quote, including whether the money moved.
+ *
+ * "You approved this" was the whole of what this card said about an approval,
+ * and approving is the tap that charges — so the one line on the site about a
+ * second payment taken off somebody's card, weeks after the booking, did not
+ * mention the payment. Somebody scanning a statement for an unexplained £180
+ * had nothing here to match it against.
+ *
+ * `charged_at` is the only field that means money moved, and it is checked
+ * rather than inferred from `status`. An approved quote with it still null is
+ * not a slow charge or a pending one: it means this deployment has no Stripe
+ * key and nothing was ever taken — see chargeApprovedQuote in src/lib/parts.ts,
+ * which returns null rather than refusing the approval. Saying "charged" there
+ * would invent a payment, and saying nothing would leave somebody expecting one.
+ */
+function answeredWords(q: PartsQuote): string {
+  if (q.status !== 'approved') return STATUS_WORDS[q.status];
+  return q.charged_at
+    ? `You approved this, and your card was charged on ${onDay(q.charged_at)}`
+    : 'You approved this. Nothing has been charged for it';
+}
+
+export default function PartsQuotes({ threadRef }: { threadRef: string }) {
   const [quotes, setQuotes] = useState<PartsQuote[]>([]);
   const [partsCents, setPartsCents] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
@@ -47,7 +71,7 @@ export default function PartsQuotes({ token }: { token: string }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.guestParts(token);
+      const res = await api.guestParts(threadRef);
       setQuotes(res.quotes);
       setPartsCents(res.parts_cents);
     } catch {
@@ -56,7 +80,7 @@ export default function PartsQuotes({ token }: { token: string }) {
     } finally {
       setLoaded(true);
     }
-  }, [token]);
+  }, [threadRef]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -70,7 +94,7 @@ export default function PartsQuotes({ token }: { token: string }) {
   const decide = async (q: PartsQuote, decision: 'approved' | 'declined') => {
     setBusy(q.id); setError(null);
     try {
-      await api.decidePartsQuote(token, q.id, decision);
+      await api.decidePartsQuote(threadRef, q.id, decision);
       setConfirming(null);
       await load();
     } catch (e) {
@@ -85,6 +109,11 @@ export default function PartsQuotes({ token }: { token: string }) {
 
   const live = quotes.filter((q) => q.status === 'sent');
   const past = quotes.filter((q) => q.status !== 'sent');
+  // Whether every approval on this booking actually took money. See the total
+  // at the foot of the card: it is the running sum of the approved quotes, and
+  // what it may be called depends on this.
+  const approved = quotes.filter((q) => q.status === 'approved');
+  const allCharged = approved.length > 0 && approved.every((q) => q.charged_at != null);
 
   return (
     <section className="card parts-card">
@@ -108,14 +137,14 @@ export default function PartsQuotes({ token }: { token: string }) {
             </div>
           )}
 
-          {/* "on top of what you already paid" was not true of any booking on
-              this site: paying here is not switched on, so nothing has been
-              paid for the appointment either. What IS true, and is the promise
-              worth making, is that nothing happens until this is approved. */}
+          {/* The appointment itself was paid for by card at the moment it was
+              booked, so this really is on top of what has already been paid —
+              and the promise worth making is that nothing happens until this
+              is approved, because approving it is the thing that charges. */}
           <p className="quote-note">
-            This is on top of the price of the appointment. Nothing is fitted
-            until you approve it, and nothing is paid on this site yet — once
-            paying here is switched on, approving is what charges you.
+            This is on top of the price you already paid for the appointment.
+            Nothing is fitted until you approve it, and approving it is what
+            charges you for it.
           </p>
 
           {confirming === q.id ? (
@@ -165,7 +194,7 @@ export default function PartsQuotes({ token }: { token: string }) {
             <div key={q.id} className="quote-past">
               <span>{q.description}</span>
               <span className="faint">
-                {money(q.total_cents, q.currency)} · {STATUS_WORDS[q.status]}
+                {money(q.total_cents, q.currency)} · {answeredWords(q)}
               </span>
             </div>
           ))}
@@ -173,8 +202,15 @@ export default function PartsQuotes({ token }: { token: string }) {
       )}
 
       {partsCents > 0 && (
+        /* The running total, named by what actually happened to it. Every
+           approval on this booking carrying a charge date means this whole
+           figure has already left the customer's card, and that is a different
+           sentence from "you agreed to this" — it is the number to look for on
+           a statement. The cautious wording is kept for the case where one of
+           them was never charged, because a total described as paid when part
+           of it was not is the worse way round to be wrong. */
         <div className="quote-total">
-          <span>Parts you approved</span>
+          <span>{allCharged ? 'Parts you approved and paid for' : 'Parts you approved'}</span>
           <strong>{money(partsCents, quotes[0]!.currency)}</strong>
         </div>
       )}

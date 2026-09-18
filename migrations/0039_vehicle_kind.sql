@@ -1,0 +1,30 @@
+-- ---------------------------------------------------------------------------
+-- 0039 — what shape the vehicle is
+-- ---------------------------------------------------------------------------
+--
+-- 0026 stored the make, model, colour and plate, and those four are what a
+-- customer checks against the thing on their kerb. None of them says what is
+-- pulling up. "Ford / Transit / White" is a van; "Ford / F-150 / White" is a
+-- pickup; the difference is not recoverable from the model string without a
+-- table of every vehicle ever sold, and people type that field however they
+-- like anyway.
+--
+-- The front page draws these vehicles crossing the map, which is how the
+-- product explains itself before anybody reads a word: these people drive to
+-- you. A junk removal firm towing a trailer and a phone repairer in a
+-- hatchback are not the same picture, and drawing them the same is the site
+-- saying something about a real business that the business never said.
+--
+-- The values are the slugs in src/lib/vehicles.ts and nowhere else. NOT a
+-- CHECK constraint: SQLite cannot add one to an existing table without a
+-- rebuild, the list will grow the first time somebody turns up on a motorbike,
+-- and a rebuild of the operators table to police five strings is a large risk
+-- bought for nothing. Validation is at the write, in saveVehicle.
+--
+-- NULLABLE, and most rows will be null for a while. Every operator who signed
+-- up before today has not been asked this, and an account that exists must
+-- stay able to exist. What the map draws for them is decided in one place --
+-- DEFAULT_VEHICLE_KIND -- rather than by writing a guess into their row here,
+-- because a guess written into the database is indistinguishable from
+-- something they told us a week later.
+ALTER TABLE operators ADD COLUMN vehicle_kind TEXT;

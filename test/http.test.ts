@@ -46,7 +46,7 @@ async function signIn(email: string, businessName: string) {
      VALUES (?,?,?,?,?)`,
   ).bind(newId(), opId, hash, t + 86400, t).run();
 
-  return { opId, cookie: `gf_session=${raw}` };
+  return { opId, cookie: `__Host-gf_session=${raw}` };
 }
 
 beforeEach(() => { env = makeEnv(MIGRATIONS) as unknown as Env; });
@@ -70,7 +70,7 @@ describe('sign-in link is never handed to the caller', () => {
   it('refuses to echo the link on a production host even WITH the debug secret', async () => {
     env = {
       ...makeEnv(MIGRATIONS),
-      APP_URL: 'https://gapfiller.example.com',
+      APP_URL: 'https://roundtheway.example.com',
       AUTH_DEBUG_TOKEN: 'a-long-enough-debug-token-value',
     } as unknown as Env;
     const res = await call('POST', '/api/auth/request', {
@@ -128,7 +128,7 @@ describe('authentication is required', () => {
   }
 
   it('rejects a forged session cookie', async () => {
-    const res = await call('GET', '/api/me', { cookie: 'gf_session=not-a-real-token' });
+    const res = await call('GET', '/api/me', { cookie: '__Host-gf_session=not-a-real-token' });
     expect(res.status).toBe(401);
   });
 
@@ -333,13 +333,13 @@ describe('completing a job drives the overdue list', () => {
 // ---------------------------------------------------------------------------
 describe('CORS', () => {
   beforeEach(() => {
-    env = { ...makeEnv(MIGRATIONS), ALLOWED_ORIGINS: 'https://app.gapfiller.test' } as unknown as Env;
+    env = { ...makeEnv(MIGRATIONS), ALLOWED_ORIGINS: 'https://app.roundtheway.test' } as unknown as Env;
   });
 
   it('answers a preflight from an allowed origin', async () => {
-    const res = await call('OPTIONS', '/api/clients', { origin: 'https://app.gapfiller.test' });
+    const res = await call('OPTIONS', '/api/clients', { origin: 'https://app.roundtheway.test' });
     expect(res.status).toBe(204);
-    expect(res.headers.get('access-control-allow-origin')).toBe('https://app.gapfiller.test');
+    expect(res.headers.get('access-control-allow-origin')).toBe('https://app.roundtheway.test');
     expect(res.headers.get('access-control-allow-credentials')).toBe('true');
   });
 
@@ -349,136 +349,37 @@ describe('CORS', () => {
   });
 
   it('never answers with a wildcard, which would defeat cookie auth entirely', async () => {
-    const res = await call('GET', '/api/me', { origin: 'https://app.gapfiller.test' });
+    const res = await call('GET', '/api/me', { origin: 'https://app.roundtheway.test' });
     expect(res.headers.get('access-control-allow-origin')).not.toBe('*');
   });
 
   it('attaches CORS headers to error responses too', async () => {
-    const res = await call('GET', '/api/me', { origin: 'https://app.gapfiller.test' });
+    const res = await call('GET', '/api/me', { origin: 'https://app.roundtheway.test' });
     expect(res.status).toBe(401);
-    expect(res.headers.get('access-control-allow-origin')).toBe('https://app.gapfiller.test');
+    expect(res.headers.get('access-control-allow-origin')).toBe('https://app.roundtheway.test');
   });
 });
 
 // ---------------------------------------------------------------------------
-describe('Twilio webhooks reject unsigned requests', () => {
-  async function post(path: string, fields: Record<string, string>, sig?: string) {
-    const form = new URLSearchParams(fields);
-    const headers: Record<string, string> = {
-      'content-type': 'application/x-www-form-urlencoded',
-    };
-    if (sig) headers['x-twilio-signature'] = sig;
-    return worker.fetch(
-      new Request(`${BASE}${path}`, { method: 'POST', headers, body: form.toString() }),
-      env,
-    );
-  }
-
-  beforeEach(async () => {
-    env = { ...makeEnv(MIGRATIONS), TWILIO_AUTH_TOKEN: 'test-auth-token' } as unknown as Env;
-    const t = now();
-    const opId = newId();
-    await env.DB.prepare(
-      `INSERT INTO operators (id,email,business_name,timezone,country,currency,
-         location_mode,fill_model,sms_mode,plan,created_at,updated_at)
-       VALUES (?,?,?, 'Europe/London','GB','GBP','mobile','both','twilio','active',?,?)`,
-    ).bind(opId, 'a@example.com', 'A', t, t).run();
-    await env.DB.prepare(
-      `INSERT INTO clients (id,operator_id,first_name,phone_e164,sms_consent,sms_consent_at,created_at,updated_at)
-       VALUES (?,?,?,?,1,?,?,?)`,
-    ).bind(newId(), opId, 'Dan', '+447700900001', t, t, t).run();
-  });
-
-  it('refuses an unsigned STOP and leaves the client subscribed', async () => {
-    const res = await post('/webhooks/twilio/inbound',
-      { From: '+447700900001', Body: 'STOP', MessageSid: 'SM1' });
-    expect(res.status).toBe(403);
-    const c = await env.DB.prepare(`SELECT opted_out_at, sms_consent FROM clients LIMIT 1`)
-      .first<any>();
-    expect(c.opted_out_at).toBeNull();
-    expect(c.sms_consent).toBe(1);
-  });
-
-  it('refuses a wrong signature', async () => {
-    const res = await post('/webhooks/twilio/inbound',
-      { From: '+447700900001', Body: 'STOP' }, 'obviously-wrong');
-    expect(res.status).toBe(403);
-  });
-
-  it('accepts a correctly signed STOP and opts the client out', async () => {
-    const fields = { Body: 'STOP', From: '+447700900001' };
-    const payload = `${BASE}/webhooks/twilio/inbound` +
-      Object.keys(fields).sort().map((k) => k + (fields as any)[k]).join('');
-    const key = await crypto.subtle.importKey(
-      'raw', new TextEncoder().encode('test-auth-token'),
-      { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
-    const sigBuf = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
-    const sig = btoa(String.fromCharCode(...new Uint8Array(sigBuf)));
-
-    const res = await post('/webhooks/twilio/inbound', fields, sig);
-    expect(res.status).toBe(200);
-    const c = await env.DB.prepare(`SELECT opted_out_at, sms_consent FROM clients LIMIT 1`)
-      .first<any>();
-    expect(c.opted_out_at).not.toBeNull();
-    expect(c.sms_consent).toBe(0);
-  });
-
-  it('refuses status callbacks when no auth token is configured at all', async () => {
-    env = makeEnv(MIGRATIONS) as unknown as Env;   // no TWILIO_AUTH_TOKEN
-    const res = await post('/webhooks/twilio/status',
-      { MessageSid: 'SM1', MessageStatus: 'delivered' }, 'anything');
-    expect(res.status).toBe(403);
-  });
-
-  /**
-   * A failed offer records WHY it failed.
-   *
-   * messages.error_code has existed since the first migration and nothing was
-   * writing it, so every failure looked identical in the log — and the two
-   * kinds are not the same thing: 30003/30005 mean the handset is unreachable
-   * and that number should stop being offered to, while 30001 means we were
-   * throttled and the next one will go.
-   */
-  it('records the Twilio error code on a failed message, and none on a good one', async () => {
-    const signedPost = async (fields: Record<string, string>) => {
-      const payload = `${BASE}/webhooks/twilio/status`
-        + Object.keys(fields).sort().map((k) => k + fields[k]).join('');
-      const key = await crypto.subtle.importKey(
-        'raw', new TextEncoder().encode('test-auth-token'),
-        { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
-      const buf = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
-      return post('/webhooks/twilio/status', fields,
-        btoa(String.fromCharCode(...new Uint8Array(buf))));
-    };
-
-    const op = await env.DB.prepare(`SELECT id FROM operators LIMIT 1`).first<any>();
-    const t = now();
-    for (const [id, sid] of [['m-bad', 'SM-bad'], ['m-good', 'SM-good']]) {
-      await env.DB.prepare(
-        `INSERT INTO messages (id,operator_id,direction,channel,to_address,body,
-           status,provider,provider_sid,created_at,updated_at)
-         VALUES (?,?, 'out','sms','+447700900001','hello','sent','twilio',?,?,?)`,
-      ).bind(id, op.id, sid, t, t).run();
+describe('the Twilio webhooks are gone', () => {
+  // /webhooks/twilio/inbound and /webhooks/twilio/status served a feature
+  // where an operator brought their own Twilio account and texted clients from
+  // their own number. Both are removed. They must 404 rather than 403: a 403
+  // would say "you signed that wrong", which invites someone to keep trying to
+  // sign it right, and there is nothing behind it to reach.
+  it('answers 404, not 403', async () => {
+    const env = makeEnv(MIGRATIONS) as unknown as Env;
+    for (const path of ['/webhooks/twilio/inbound', '/webhooks/twilio/status']) {
+      const res = await worker.fetch(
+        new Request(`${BASE}${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: 'From=%2B15550000000&Body=STOP',
+        }),
+        env,
+      );
+      expect(res.status, path).toBe(404);
     }
-
-    expect((await signedPost({
-      MessageSid: 'SM-bad', MessageStatus: 'failed', ErrorCode: '30003',
-    })).status).toBe(204);
-    expect((await signedPost({
-      MessageSid: 'SM-good', MessageStatus: 'delivered',
-    })).status).toBe(204);
-
-    const bad = await env.DB.prepare(
-      `SELECT status, error_code FROM messages WHERE id='m-bad'`).first<any>();
-    expect(bad.status).toBe('failed');
-    expect(bad.error_code).toBe('30003');
-
-    // A delivered message must not carry a code — the column is the reason a
-    // send failed, not a field filled in on every callback.
-    const good = await env.DB.prepare(
-      `SELECT status, error_code FROM messages WHERE id='m-good'`).first<any>();
-    expect(good.status).toBe('delivered');
-    expect(good.error_code).toBeNull();
   });
 });
 

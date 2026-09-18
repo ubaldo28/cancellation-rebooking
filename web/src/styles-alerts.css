@@ -29,6 +29,64 @@
 }
 .card.alert-card h2 { font-size: 16px; }
 
+/* --- what happens after the button, before it is pressed ----------------- */
+/*
+ * A numbered list, because these four things happen in this order and the
+ * order IS the explanation. It carries its own counter rather than using the
+ * browser's marker, for one reason: a native <ol> marker sits outside the text
+ * block and cannot be given weight, size or colour, so on a step list it comes
+ * out as small grey punctuation beside a bold sentence — the one part of each
+ * row that says "this is step three of four" ends up reading as noise.
+ *
+ * `counter-reset` on the list and `counter-increment` on the item, so the
+ * numbering survives a step being added or removed without anybody having to
+ * renumber prose by hand.
+ */
+.alert-steps {
+  counter-reset: alert-step;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.alert-steps li {
+  counter-increment: alert-step;
+  position: relative;
+  /* Room for the disc plus its gap. Padding rather than a grid column, so a
+     step that wraps to three lines keeps every line aligned under itself. */
+  padding-left: 34px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+.alert-steps li::before {
+  content: counter(alert-step);
+  position: absolute;
+  left: 0;
+  /* Optically level with the first line of text rather than with the box: the
+     disc is 24px against a ~21.7px line, so a bare `top: 0` sits it high. */
+  top: -1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The half of each step that is the claim, in the body ink so it carries at
+   scanning speed; the sentence explaining it stays quieter. */
+.alert-steps strong { color: var(--ink); font-weight: 650; }
+
 /* Label and value, in a column on a phone and a pair of columns as soon as
    there is room. This is a local class rather than .facts: styles.css defines
    .facts twice and the landing-page version wins. */

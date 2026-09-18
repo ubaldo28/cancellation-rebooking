@@ -1,5 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Slotfill">
-  <rect width="512" height="512" rx="112" fill="#0d1117"/>
-  <circle cx="256" cy="222" r="74" fill="#16e08e"/>
-  <path d="M256 96c-70 0-126 56-126 126 0 92 108 190 121 201a8 8 0 0 0 10 0c13-11 121-109 121-201 0-70-56-126-126-126Zm0 178a52 52 0 1 1 0-104 52 52 0 0 1 0 104Z" fill="#16e08e" opacity=".35"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Round The Way">
+  <!--
+    RTW IN OLD ENGLISH, cut to outlines from Pirata One.
+
+    A favicon cannot load a webfont — SVG icons do not, in any browser that
+    matters — so setting this as text would render in whatever the OS felt like
+    and be a different logo on every device. These are the real outlines of the
+    real face, converted once, so it is the same mark everywhere and costs no
+    request.
+
+    TRACKED OUT WELL PAST THE FONT'S OWN SPACING. Blackletter is drawn to be set
+    tight in a line of text, where the eye reads the rhythm rather than each
+    letter. Three of them alone at icon size, on the face's own advances, close
+    into one shape that reads as nothing at all — so the letters are pushed
+    apart until each is its own.
+
+    Scaled to the letters' actual inked bounds rather than to the font's line
+    box, so it is optically centred rather than centred around whitespace the
+    glyphs never use.
+  -->
+  <rect width="512" height="512" rx="112" fill="#0A0E13"/>
+  <g fill="#4CB3F0" transform="translate(80.35 345.23) scale(0.23452 -0.23452)">
+    <path transform="translate(0.00 0)" d="M209 672Q191 672 170 657V332Q196 332 228.0 348.5Q260 365 260 383V598Q260 672 209 672ZM50 102V620Q50 681 9 689V711L110 768Q130 760 150.0 739.0Q170 718 170 701Q280 768 296.0 768.0Q312 768 346.5 727.0Q381 686 381 653V372Q381 364 272 321Q318 166 380 112Q408 89 437 89V59Q344 0 319 0Q286 0 235.5 124.0Q185 248 181 288L170 285V154Q170 117 178.0 101.0Q186 85 211 85V54L6 -32L-10 0Q12 0 32 26Q50 51 50 102Z"/>
+    <path transform="translate(492.00 0)" d="M122 102V632L153 662H90Q29 662 21 629H-1L-58 711Q-46 730 -27.0 745.0Q-8 760 10 760H274Q335 760 343 793H365L422 711Q410 692 391.0 677.0Q372 662 354 662H242V154Q242 117 250.0 101.0Q258 85 283 85V54L78 -32L62 0Q84 0 104 26Q122 51 122 102Z"/>
+    <path transform="translate(917.00 0)" d="M260 623Q260 678 211 688V710Q319 770 320 770Q329 770 352.0 750.5Q375 731 380 709Q382 711 441.0 740.5Q500 770 501 770Q521 770 545 746Q591 700 591 623V93Q591 84 484.0 42.0Q377 0 351 0Q304 0 273 62Q163 0 134.0 0.0Q105 0 77.5 42.5Q50 85 50 121V623Q50 678 1 688V710L110 771Q132 762 151.0 741.5Q170 721 170 704V195Q170 100 229 100Q244 100 260 106ZM470 107V587Q470 639 449.0 656.5Q428 674 381 675V185Q381 153 393.5 125.5Q406 98 428.0 98.0Q450 98 470 107Z"/>
+  </g>
 </svg>

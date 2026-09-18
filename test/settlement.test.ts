@@ -48,14 +48,18 @@ async function seed(hoursOut = 30) {
   env = makeEnv(MIGRATIONS) as unknown as Env;
   const n = now();
 
+  // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+  // must have somewhere to be paid before its work can be sold, so priceOrder
+  // treats an opening for an operator without it as unlisted. Drop it and every
+  // booking in this file comes back slot_gone.
   await env.DB.prepare(
     `INSERT INTO operators (id,email,business_name,trade,timezone,country,currency,language,
        location_mode,fill_model,sms_mode,max_detour_seconds,min_gap_seconds,buffer_seconds,
        offer_ttl_seconds,offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,
        discount_percent,plan,accept_public_bookings,deposit_cents,share_location,
-       created_at,updated_at)
+       created_at,updated_at,stripe_payouts_enabled)
      VALUES (?,?,?, 'mobile car wash and detailing','America/Los_Angeles','US','USD','en','mobile','both',
-       'device',3600,3600,900,5400,3,3600,604800,0,'active',1,0,1,?,?)`,
+       'device',3600,3600,900,5400,3,3600,604800,0,'active',1,0,1,?,?,1)`,
   ).bind(OP, 'o@x.com', 'Valley Detailing', n, n).run();
 
   await saveOperatorCard(env, OP, { ref: 'pm_test', brand: 'visa', last4: '4242' });
@@ -190,9 +194,17 @@ describe('the one question', () => {
 });
 
 describe('when nobody answers', () => {
-  it('keeps the money, charges nobody, and flags it', async () => {
-    // Chosen so no pair of people can profit by agreeing to say nothing: the
-    // customer does not get refunded and the operator does not get paid.
+  it('gives the customer their money back, charges nobody, and flags it', async () => {
+    // THE POLICY CHANGED HERE, and this test is the record of why.
+    //
+    // Silence used to resolve to 'withheld' on both sides: nobody profits from
+    // saying nothing. That was written when no money could move, so withholding
+    // cost nobody anything. It costs somebody now — the card is charged at
+    // booking — and on an OPERATOR cancellation it meant this platform keeping
+    // a stranger's money for a job that was never done because they did not
+    // read an email. The operator's half of the old rule is still right: an
+    // unanswered question is not evidence against them, so the fee stays
+    // waived and nothing is charged to anybody.
     const { itemId } = await seed(30);
     await cancelByOperator(env, OP, itemId);
     await env.DB.prepare(`UPDATE order_items SET hold_until = ? WHERE id = ?`)
@@ -201,12 +213,37 @@ describe('when nobody answers', () => {
     expect(await settleExpiredHolds(env)).toBe(1);
 
     const row = await settlement(itemId);
-    expect(row!.settlement).toBe('withheld');
-    expect(row!.refund_cents).toBe(0);
+    expect(row!.settlement).toBe('released');
+    expect(row!.refund_cents).toBe(20000);
+
+    // Still not charged, and still on the record. The deterrent against the
+    // doorstep cash job was never this rule — it is that an operator has to
+    // trust a stranger not to answer "no, they left".
+    const fee = await one<{ status: string }>(
+      `SELECT status FROM lead_fees WHERE order_item_id = ?`, itemId);
+    expect(fee!.status).toBe('waived');
 
     const flagged = await one<{ kind: string }>(
       `SELECT kind FROM bypass_flags WHERE order_item_id = ?`, itemId);
     expect(flagged!.kind).toBe('silence');
+  });
+
+  it('still keeps the customer\'s side on the ladder they were shown', async () => {
+    // The half of the old rule that stays. A customer who cancelled inside 12
+    // hours and then said nothing gets the quarter they were quoted before they
+    // confirmed, not the whole price: they are the one who cancelled, and
+    // silence from them is not a question nobody answered.
+    const { itemId, token } = await seed(6);
+    await env.DB.prepare(`UPDATE order_items SET created_at = ? WHERE id = ?`)
+      .bind(now() - 2 * 3600, itemId).run();
+    await cancelByCustomer(env, token, itemId);
+    await env.DB.prepare(`UPDATE order_items SET hold_until = ? WHERE id = ?`)
+      .bind(now() - 1, itemId).run();
+
+    await settleExpiredHolds(env);
+    const row = await settlement(itemId);
+    expect(row!.settlement).toBe('released');
+    expect(row!.refund_cents).toBe(5000);
   });
 
   it('releases a customer cancellation when no van ever turned up', async () => {

@@ -48,8 +48,8 @@ async function shrink(file: File, max = 1600): Promise<Blob> {
 }
 
 export default function JobProof(
-  { orderItemId, token, disabled }:
-  { orderItemId: string; token?: string; disabled?: boolean },
+  { orderItemId, threadRef, disabled }:
+  { orderItemId: string; threadRef?: string; disabled?: boolean },
 ) {
   const [photos, setPhotos] = useState<JobPhoto[]>([]);
   const [busy, setBusy] = useState<Stage | null>(null);
@@ -59,15 +59,15 @@ export default function JobProof(
 
   const load = useCallback(async () => {
     try {
-      const res = token
-        ? await api.guestProof(token, orderItemId)
+      const res = threadRef
+        ? await api.guestProof(threadRef, orderItemId)
         : await api.jobProof(orderItemId);
       setPhotos([...res.before, ...res.during, ...res.after]);
     } catch {
       // A proof strip that will not load is not worth an error box over the
       // booking it belongs to. The next open will pick it up.
     } finally { setLoaded(true); }
-  }, [orderItemId, token]);
+  }, [orderItemId, threadRef]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -78,7 +78,7 @@ export default function JobProof(
       const form = new FormData();
       form.append('file', new File([blob], 'photo.jpg', { type: 'image/jpeg' }));
       form.append('stage', stage);
-      if (token) await api.guestAddProof(token, orderItemId, form);
+      if (threadRef) await api.guestAddProof(threadRef, orderItemId, form);
       else await api.addJobProof(orderItemId, form);
       await load();
     } catch (e) {
@@ -88,8 +88,8 @@ export default function JobProof(
 
   if (!loaded) return null;
 
-  const src = (p: JobPhoto) => (token
-    ? `/api/public/threads/${encodeURIComponent(token)}/photo/${p.id}`
+  const src = (p: JobPhoto) => (threadRef
+    ? `/api/public/threads/${encodeURIComponent(threadRef)}/photo/${p.id}`
     : `/api/proof/${p.id}`);
 
   return (

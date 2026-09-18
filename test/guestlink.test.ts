@@ -40,12 +40,16 @@ function call(method: string, path: string, opts: { ip?: string; body?: unknown 
 async function seed() {
   env = makeEnv(ALL_MIGRATIONS) as unknown as Env;
   const n = now();
+  // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+  // must have somewhere to be paid before its work can be sold, so priceOrder
+  // treats an opening for an operator without it as unlisted. Drop it and every
+  // booking in this file comes back slot_gone.
   await env.DB.prepare(
     `INSERT INTO operators (id,email,business_name,trade,timezone,country,currency,language,
        location_mode,fill_model,sms_mode,plan,accept_public_bookings,share_location,
-       created_at,updated_at)
+       created_at,updated_at,stripe_payouts_enabled)
      VALUES (?,?,?, 'mobile car wash and detailing','America/Los_Angeles','US','USD','en',
-       'mobile','both','device','active',1,1,?,?)`,
+       'mobile','both','device','active',1,1,?,?,1)`,
   ).bind(OP, 'g@x.com', 'Valley Detailing', n, n).run();
   await saveOperatorCard(env, OP, { ref: 'pm', brand: 'visa', last4: '4242' });
   await env.DB.prepare(
@@ -169,8 +173,8 @@ describe('a guest link that is being guessed at', () => {
 
 describe('a customer using the link they were actually given', () => {
   it('is never locked out by polling, however long the tab is open', async () => {
-    // GuestThread.tsx polls every fifteen seconds. Sixty polls is a quarter of
-    // an hour of somebody sitting on their own booking, which must not be
+    // Conversation.tsx polls every fifteen seconds. Sixty polls is a quarter
+    // of an hour of somebody sitting on their own booking, which must not be
     // indistinguishable from an attack on it.
     const ip = '198.51.100.9';
     const token = await booking();

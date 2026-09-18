@@ -18,8 +18,9 @@ import type { Env } from '../src/types';
 import { startThread } from '../src/lib/chat';
 import { VanTracker } from '../src/do/van';
 import {
-  customerView, operatorPosition, recordPosition, setShareLocation,
-  MAX_TRAIL_POINTS, MIN_PING_SECONDS, STALE_AFTER_SECONDS, TRAIL_EVERY_SECONDS,
+  customerView, livePositions, operatorPosition, recordPosition, setShareLocation,
+  HANDLE_SECONDS, MAX_TRAIL_POINTS, MIN_PING_SECONDS, PUBLIC_DECIMALS,
+  STALE_AFTER_SECONDS, TRAIL_EVERY_SECONDS, handleOffset,
   WINDOW_AFTER_SECONDS, WINDOW_BEFORE_SECONDS,
 } from '../src/lib/track';
 import type { PositionPing } from '../src/lib/track';
@@ -580,5 +581,300 @@ describe('an environment with no VAN binding', () => {
     expect(await customerView(bare, token)).toMatchObject({
       visible: false, reason: 'no_position',
     });
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// The public map
+// ---------------------------------------------------------------------------
+//
+// The front page shows who is actually out. Everything below is about the four
+// gates and the one thing the endpoint must never do, which is say who.
+
+/** Switch an operator on for the day, which is gate 3. */
+async function goOnline(id: string, seconds = 3600) {
+  await env.DB.prepare(
+    `UPDATE operators SET online_until = ? WHERE id = ?`,
+  ).bind(now() + seconds, id).run();
+}
+
+describe('who is out right now', () => {
+  it('shows nobody until somebody switches sharing on', async () => {
+    // Out, pinging, listed — but has not consented. That is not a van we may
+    // draw, and consent is the gate nothing else can substitute for.
+    await goOnline(OP);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+    expect(await livePositions(env)).toEqual([]);
+
+    await setShareLocation(env, OP, true);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+    expect(await livePositions(env)).toHaveLength(1);
+  });
+
+  it('shows nobody who is not switched on for the day', async () => {
+    // Sharing on and a fresh fix, but not working. Their driveway is the last
+    // place this should be drawing a dot.
+    await setShareLocation(env, OP, true);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+    expect(await livePositions(env)).toEqual([]);
+
+    await goOnline(OP);
+    expect(await livePositions(env)).toHaveLength(1);
+  });
+
+  it('drops a van whose fix has gone stale', async () => {
+    await setShareLocation(env, OP, true);
+    await goOnline(OP);
+    await recordPosition(env, OP, {
+      ...VAN, recorded_at: now() - STALE_AFTER_SECONDS - 60,
+    });
+    // A stale dot says "two streets away" about a van that has driven home.
+    expect(await livePositions(env)).toEqual([]);
+  });
+
+  it('drops a van that has stopped being listed', async () => {
+    await setShareLocation(env, OP, true);
+    await goOnline(OP);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+    expect(await livePositions(env)).toHaveLength(1);
+
+    await env.DB.prepare(
+      `UPDATE operators SET accept_public_bookings = 0 WHERE id = ?`,
+    ).bind(OP).run();
+    expect(await livePositions(env)).toEqual([]);
+  });
+
+  it('goes dark the moment sharing is switched off', async () => {
+    await setShareLocation(env, OP, true);
+    await goOnline(OP);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+    expect(await livePositions(env)).toHaveLength(1);
+
+    await setShareLocation(env, OP, false);
+    expect(await livePositions(env)).toEqual([]);
+  });
+
+  it('never says who', async () => {
+    await setShareLocation(env, OP, true);
+    await goOnline(OP);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+
+    const [van] = await livePositions(env);
+    // The exact shape, asserted whole. A field added here later is a field
+    // added to a public endpoint about a person's location, and it should have
+    // to break this test to get there.
+    expect(Object.keys(van!).sort())
+      .toEqual(['heading', 'kind', 'lat', 'lng', 'ref']);
+    expect(JSON.stringify(van)).not.toContain(OP);
+    expect(JSON.stringify(van)).not.toContain('Valley Detailing');
+  });
+
+  it('coarsens the position before it leaves the Worker', async () => {
+    await setShareLocation(env, OP, true);
+    await goOnline(OP);
+    // A fix with far more precision than anybody outside should ever receive.
+    await recordPosition(env, OP, {
+      lat: 34.1500123, lng: -118.4490987, recorded_at: now(),
+    });
+
+    const [van] = await livePositions(env);
+    const places = (n: number) => (String(n).split('.')[1] ?? '').length;
+    expect(places(van!.lat)).toBeLessThanOrEqual(PUBLIC_DECIMALS);
+    expect(places(van!.lng)).toBeLessThanOrEqual(PUBLIC_DECIMALS);
+    // Still the right part of town — coarsening must not move the van.
+    expect(van!.lat).toBeCloseTo(34.15, 2);
+    expect(van!.lng).toBeCloseTo(-118.449, 2);
+  });
+
+  it('gives the same van the same handle inside a bucket, and a new one after', async () => {
+    await setShareLocation(env, OP, true);
+    await goOnline(OP);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+
+    const first = (await livePositions(env))[0]!.ref;
+    // Same bucket: the browser has to be able to tell it is the same vehicle,
+    // or the dot teleports instead of driving.
+    expect((await livePositions(env))[0]!.ref).toBe(first);
+
+    // A bucket later, the handle must be different — that rotation is the
+    // whole reason it is safe to hand one out at all.
+    const later = now() + HANDLE_SECONDS + 1;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(later * 1000);
+    try {
+      await recordPosition(env, OP, { ...VAN, recorded_at: later });
+      expect((await livePositions(env))[0]!.ref).not.toBe(first);
+    } finally { clock.mockRestore(); }
+  });
+
+  it('draws each van as what that business said it drives', async () => {
+    await env.DB.prepare(
+      `UPDATE operators SET vehicle_kind = 'pickup_trailer' WHERE id = ?`,
+    ).bind(OP).run();
+    await setShareLocation(env, OP, true);
+    await goOnline(OP);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+
+    expect((await livePositions(env))[0]!.kind).toBe('pickup_trailer');
+  });
+
+  it('falls back to a van for somebody who was never asked', async () => {
+    // Every operator who signed up before migration 0039 has NULL here, and
+    // the map still has to draw them as something.
+    await setShareLocation(env, OP, true);
+    await goOnline(OP);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+    expect((await livePositions(env))[0]!.kind).toBe('van');
+  });
+
+  it('takes a van off the public map the moment it is booked', async () => {
+    await setShareLocation(env, OP, true);
+    await goOnline(OP);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+    expect(await livePositions(env)).toHaveLength(1);
+
+    // A job starting in half an hour. From here until it is over this operator
+    // belongs to that customer: an anonymous dot that can be watched arriving
+    // somewhere and stopping is an address, and that address is a home.
+    await bookedThread({ startsIn: 1800 });
+    expect(await livePositions(env)).toEqual([]);
+  });
+
+  it('is never on the public map and a customer map at the same time', async () => {
+    // The two views share one window, which is what makes the promise keepable:
+    // free and anonymous to everybody, or visible to exactly one customer.
+    await setShareLocation(env, OP, true);
+    await goOnline(OP);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+
+    const { token } = await bookedThread({ startsIn: 1800 });
+    const seen = await customerView(env, token);
+    expect(seen.visible).toBe(true);
+    expect(await livePositions(env)).toEqual([]);
+  });
+
+  it('comes back once the job is long finished', async () => {
+    await setShareLocation(env, OP, true);
+    await goOnline(OP);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+
+    // Ended well before the window closed behind it.
+    await bookedThread({
+      startsIn: -(WINDOW_AFTER_SECONDS + 7200),
+      durationSeconds: 3600,
+    });
+    expect(await livePositions(env)).toHaveLength(1);
+  });
+
+  it('is not taken off the map by a cancelled booking', async () => {
+    await setShareLocation(env, OP, true);
+    await goOnline(OP);
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+
+    await bookedThread({ startsIn: 1800, status: 'cancelled' });
+    expect(await livePositions(env)).toHaveLength(1);
+  });
+
+  it('is not taken off the map by somebody else being booked', async () => {
+    for (const id of [OP, OTHER]) {
+      await setShareLocation(env, id, true);
+      await goOnline(id);
+    }
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+    await recordPosition(env, OTHER, { ...OTHER_VAN, recorded_at: now() });
+
+    await bookedThread({ operator: OTHER, startsIn: 1800 });
+    // One booked, one free. The free one is still on the map.
+    expect(await livePositions(env)).toHaveLength(1);
+  });
+
+  it('shows two businesses as two vans', async () => {
+    for (const id of [OP, OTHER]) {
+      await setShareLocation(env, id, true);
+      await goOnline(id);
+    }
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() });
+    await recordPosition(env, OTHER, { ...OTHER_VAN, recorded_at: now() });
+
+    const list = await livePositions(env);
+    expect(list).toHaveLength(2);
+    // Two different handles, so the map draws two vehicles rather than one.
+    expect(new Set(list.map((v) => v.ref)).size).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What is left on disk after the van stops, and when it stops being left
+// ---------------------------------------------------------------------------
+
+describe('the snapshot in durable storage', () => {
+  /**
+   * The one thing about tracking that was written down and never taken back.
+   *
+   * The object persists a snapshot so an eviction mid-journey does not make the
+   * van vanish off a customer's screen. Nothing ever deleted one: only
+   * forgetVan did, and that runs when an account CLOSES. So after a
+   * self-employed person finished work, up to twenty full-precision fixes
+   * spanning roughly fifty minutes of their movements sat in storage
+   * indefinitely — while the privacy page said the position is held in memory
+   * rather than written down as a trail.
+   *
+   * read() already refuses anything older than STALE_AFTER_SECONDS, so past
+   * that the snapshot answers nothing. The alarm is what ends it.
+   */
+  it('is forgotten by the alarm once nothing can read it any more', async () => {
+    await recordPosition(env, OP, {
+      ...VAN, recorded_at: now() - STALE_AFTER_SECONDS - 60,
+    });
+    // Written, as the cushion it is meant to be.
+    expect(vans.writes(OP)).toBeGreaterThan(0);
+
+    await vanStub(OP).alarm();
+
+    // Gone from memory AND from storage: an eviction now restores nothing.
+    vans.evict(OP);
+    const { position, trail } = await operatorPosition(env, OP);
+    expect(position).toBeNull();
+    expect(trail).toHaveLength(0);
+  });
+
+  it('keeps a van a customer could still legitimately be watching', async () => {
+    // Quiet for a few minutes is an ordinary dead spot -- a tunnel, a
+    // basement job -- and the ten minutes is measured from the fix, not from
+    // whenever the flush interval happened to put the alarm.
+    await recordPosition(env, OP, { ...VAN, recorded_at: now() - 60 });
+    await vanStub(OP).alarm();
+
+    vans.evict(OP);
+    expect((await operatorPosition(env, OP)).position!.lat).toBeCloseTo(VAN.lat, 6);
+  });
+});
+
+describe('the rotating handle on the public map', () => {
+  it('does not rotate every van on the same tick', async () => {
+    // `floor(t / 600)` was the same number for every van, so every handle on
+    // the map changed together -- and a poller watching that moment matches the
+    // vanishing set to the appearing set by nearest neighbour and re-links all
+    // of them. Six of those an hour and the rotation has done nothing: one
+    // vehicle can be followed until it stops, which is usually its driver's
+    // home.
+    const ids = Array.from({ length: 40 }, (_, i) => `op-stagger-${i}`);
+    const offsets = ids.map((id) => handleOffset(id));
+
+    for (const o of offsets) {
+      expect(Number.isInteger(o)).toBe(true);
+      expect(o).toBeGreaterThanOrEqual(0);
+      expect(o).toBeLessThan(HANDLE_SECONDS);
+    }
+    // Spread across the window rather than clustered on one boundary. Forty
+    // vans landing on fewer than ten distinct seconds would be no stagger.
+    expect(new Set(offsets).size).toBeGreaterThan(30);
+  });
+
+  it('gives one operator the same offset every time it is asked', async () => {
+    // A fresh offset per read would rotate the handle on every poll, and the
+    // map would twitch -- which is the thing the ten minutes exists to stop.
+    expect(handleOffset(OP)).toBe(handleOffset(OP));
+    expect(handleOffset(OP)).not.toBe(handleOffset(`${OP}x`));
   });
 });

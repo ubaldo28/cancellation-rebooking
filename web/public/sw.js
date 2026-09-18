@@ -1,5 +1,5 @@
 /*
- * Slotfill service worker.
+ * Roundtheway service worker.
  *
  * It exists for one reason: a push message cannot be delivered to a page, only
  * to a worker, so without this file the openings alerts have nowhere to land.
@@ -32,12 +32,12 @@ self.addEventListener('push', (event) => {
     payload = {};
   }
 
-  const title = typeof payload.title === 'string' && payload.title ? payload.title : 'Slotfill';
+  const title = typeof payload.title === 'string' && payload.title ? payload.title : 'Roundtheway';
   const body = typeof payload.body === 'string' ? payload.body : '';
   const url = typeof payload.url === 'string' && payload.url ? payload.url : '/';
   // The tag collapses repeats: a second push about the same opening replaces
   // the first rather than stacking another line on the lock screen.
-  const tag = typeof payload.tag === 'string' && payload.tag ? payload.tag : 'slotfill';
+  const tag = typeof payload.tag === 'string' && payload.tag ? payload.tag : 'roundtheway';
 
   event.waitUntil(self.registration.showNotification(title, {
     body,

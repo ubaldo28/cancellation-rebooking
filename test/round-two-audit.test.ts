@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ALL_MIGRATIONS, makeEnv } from './d1';
+import { makeReachable } from './reachable';
 import type { Candidate, Env, Operator } from '../src/types';
 import { detectGaps } from '../src/lib/gaps';
 import { buildMessage, createOffers } from '../src/lib/offers';
@@ -205,10 +206,17 @@ describe('a second wave of offers on the same opening', () => {
     const env = makeEnv(ALL_MIGRATIONS) as unknown as Env;
     const op = await seedOperator(env, { discount_percent: discountPercent } as Partial<Operator>);
     const t = now();
+    // No number and no consent flag, which is how every customer this platform
+    // introduces is stored. What makes them offerable is the conversation and
+    // the account makeReachable writes -- see test/reachable.ts.
     await env.DB.prepare(
-      `INSERT INTO clients (id,operator_id,first_name,phone_e164,sms_consent,sms_consent_at,
-         created_at,updated_at) VALUES ('c1','op1','Rosa','+13105550101',1,?,?,?)`,
-    ).bind(t, t, t).run();
+      `INSERT INTO clients (id,operator_id,first_name,phone_e164,acquired,
+         platform_introduced,created_at,updated_at)
+       VALUES ('c1','op1','Rosa',NULL,'public',1,?,?)`,
+    ).bind(t, t).run();
+    const reach = await makeReachable(env, {
+      operator_id: 'op1', client_id: 'c1', guest_name: 'Rosa', at: t,
+    });
     await env.DB.prepare(
       `INSERT INTO gaps (id,operator_id,starts_at,ends_at,is_mobile,status,created_at,updated_at)
        VALUES ('g1','op1',?,?,1,'open',?,?)`,
@@ -216,7 +224,7 @@ describe('a second wave of offers on the same opening', () => {
     const gap = (await env.DB.prepare(`SELECT * FROM gaps WHERE id='g1'`).first()) as GapRow;
     const cand = [{
       kind: 'client', client_id: 'c1', lead_id: null, service_id: null,
-      first_name: 'Rosa', phone_e164: '+13105550101', language: null,
+      first_name: 'Rosa', thread_id: reach.thread_id, language: null,
       title: 'Full detail', duration_seconds: 3600, price_cents: 6500,
       drive_in_seconds: 0, drive_out_seconds: 0, detour_seconds: 0,
       overdue_days: 3, urgency: 1, score: 1, reasons: [],
@@ -238,10 +246,20 @@ describe('a second wave of offers on the same opening', () => {
     // The id handed back is a row that exists, so a caller can act on it.
     expect(second[0]!.offer_id).toBe(offers.results![0]!.id);
 
+    // Two messages in the one conversation, because a second wave is a second
+    // thing said to the same person about the same hour -- and none at all in
+    // `messages`, which is the SMS pipeline's billing table and is now written
+    // by nothing. The foreign key that used to blow the whole batch up lived
+    // on that table; what the wave writes instead is a chat line, which has no
+    // offer_id to get wrong.
     const messages = await env.DB.prepare(
-      `SELECT offer_id FROM messages ORDER BY created_at`).all<any>();
-    expect(messages.results!.length).toBe(2);
-    for (const m of messages.results!) expect(m.offer_id).toBe(offers.results![0]!.id);
+      `SELECT COUNT(*) AS n FROM messages`).first<{ n: number }>();
+    expect(messages!.n).toBe(0);
+    const chat = await env.DB.prepare(
+      `SELECT sender FROM chat_messages WHERE thread_id = ? ORDER BY created_at`,
+    ).bind(second[0]!.thread_id).all<any>();
+    expect(chat.results!.length).toBe(2);
+    for (const m of chat.results!) expect(m.sender).toBe('operator');
   });
 
   it('re-quotes at the price the new message actually names', async () => {
@@ -260,10 +278,17 @@ describe('a discount is the same number wherever it is read', () => {
     const env = makeEnv(ALL_MIGRATIONS) as unknown as Env;
     const op = await seedOperator(env, { discount_percent: 10 } as Partial<Operator>);
     const t = now();
+    // No number and no consent flag, which is how every customer this platform
+    // introduces is stored. What makes them offerable is the conversation and
+    // the account makeReachable writes -- see test/reachable.ts.
     await env.DB.prepare(
-      `INSERT INTO clients (id,operator_id,first_name,phone_e164,sms_consent,sms_consent_at,
-         created_at,updated_at) VALUES ('c1','op1','Rosa','+13105550101',1,?,?,?)`,
-    ).bind(t, t, t).run();
+      `INSERT INTO clients (id,operator_id,first_name,phone_e164,acquired,
+         platform_introduced,created_at,updated_at)
+       VALUES ('c1','op1','Rosa',NULL,'public',1,?,?)`,
+    ).bind(t, t).run();
+    const reach = await makeReachable(env, {
+      operator_id: 'op1', client_id: 'c1', guest_name: 'Rosa', at: t,
+    });
     await env.DB.prepare(
       `INSERT INTO gaps (id,operator_id,starts_at,ends_at,is_mobile,status,created_at,updated_at)
        VALUES ('g1','op1',?,?,1,'open',?,?)`,
@@ -271,7 +296,7 @@ describe('a discount is the same number wherever it is read', () => {
     const gap = (await env.DB.prepare(`SELECT * FROM gaps WHERE id='g1'`).first()) as GapRow;
     const cand = {
       kind: 'client', client_id: 'c1', lead_id: null, service_id: null,
-      first_name: 'Rosa', phone_e164: '+13105550101', language: null,
+      first_name: 'Rosa', thread_id: reach.thread_id, language: null,
       title: 'Full detail', duration_seconds: 3600, price_cents: 6500,
       drive_in_seconds: 0, drive_out_seconds: 0, detour_seconds: 0,
       overdue_days: 3, urgency: 1, score: 1, reasons: [],
@@ -330,10 +355,26 @@ describe('the missed-job sweep speaks only about the jobs it actually expired', 
 
     expect(expired).toBe(1);
 
-    const notes = await env.DB.prepare(`SELECT title FROM notifications`).all<any>();
-    const titles = notes.results!.map((n: any) => n.title);
-    expect(titles).toContain('You missed a job from Missed');
-    expect(titles).not.toContain('You missed a job from Taken');
+    // ONE notification, for the one request this run actually expired.
+    //
+    // This used to be checked by reading the customer's first name out of the
+    // title — "You missed a job from Missed" present, "...from Taken" absent.
+    // The name is no longer in a feed row written by this path and must not go
+    // back: a notification from an instant request carries neither an
+    // appointment_id nor a thread_id, so eraseCustomerByPhone has no key to
+    // find one by, and a first name in the title was therefore a copy of a
+    // customer that "delete my data" could not reach. Counting the rows proves
+    // the same property — the sweep speaks only about what it moved — without
+    // needing somebody's name to be stored in order to do it.
+    const notes = await env.DB.prepare(
+      `SELECT title, body FROM notifications`).all<any>();
+    expect(notes.results!.length).toBe(1);
+    expect(notes.results![0].title).toBe('You missed a right-now job');
+    for (const n of notes.results!) {
+      for (const name of ['Missed', 'Taken']) {
+        expect(`${n.title} ${n.body ?? ''}`).not.toContain(name);
+      }
+    }
 
     // And the accepted request is left accepted.
     const taken = await env.DB.prepare(

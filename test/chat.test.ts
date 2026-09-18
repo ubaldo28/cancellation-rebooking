@@ -125,8 +125,8 @@ describe('one business cannot reach another business conversation', () => {
     await startThread(env, { operator_id: OP, guest_name: 'Rosa', first_message: 'Hi' });
     await startThread(env, { operator_id: OTHER, guest_name: 'Dan', first_message: 'Hi' });
 
-    expect(await listThreads(env, OP)).toHaveLength(1);
-    expect((await listThreads(env, OP))[0]!.guest_name).toBe('Rosa');
+    expect((await listThreads(env, OP)).threads).toHaveLength(1);
+    expect((await listThreads(env, OP)).threads[0]!.guest_name).toBe('Rosa');
     expect(await unreadThreadCount(env, OP)).toBe(1);
     expect(await unreadThreadCount(env, OTHER)).toBe(1);
   });
@@ -187,11 +187,11 @@ describe('unread counters', () => {
       .bind(now() - 60, second.thread.id).run();
 
     await postAsGuest(env, first.token, 'Still there?');
-    expect((await listThreads(env, OP))[0]!.id).toBe(first.thread.id);
+    expect((await listThreads(env, OP)).threads[0]!.id).toBe(first.thread.id);
 
-    expect(await listThreads(env, OP, { unreadOnly: true })).toHaveLength(2);
+    expect((await listThreads(env, OP, { unreadOnly: true })).threads).toHaveLength(2);
     await markThreadRead(env, 'operator', { operator_id: OP, thread_id: second.thread.id });
-    expect(await listThreads(env, OP, { unreadOnly: true })).toHaveLength(1);
+    expect((await listThreads(env, OP, { unreadOnly: true })).threads).toHaveLength(1);
   });
 });
 

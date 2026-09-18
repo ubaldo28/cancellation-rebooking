@@ -1,0 +1,104 @@
+-- ---------------------------------------------------------------------------
+-- 0050 — the signed Stripe event that could be sent twice
+-- ---------------------------------------------------------------------------
+--
+-- /webhooks/stripe verifies the signature and then acts on the event. The
+-- signature is the whole of the authentication on that route, and it is
+-- correct, but it says nothing about whether this delivery is the FIRST one:
+-- the signed bytes and their header are a bearer token for as long as the
+-- timestamp stays inside the tolerance verifyStripeSignature allows, which is
+-- 300 seconds. Anybody who holds one copy of a real event — a proxy log, a
+-- debugging dump, a paste in a support ticket — can re-POST it unchanged for
+-- five minutes and the endpoint will act on it again.
+--
+-- Stripe itself also sends the same event more than once. It retries anything
+-- that does not answer 2xx, and a handler that ran to completion and then
+-- failed on the way out of the Worker is a retry of an event that already
+-- happened. So this is not only an attack; it is ordinary Tuesday behaviour
+-- from the sender.
+--
+-- WHAT REPLAYING EACH ONE ACTUALLY DID. The switch has three arms and only one
+-- of them was safe:
+--
+--   payment_intent.succeeded   markPaid is written to be idempotent and holds
+--                              up under a second delivery. This is the arm
+--                              that made the whole route LOOK idempotent.
+--   payment_intent.payment_failed / .canceled
+--                              markPaymentFailed is not. It records a failure
+--                              against an order, and a replay lands a stale
+--                              failure on an order that has since been paid by
+--                              the customer's second card.
+--   account.updated            syncConnectAccount is not either. It overwrites
+--                              the cached charges_enabled and payouts_enabled
+--                              flags on an operator from the event body. A
+--                              five-minute-old event saying "payouts off" can
+--                              be replayed over the newer one saying they are
+--                              back on, and a business that Stripe is happy
+--                              with stops being payable — silently, because
+--                              the flags are exactly what the payout step
+--                              reads and nothing else disagrees with them.
+--
+-- So the event id becomes the key, checked before the switch. src/index.ts
+-- does an INSERT OR IGNORE and reads the affected row count: one means this is
+-- the first time and processing continues, nought means it has been handled
+-- and the route answers 200 without doing the work again. 200 rather than an
+-- error on purpose — anything else makes Stripe retry for days over an event
+-- that was received perfectly well the first time.
+--
+-- WHAT IS IN THIS TABLE, AND WHAT IS DELIBERATELY NOT. The id and the time it
+-- arrived. Nothing else, and specifically not the event body: an event carries
+-- customer names, billing addresses, email addresses and amounts, and storing
+-- it to answer "have I seen this?" would put a second copy of all of that in a
+-- table no erasure path knows about, in exchange for a question a primary key
+-- already answers. An event id is a Stripe-side identifier ('evt_...') and is
+-- not personal data.
+CREATE TABLE stripe_events (
+  -- The event id straight from the payload: 'evt_...'. PRIMARY KEY is the
+  -- whole mechanism — the uniqueness is what makes the second INSERT a no-op,
+  -- so a check-then-write race between two concurrent deliveries of the same
+  -- event cannot let both through. TEXT rather than a hash of it: this is
+  -- Stripe's own opaque identifier, it is not a secret, and being able to read
+  -- it is what lets somebody look the event up in the dashboard when a payment
+  -- is being argued about.
+  id TEXT PRIMARY KEY,
+
+  -- When we accepted it, in seconds. Two jobs. It is what the sweep this table
+  -- still needs will filter on, and it is the only thing that tells the
+  -- difference between a table that is working and a table that stopped being
+  -- written to, which is the failure mode of a dedupe key nobody looks at.
+  received_at INTEGER NOT NULL
+);
+
+-- ---------------------------------------------------------------------------
+-- THIS TABLE NEEDS A SWEEP AND DOES NOT HAVE ONE YET
+-- ---------------------------------------------------------------------------
+--
+-- It only ever grows. One row per Stripe event this deployment has ever been
+-- sent, kept forever, to answer a question that stops being askable after the
+-- 300-second signature tolerance plus however long Stripe's own retries run —
+-- which is days, not months. Everything past that window is dead weight, and
+-- "nothing ever deleted from this table" is the exact shape of the problem
+-- migration 0048 had to fix in rate_limits with a DELETE.
+--
+-- It is documented here rather than implemented because lib/retention.ts is
+-- not this change's to edit, and because it is not a one-line addition there.
+-- What it needs, in the shape that file already uses:
+--
+--   1. A constant beside the others in RETENTION, e.g.
+--        STRIPE_EVENT_DAYS: 30
+--      Thirty is comfortably past Stripe's retry schedule and past any window
+--      in which a replay could still verify. It must never go below a few
+--      days: the row is what stops a retry being processed twice, so deleting
+--      one while the sender may still retry it reopens exactly this hole.
+--   2. A pass, in the same shape as every sweep in that file:
+--        DELETE FROM stripe_events WHERE received_at < ?
+--      returning meta.changes, with `received_at` indexed if the table is ever
+--      large enough for the scan to matter (at this product's volume it is one
+--      row per payment event and the scan is cheaper than the index).
+--   3. A line in the `passes` array inside sweepRetention, so the cron
+--      actually runs it: ['stripe_events', () => sweepStripeEvents(env)].
+--
+-- This is NOT personal data of a customer's, so it does not belong in the
+-- erasure path — only in the sweeps, for the same reason rate_limits is in
+-- that list and not in the erasure: the row is about a message we were sent,
+-- not about a person.

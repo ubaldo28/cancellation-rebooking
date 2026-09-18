@@ -110,7 +110,7 @@ async function signIn(email: string) {
      VALUES (?,?,?,?,?)`,
   ).bind(newId(), opId, hash, t + 86400, t).run();
 
-  return { opId, cookie: `gf_session=${raw}` };
+  return { opId, cookie: `__Host-gf_session=${raw}` };
 }
 
 async function client(operatorId: string, id = newId()) {

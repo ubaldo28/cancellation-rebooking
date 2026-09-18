@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_MIGRATIONS, makeEnv } from './d1';
+import { makeReachable } from './reachable';
 import type { Env } from '../src/types';
 import { placeOrder, priceOrder } from '../src/lib/orders';
 import { claimSlot, slotsNear } from '../src/lib/public';
@@ -55,14 +56,18 @@ async function seed(opts: { hoursOut?: number; priceCents?: number } = {}) {
   env = makeEnv(MIGRATIONS) as unknown as Env;
   const n = now();
 
+  // stripe_payouts_enabled = 1 is load-bearing, not boilerplate: a business
+  // must have somewhere to be paid before its work can be sold, so priceOrder
+  // treats an opening for an operator without it as unlisted. Drop it and every
+  // booking in this file comes back slot_gone.
   await env.DB.prepare(
     `INSERT INTO operators (id,email,business_name,trade,timezone,country,currency,language,
        location_mode,fill_model,sms_mode,max_detour_seconds,min_gap_seconds,buffer_seconds,
        offer_ttl_seconds,offers_per_wave,min_notice_seconds,reoffer_cooldown_seconds,
        discount_percent,plan,accept_public_bookings,deposit_cents,share_location,
-       is_published,created_at,updated_at)
+       is_published,created_at,updated_at,stripe_payouts_enabled)
      VALUES (?,?,?, 'mobile car wash and detailing','America/Los_Angeles','US','USD','en',
-       'mobile','both','device',3600,3600,900,5400,3,3600,604800,0,'active',1,0,1,1,?,?)`,
+       'mobile','both','device',3600,3600,900,5400,3,3600,604800,0,'active',1,0,1,1,?,?,1)`,
   ).bind(OP, 'o@x.com', 'Valley Detailing', n, n).run();
 
   await saveOperatorCard(env, OP, { ref: 'pm_test', brand: 'visa', last4: '4242' });
@@ -369,12 +374,14 @@ describe('a cancelled booking cannot be charged for', () => {
 // ---------------------------------------------------------------------------
 
 describe('nobody profits from nobody answering', () => {
-  it('waives the fee when the hold expires unanswered', async () => {
-    // Withheld means the money stays with the operator, exactly as an answer
-    // of 'done' does. The fee used to be left owed on top of that, so the
-    // operator was billed for cancelling a job they were simultaneously being
-    // paid for -- and the platform was the only party that gained from
-    // silence, keeping the customer's money AND collecting the fee.
+  it('refunds the customer and waives the fee when the hold expires unanswered', async () => {
+    // NEITHER SIDE IS CHARGED FOR A QUESTION NOBODY ANSWERED, and once the
+    // card is really charged at booking that has to mean the customer's money
+    // goes back rather than staying put. The operator cancelled, the job did
+    // not happen, and 'withheld' meant this platform quietly keeping a
+    // stranger's payment for it because they did not read an email. The fee is
+    // waived for the mirror reason: silence is not evidence against the
+    // operator either, and a fee is a debt that blocks their listing.
     const { gapId } = await seed({ hoursOut: 30 });
     const { itemId } = await book(gapId);
     await cancelByOperator(env, OP, itemId);
@@ -389,8 +396,8 @@ describe('nobody profits from nobody answering', () => {
 
     const row = await one<{ settlement: string; refund_cents: number }>(
       `SELECT settlement, refund_cents FROM order_items WHERE id = ?`, itemId);
-    expect(row!.settlement).toBe('withheld');
-    expect(row!.refund_cents).toBe(0);
+    expect(row!.settlement).toBe('released');
+    expect(row!.refund_cents).toBe(20000);
 
     const fee = await one<{ status: string }>(
       `SELECT status FROM lead_fees WHERE order_item_id = ?`, itemId);
@@ -441,17 +448,23 @@ describe('the single-slot claim path holds the same lines as checkout', () => {
   it('refuses a suspended customer', async () => {
     const { gapId } = await seed({ hoursOut: 30 });
     const t = now();
+    // Keyed on the proved address since migration 0038. A sanction keyed on
+    // the number would have left this path exactly as open, more quietly: the
+    // number reaching claimSlot is whatever was typed into the form.
     await env.DB.prepare(
       `INSERT INTO customer_standing
-         (phone_e164,no_show_strikes,suspended_until,banned_at,created_at,updated_at)
-       VALUES ('+18185550142',1,?,NULL,?,?)`,
+         (login_email,no_show_strikes,suspended_until,banned_at,created_at,updated_at)
+       VALUES ('rosa@mailbox.test',1,?,NULL,?,?)`,
     ).bind(t + 3 * 86400, t, t).run();
 
-    expect((await customerStanding(env, '+18185550142')).blocked).toBe(true);
+    expect((await customerStanding(env, 'rosa@mailbox.test')).blocked).toBe(true);
     // Checkout already refused this. The no-JavaScript form did not, which
     // made it simply the way round the whole suspension ladder.
     await expect(claimSlot(env, {
       gapId, first_name: 'Rosa', phone: '(818) 555-0142', postcode: '91403',
+      account: {
+        id: 'acct-rosa', phone: '+18185550142', login_email: 'rosa@mailbox.test',
+      },
     })).rejects.toThrow(/cannot book/i);
   });
 });
@@ -550,9 +563,16 @@ describe('an invited offer cannot book an opening that has been withdrawn', () =
     const clientId = newId();
     await env.DB.prepare(
       `INSERT INTO clients (id,operator_id,first_name,phone_e164,lat,lng,
-         default_service_id,geocode_status,created_at,updated_at)
-       VALUES (?,?,'Dee','+18185550188',?,?,'s1','ok',?,?)`,
+         default_service_id,geocode_status,acquired,platform_introduced,
+         created_at,updated_at)
+       VALUES (?,?,'Dee',NULL,?,?,'s1','ok','public',1,?,?)`,
     ).bind(clientId, OP, NEAR.lat, NEAR.lng, n, n).run();
+    // The conversation and the account behind it, because an offer is now a
+    // message into one and an email to the other -- createOffers writes
+    // nothing at all for somebody it cannot reach. See test/reachable.ts.
+    const reach = await makeReachable(env, {
+      operator_id: OP, client_id: clientId, guest_name: 'Dee', at: n,
+    });
 
     const gap = (await one<any>(
       `SELECT id, starts_at, ends_at, prev_lat, prev_lng, next_lat, next_lng,
@@ -563,7 +583,7 @@ describe('an invited offer cannot book an opening that has been withdrawn', () =
     // under test is what accepting does, not who gets asked.
     const offers = await createOffers(env, op, gap, [{
       kind: 'client', client_id: clientId, lead_id: null, service_id: 's1',
-      first_name: 'Dee', phone_e164: '+18185550188', language: 'en',
+      first_name: 'Dee', thread_id: reach.thread_id, language: 'en',
       lat: NEAR.lat, lng: NEAR.lng, duration_seconds: 3600, price_cents: 20000,
       title: 'Full detail', overdue_days: 10, urgency: null,
       drive_in_seconds: 300, drive_out_seconds: 300, detour_seconds: 420,
@@ -634,7 +654,7 @@ describe('the sign-in debug echo', () => {
     expect(mayEchoSignInLink(base, 'a-long-enough-debug-toke')).toBe(false);
     expect(mayEchoSignInLink(base, null)).toBe(false);
     expect(mayEchoSignInLink(
-      { ...base, APP_URL: 'https://slotfill.workers.dev' } as unknown as Env,
+      { ...base, APP_URL: 'https://roundtheway.app' } as unknown as Env,
       'a-long-enough-debug-token')).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { SITE_ORIGIN } from '../lib/origin';
 import { jsonLd } from '../lib/seo';
 import '../styles-shell.css';
 
@@ -19,8 +20,8 @@ export interface Crumb {
  * result for one of their category pages shows "Thumbtack › Home › Plumbing"
  * instead of a bare URL. A breadcrumb the crawler cannot parse is decoration.
  *
- * SLOTFILL IS ADDED HERE, AND THERE IS NO PROP TO TURN IT OFF.
- * Every caller would otherwise repeat `{ label: 'Slotfill', to: '/' }` as its
+ * ROUNDTHEWAY IS ADDED HERE, AND THERE IS NO PROP TO TURN IT OFF.
+ * Every caller would otherwise repeat `{ label: 'Round The Way', to: '/' }` as its
  * first item, and the day one of them forgets, the page still looks fine and
  * silently publishes a BreadcrumbList whose root is a category — which is
  * worse than publishing nothing, because it tells a crawler the site is
@@ -29,23 +30,27 @@ export interface Crumb {
  */
 export default function Crumbs({ items }: { items: Crumb[] }) {
   /**
-   * A trail with nothing in it is "Slotfill" on its own, which is not a trail
+   * A trail with nothing in it is "Round The Way" on its own, which is not a trail
    * — it is a link to the page the wordmark two inches above already goes to,
    * plus a one-item BreadcrumbList that says nothing. Render neither.
    */
   if (items.length === 0) return null;
 
-  const trail: Crumb[] = [{ label: 'Slotfill', to: '/' }, ...items];
+  const trail: Crumb[] = [{ label: 'Round The Way', to: '/' }, ...items];
 
   /**
-   * schema.org wants an absolute URL for each step. The origin is read at
-   * render rather than hardcoded so a preview deployment describes itself and
-   * not production. The guard is for the non-browser case (a test renderer, or
-   * the day any of this is pre-rendered); a relative path is still valid JSON,
-   * just less useful, so it degrades rather than throwing.
+   * schema.org wants an absolute URL for each step, and SITE_ORIGIN supplies
+   * it rather than `window.location.origin`.
+   *
+   * Reading the live hostname was the arrangement here before, defended as
+   * letting a preview deployment describe itself. It does the opposite of
+   * describing it. Every page the Worker renders carries a canonical built
+   * from APP_URL, so on any host that is not production this component named a
+   * set of URLs that contradicted the canonical in the same head: the page
+   * said it was at roundtheway.app and its own breadcrumb said it was
+   * somewhere else. One of the two has to give, and it is not the canonical.
+   * See lib/origin.ts.
    */
-  const origin = typeof window === 'undefined' ? '' : window.location.origin;
-
   const breadcrumbs = {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
@@ -56,7 +61,7 @@ export default function Crumbs({ items }: { items: Crumb[] }) {
       // The last step is the current page; schema.org allows it to carry no
       // item, and giving it one would mean inventing a URL for a crumb whose
       // whole meaning is "you are already here".
-      ...(c.to ? { item: `${origin}${c.to}` } : {}),
+      ...(c.to ? { item: `${SITE_ORIGIN}${c.to}` } : {}),
     })),
   };
 

@@ -1,5 +1,213 @@
 /* ==========================================================================
-   Slotfill design tokens.
+   The typefaces, served from this origin.
+
+   THESE THREE FAMILIES USED TO COME FROM GOOGLE. web/index.html carried a
+   single fonts.googleapis.com stylesheet link — Inter at five weights, IBM
+   Plex Mono at two, Saira Stencil One — and that stylesheet in turn pointed at
+   woff2 files on fonts.gstatic.com. It sat in the SPA SHELL, which is the
+   document every route the React app draws is served from, so it was not a
+   cost the pages that wanted a particular face paid. It was a cost every
+   visitor paid on every page: a DNS lookup and a TLS handshake to
+   googleapis.com in front of first paint, a second pair to gstatic.com behind
+   it, and the visitor's IP address and User-Agent handed to Google on a
+   request they did not make and were not asked about. In a GDPR market that is
+   an unconsented transfer of personal data to a third party, and it is an open
+   legal question a marketplace for bin cleaners has no reason to be holding.
+   The fonts are open-licensed. There was never anything to buy.
+
+   SO THEY ARE FILES IN web/public/fonts NOW, served by the same Worker that
+   serves everything else, under the same CSP, from the same connection the
+   page already has open. font-src in src/lib/headers.ts is 'self' and nothing
+   else, and the fallback stacks in --sans, --mono and .wordmark below are
+   unchanged, because they were always the thing that actually painted the
+   first frame.
+
+   ONLY THE WEIGHTS THE STYLESHEETS ASK FOR. The Google URL was a list —
+   Inter:wght@400;500;600;700;800, IBM+Plex+Mono:wght@500;600, and Saira
+   Stencil One, which has one weight and only ever sets the wordmark. Those are
+   exactly the faces below. That list is not arbitrary and it is not safe to
+   trim by eye: this stylesheet asks for 550, 620, 650, 750, 760 and 780 as
+   well, and CSS font matching resolves each of those to one of the five Inter
+   files that IS here (650 renders in the 700 file, 550 in the 600, 780 in the
+   800). Remove a weight because no rule names it literally and a dozen rules
+   quietly change what they render in. Nothing else was taken: no italics,
+   because none was ever requested and the browser has always been slanting
+   these itself; no 100-300 or 900.
+
+   ONLY THE SCRIPTS THE PRODUCT SETS, WHICH IS NOT THE SAME FOR ALL THREE.
+   Inter is the body face, and it renders text people type — business names,
+   neighbourhood names, the messages in a booking thread — so it carries latin
+   AND latin-ext, and a Polish or Turkish or Czech name reads in the same face
+   as the sentence around it. IBM Plex Mono sets prices, times, reference codes
+   and links, which are ASCII, and Saira Stencil One sets the four words "Round
+   The Way"; both are latin only. The unicode-range on every rule is what makes
+   that a saving rather than a gamble: a browser downloads a file only when a
+   character it covers is actually on the page, so a visitor who never meets a
+   latin-ext character never fetches those five Inter files at all.
+
+   font-display: swap on all of them, which is what the Google URL's
+   &display=swap was asking for and is the only honest setting for a site whose
+   pages are mostly words. The text paints immediately in the fallback face and
+   is replaced when the real one lands; the alternative, block, is a period of
+   invisible text on a page a stranger is deciding whether to trust.
+
+   The files are the woff2 subsets Google Fonts itself serves, obtained through
+   the @fontsource packages on npm, which repackage them unmodified from
+   github.com/google/fonts. woff2 only — every browser that can run this app
+   has supported it since 2016, and it is what the Google stylesheet was
+   serving to all of them anyway. Each family's SIL Open Font License 1.1 text,
+   with its own copyright line, sits beside them as OFL-Inter.txt,
+   OFL-IBM-Plex-Mono.txt and OFL-Saira-Stencil-One.txt; THIRD-PARTY-NOTICES.md
+   explains what each one covers. Those files are served, not just committed,
+   because the OFL asks that the licence travel with the font and we are now
+   the ones handing the font out.
+   ========================================================================== */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/inter-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,
+                 U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,
+                 U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/inter-latin-ext-400-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,
+                 U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,
+                 U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/inter-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,
+                 U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,
+                 U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/inter-latin-ext-500-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,
+                 U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,
+                 U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/inter-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,
+                 U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,
+                 U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/inter-latin-ext-600-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,
+                 U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,
+                 U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/inter-latin-700-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,
+                 U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,
+                 U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/inter-latin-ext-700-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,
+                 U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,
+                 U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url('/fonts/inter-latin-800-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,
+                 U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,
+                 U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url('/fonts/inter-latin-ext-800-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,
+                 U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,
+                 U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,
+                 U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,
+                 U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,
+                 U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,
+                 U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: 'Saira Stencil One';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/saira-stencil-one-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,
+                 U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,
+                 U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+/* ==========================================================================
+   Round The Way design tokens.
 
    One scale, used everywhere. The old palette was warm greys and a forest
    green borrowed from a receipt; it read as paperwork. This one is built
@@ -15,6 +223,9 @@
   --ink:           #0d1117;
   --ink-2:         #2c3440;
   --muted:         #5c6572;
+  /* DODGER GREY — the road-jersey grey, the actual colour, on both bars. */
+  --dodger-grey:      #A5ACAF;
+  --dodger-grey-dark: #A5ACAF;
   /* Was #949cab, which is 2.76:1 on white and 2.58:1 on --bg — under half the
      4.5:1 that body text owes. It carries timestamps, hints, counts and the
      footer's unbuilt destinations: all of it small, all of it real text, none
@@ -36,11 +247,11 @@
   --control-line:  #828c9a;
 
   /* --- the one accent: open right now --- */
-  --accent:        #00875a;
-  --accent-ink:    #006644;
-  --accent-soft:   #e8f7f0;
-  --accent-line:   #a8e3ca;
-  --accent-vivid:  #16e08e;
+  --accent:        #005A9C;
+  --accent-ink:    #00477B;
+  --accent-soft:   #E3EFFA;
+  --accent-line:   #B4D2EC;
+  --accent-vivid:  #4CB3F0;
 
   /* --- attention, not alarm --- */
   --alert:         #b54708;
@@ -71,7 +282,7 @@
   --ink-3:         #414b59;   /* body copy: 7:1 on the hero ground */
   --hero-1:        #ffffff;
   --hero-2:        #eaeef4;
-  --wash-1:        rgba(22, 224, 142, 0.13);
+  --wash-1:        rgba(76, 179, 240, 0.13);
 
   /* --- the landing page's dark bands --------------------------------------
      Additive too. Every token above keeps the value the operator app, the
@@ -82,8 +293,8 @@
   --night-3:       #10283c;   /* the lightest the hero gradient ever gets */
   --on-night-2:    #c5d5e4;   /* 6:1 on the lightest part of the hero wash */
   --night-line:    rgba(255, 255, 255, 0.14);
-  --tint-1:        #e9f5ef;   /* the "how it works" band */
-  --tint-2:        #daeee4;
+  --tint-1:        #E8F1F9;   /* the "how it works" band */
+  --tint-2:        #D5E6F5;
 }
 
 * { box-sizing: border-box; }
@@ -167,18 +378,67 @@ h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
    than its single top card, the page has a structural problem instead. */
 h1.as-h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
 
-/* --- nav --------------------------------------------------------------- */
+/* --- nav ---------------------------------------------------------------
+   THE BOTTOM BAR. Five destinations, the same five in the same order on
+   every screen, and the only navigation the operator app has.
+
+   What was wrong with it: it was a white bar on a near-white page separated
+   by one hairline, so it did not read as a bar at all — it read as the page
+   running out. Content scrolled under it and the last card in a list was
+   permanently cut in half, because sticky positioning keeps the bar over the
+   scroll without reserving any room for it. And the only mark of where you
+   were was the label turning blue, which is colour carrying meaning on its
+   own — the thing 1.4.1 exists to stop.
+
+   None of the structure below changed: same grid, same five columns, same
+   order, same icons-over-labels. What changed is that the bar now looks like
+   a surface, the active item is a shape and not just a hue, and the list
+   above it can be scrolled to its end. */
 .nav {
-  position: sticky; bottom: 0; border-top: 1px solid var(--line);
-  background: var(--surface); padding: 8px 8px calc(18px + env(safe-area-inset-bottom));
+  position: sticky; bottom: 0; z-index: 3;
+  border-top: 1px solid var(--line);
+  /* Translucent over a blur, so the content passing beneath stays legible as
+     depth rather than as a collision. The solid fallback matters: without
+     backdrop-filter this must not become a transparent bar with text behind
+     it, so the unprefixed background is opaque and only the @supports block
+     makes it see-through. */
+  background: var(--surface);
+  padding: 6px 6px calc(10px + env(safe-area-inset-bottom));
   display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px;
+  /* Lifts the bar off the page instead of ruling a line under it. */
+  box-shadow: 0 -1px 2px rgba(13, 17, 23, 0.04), 0 -12px 28px -20px rgba(13, 17, 23, 0.28);
+}
+@supports (backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px)) {
+  .nav {
+    background: rgba(255, 255, 255, 0.86);
+    -webkit-backdrop-filter: saturate(160%) blur(14px);
+    backdrop-filter: saturate(160%) blur(14px);
+  }
 }
 .nav a {
-  display: flex; flex-direction: column; align-items: center; gap: 5px;
-  padding: 6px 0; min-height: 44px; color: var(--muted);
-  font-size: 10px; font-weight: 500; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 7px 0 6px; min-height: 48px; color: var(--muted);
+  font-size: 11px; font-weight: 550; letter-spacing: -0.01em; text-align: center;
+  border-radius: 12px;
 }
-.nav a.active { color: var(--accent); font-weight: 600; }
+/* The icon sits in its own box so the active state has something to fill.
+   A pill behind the glyph is a shape change, which survives being unable to
+   tell blue from grey; the colour is then a second signal rather than the
+   only one. */
+.nav a > svg {
+  padding: 3px 14px; border-radius: 999px;
+  box-sizing: content-box;
+  transition: background-color 120ms ease;
+}
+.nav a.active { color: var(--accent-ink); font-weight: 650; }
+.nav a.active > svg { background: var(--accent-soft); }
+@media (prefers-reduced-motion: reduce) { .nav a > svg { transition: none; } }
+
+/* Room for the bar at the end of a scroll, so the last card in a list is
+   reachable rather than sitting permanently half-hidden behind it. Matches
+   the bar's own height: 48px of link, 6px + 10px of padding, plus whatever
+   the device reserves for its home indicator. */
+.app .main { padding-bottom: calc(64px + 24px + env(safe-area-inset-bottom)); }
 
 /* --- cards ------------------------------------------------------------- */
 .card {
@@ -277,6 +537,56 @@ textarea { min-height: 90px; resize: vertical; }
 .field-row { display: flex; gap: 10px; }
 .field-row > * { flex: 1; }
 
+/* --- the card form ------------------------------------------------------
+   The fields inside .pay-fields are iframes served by the payment processor,
+   so almost nothing here can style them — the appearance is passed to Stripe
+   in PayForm.tsx instead. What this rules is the box around them. */
+.pay { gap: 16px; }
+.pay-fields { min-height: 180px; }
+.pay .btn { width: 100%; min-height: 50px; font-size: 15.5px; }
+
+/* --- what shape the vehicle is ------------------------------------------
+   Five buttons, not a dropdown: the whole list is short enough to read at a
+   glance, and a select hides every option behind a tap for no gain.
+
+   THEY STOPPED BEING PILLS BECAUSE THE HINT CAME OUT OF THE TOOLTIP. Each
+   option now carries the sentence that tells you whether it is the one you
+   want — "Not a van: the back is seats or a boot" is the whole difference
+   between two of them — and a sentence does not fit on one line of a pill.
+   A column of rounded rows is also the calmer shape for it on a phone, which
+   is where this form is filled in. */
+.kind-pick { border: 0; padding: 0; margin: 0; min-width: 0; }
+.kind-pick legend {
+  padding: 0; margin: 0 0 8px; font-size: 13px; font-weight: 650; color: var(--ink);
+}
+/* One per line on a phone and two across once there is room for two, without a
+   breakpoint to keep in step with the form's own width. The min() is what stops
+   a 210px track from overflowing a container narrower than 210px — the sign-up
+   wizard on a 320px screen is the one that gets close. */
+.kind-row {
+  display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
+}
+.kind-chip {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  border: 1.5px solid var(--control-line); background: var(--surface);
+  color: var(--ink-2); border-radius: var(--r-md); cursor: pointer;
+  min-height: 44px; padding: 10px 14px; text-align: left;
+  font-size: 13.5px; font-weight: 600;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+/* The hint is the quiet half of the row: it has to be readable, and it must
+   not read as the thing being chosen. --muted is 5.9:1 on white, so it is
+   quieter than the label without being harder to read than body text. */
+.kind-chip .kind-hint { font-size: 12px; font-weight: 400; line-height: 1.4; color: var(--muted); }
+.kind-chip:hover { border-color: var(--line-strong); color: var(--ink); }
+.kind-chip.on { background: var(--ink); border-color: var(--ink); color: #fff; }
+/* --muted is 3.2:1 once the row fills with --ink, which would leave the chosen
+   option's own hint the one line on the page you cannot read. --on-night-2 is
+   12.6:1 on it and is already the token for text on this site's dark grounds. */
+.kind-chip.on .kind-hint { color: var(--on-night-2); }
+.kind-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* --- selectable candidate --------------------------------------------- */
 .pick {
   background: var(--surface); border: 1.5px solid var(--control-line); border-radius: 12px;
@@ -354,20 +664,43 @@ textarea { min-height: 90px; resize: vertical; }
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 22px;
-  background: rgba(246, 247, 249, 0.86);
+  /* DODGER GREY BAR. The same grey on every page, home included, so the top of
+     the site is one thing rather than two. */
+  background: var(--dodger-grey);
   backdrop-filter: saturate(180%) blur(12px);
   border-bottom: 1px solid var(--line);
 }
 /* min-height rather than padding: the bar is already taller than this, so the
    floor grows the link's target without moving anything around it. It was 26px
    tall and it is the way home from every page on the site. */
+/* THE WORDMARK.
+   Saira Stencil One — the letters a work truck or a yard gate is stencilled
+   with. It says trades and tools rather than neighbourhood, which is the point:
+   the name already says where you are, so the letters do not have to.
+
+   font-weight is 400 because the face has one weight. Asking for 750 gets a
+   browser-synthesised bold that thickens the stencil bridges until they close
+   up, which is the one thing that must not happen to this face.
+
+   The fallback stack is condensed-and-heavy on purpose. If the font request
+   never lands the mark is wrong either way, but a heavy condensed fallback is
+   closer in colour and width than the body face would be, so the swap is a
+   change of texture rather than of layout. */
 .wordmark {
-  display: inline-flex; align-items: center; min-height: 44px; gap: 9px;
-  font-size: 17px; font-weight: 750; letter-spacing: -0.035em; color: var(--ink);
-}
-.wordmark i {
-  width: 9px; height: 9px; border-radius: 50%; background: var(--accent-vivid);
-  box-shadow: 0 0 0 4px rgba(22, 224, 142, 0.2);
+  display: inline-flex; align-items: center; min-height: 44px;
+  font-family: "Saira Stencil One", Impact, Haettenschweiler,
+               "Arial Narrow Bold", sans-serif;
+  font-size: 31px; font-weight: 400; letter-spacing: 0.005em;
+  /* line-height 1 is what lets the name grow without the bar growing with it.
+     The wordmark's min-height is 44px — the tap-target floor the nav pills also
+     sit on — and the bar's height comes from that floor plus its own padding.
+     At the default line-height a 31px face makes a 37px line box, which is
+     still inside 44 but leaves nothing; pinned to 1 the box is 31px and the
+     name can go up again later without touching the bar. */
+  line-height: 1;
+  /* The deep Dodger blue, not the bright one: #4CB3F0 on this grey is about
+     1.6:1 and disappears. */
+  color: var(--accent);
 }
 .topbar nav { display: flex; align-items: center; gap: 6px; }
 /* 44px tall, not 38. These are the only controls a customer has in the bar on
@@ -376,7 +709,9 @@ textarea { min-height: 90px; resize: vertical; }
    560px can take the padding back without taking the target with it. */
 .tlink {
   display: inline-flex; align-items: center; min-height: 44px;
-  font-size: 14px; font-weight: 550; color: var(--muted);
+  /* Near-black on the grey bar. #005A9C is the wordmark's blue and reusing it
+     here would make five links compete with the name for the same attention. */
+  font-size: 14px; font-weight: 550; color: #0E1A24;
   padding: 0 14px; border-radius: 999px;
 }
 .tlink:hover { color: var(--ink); background: var(--surface); }
@@ -523,7 +858,7 @@ textarea { min-height: 90px; resize: vertical; }
   font-size: 17px; line-height: 1; padding: 0;
   display: flex; align-items: center; justify-content: center;
 }
-.chip-x button:hover { background: rgba(0, 135, 90, 0.14); }
+.chip-x button:hover { background: rgba(0, 90, 156, 0.14); }
 
 /* --- photo grid (operator side) ---------------------------------------- */
 .photo-grid {
@@ -670,8 +1005,71 @@ textarea { min-height: 90px; resize: vertical; }
 .chat-msg.mine .bubble { background: var(--accent); color: #fff; }
 .chat-at { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
 
+/* A photograph in the thread.
+   240px and not full width: these are usually proof that a job was done, and
+   what the reader does with one is decide whether to open it. A picture the
+   width of the whole log pushes the message it belongs to and the reply under
+   it off the screen, so the thread stops reading as a conversation. */
+.chat-photo {
+  display: block;
+  width: 240px; max-width: 100%;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  /* The only hint that there is a full-size version behind this. On a phone
+     tapping a picture is reflex and needs no affordance; on a desktop, where
+     the thumbnail is already comfortably readable, nothing else says that the
+     serial number on the boiler can be zoomed into. */
+  cursor: zoom-in;
+  /* Something is in the slot from the first frame, so the reserved box reads
+     as a picture arriving rather than as a hole in the conversation. */
+  background: var(--surface-2);
+}
+/* `sized` means the sender told us the shape, and the inline aspect-ratio is
+   holding the exact box the picture will fill — so the image is stretched to
+   the box it was measured for and there is nothing to crop. */
+.chat-photo.sized img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* `unsized` is the width/height = 0 case: nobody measured it, so there is no
+   honest box. The minimum height comes from the inline style; the image takes
+   whatever height it turns out to want. One reflow, on an unusual message. */
+.chat-photo.unsized img { width: 100%; height: auto; display: block; }
+
 .composer { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; }
 .composer-row { display: flex; gap: 10px; align-items: flex-end; }
+/* Same 48px target as the send button beside it. This gets pressed with a
+   thumb, in a van, often in gloves. Scoped to .composer for the same reason
+   .composer .send is: it has to out-specify the .btn.sm height, and matching
+   one class against another leaves that resting on source order. */
+.composer .composer-attach {
+  flex: 0 0 auto; width: 48px; min-height: 48px; padding: 0;
+  border-radius: var(--r-md);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+/* The photo waiting to be sent, and its upload. */
+.composer-photo {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 10px; margin-bottom: 2px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface);
+}
+.composer-photo > img {
+  flex: 0 0 auto; width: 56px; height: 56px;
+  object-fit: cover; border-radius: 10px; display: block;
+}
+.composer-photo-say {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; gap: 3px; font-size: 13px;
+}
+/* Deliberately a plain bar and not a spinner. A spinner says "wait"; this says
+   how much longer, which is the only thing that stops somebody on one bar of
+   signal deciding the send has hung and doing it again. */
+.composer-progress {
+  height: 6px; border-radius: 3px; overflow: hidden;
+  background: var(--surface-2); margin-top: 3px;
+}
+.composer-progress > span {
+  display: block; height: 100%; background: var(--accent);
+  transition: width 120ms linear;
+}
 .composer textarea {
   flex: 1 1 auto; min-width: 0; min-height: 48px; max-height: 168px;
   resize: none; overflow-y: auto; border-radius: var(--r-md); font-size: 15px;
@@ -718,6 +1116,36 @@ textarea { min-height: 90px; resize: vertical; }
 }
 .pairs dd { margin: 0; font-size: 15px; }
 
+/* Where this booking's money is, inside the confirmation card.
+ *
+ * Boxed rather than left as one more grey paragraph, because it is the only
+ * thing on this card that changes after the booking is made, and it is the
+ * question that brings somebody back to this page weeks later. It sits between
+ * the facts and the running copy about how paying works — after what was
+ * booked, before the general explanation — which is the order the reader asks
+ * those three questions in.
+ *
+ * Untinted by default, so a paid booking, which is nearly all of them, carries
+ * no colour at all. Only money that has moved or is stuck gets one. */
+.guest-money {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.guest-money-refunded,
+.guest-money-coming { border-color: var(--accent-line); background: var(--accent-soft); }
+
+/* Warm, not red. Held money is waiting on an answer and a payment going through
+   is waiting on a bank; neither is a fault, and a red box around somebody's
+   refund reads as one. */
+.guest-money-held,
+.guest-money-unpaid { border-color: var(--alert-line); background: var(--alert-soft); }
+
 .notice.keeper { border: 1px solid var(--accent-line); line-height: 1.5; }
 
 /* --- the operator's inbox at /app/messages ------------------------------- */
@@ -741,7 +1169,7 @@ textarea { min-height: 90px; resize: vertical; }
 }
 .thread-dot {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-  background: var(--accent-vivid); box-shadow: 0 0 0 3px rgba(22, 224, 142, 0.22);
+  background: var(--accent-vivid); box-shadow: 0 0 0 3px rgba(76, 179, 240, 0.22);
 }
 .thread-at {
   font-size: 12px; color: var(--faint); white-space: nowrap;
@@ -758,8 +1186,52 @@ textarea { min-height: 90px; resize: vertical; }
 }
 .msgs-back:hover { color: var(--ink); }
 
+/* The filter tabs and the search box above the inbox.
+   Wrapping rather than scrolling sideways: at 360px the four tabs sit on one
+   line and the box drops underneath them, which is the order somebody reaches
+   for them in. */
+.msgs-filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  justify-content: space-between;
+}
+
+/* Deliberately NOT `.seg`, which is display:none above 960px — that rule was
+   written for the browse page, where a map/list toggle stops being needed once
+   both fit on screen. These tabs are needed at every width. */
+.msgs-tabs {
+  display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px;
+  background: var(--surface-2); border: 1px solid var(--control-line); border-radius: 999px;
+}
+.msgs-tab {
+  border: 0; background: none; cursor: pointer; color: var(--muted);
+  min-height: 40px; padding: 0 14px; border-radius: 999px;
+  font: inherit; font-size: 13.5px; font-weight: 650;
+  transition: background 120ms ease, color 120ms ease;
+}
+.msgs-tab:hover { color: var(--ink); }
+.msgs-tab[aria-pressed="true"] {
+  background: var(--surface); color: var(--ink); box-shadow: var(--lift-1);
+}
+
+.msgs-search { flex: 1 1 190px; min-width: 0; }
+.msgs-search input {
+  width: 100%; min-height: 44px; padding: 0 14px;
+  font: inherit; font-size: 14px;
+  color: var(--ink); background: var(--surface);
+  border: 1px solid var(--control-line); border-radius: 999px;
+}
+
+/* The end of the list, whichever end it is: the button for the next page, or
+   the sentence saying that was all of them. Never silence — a list that simply
+   stopped at fifty rows with nothing to say so is what was wrong here. */
+.msgs-more { margin: 4px 0 0; text-align: center; }
+button.msgs-more { width: 100%; }
+
 @media (min-width: 720px) {
   .msgs { grid-template-columns: 250px minmax(0, 1fr); }
+  /* The list scrolls inside itself, so "Load more" has to be part of that
+     scroll rather than pinned under it — otherwise the button sits below the
+     fold of a 62vh column and looks like the end of the page. */
   .msgs-list { max-height: 62vh; overflow-y: auto; padding-right: 2px; }
   /* Both panes are on screen, so there is nothing to go back to. */
   .msgs-back { display: none; }
@@ -788,9 +1260,15 @@ textarea { min-height: 90px; resize: vertical; }
    SiteFooter's own, and carries its own dark ground.
 
    The pictures are drawn, not photographed. There is no licensed photography
-   here and none is faked; the tile art is inline SVG (see CategoryArt.tsx)
-   laid in as a background layer, so the day there are real photographs an
-   <img> drops into the same slot with no layout change.
+   here, none is faked, and no tile claims to show a real business. The tile
+   art used to be inline SVG laid in as a background layer, on the argument
+   that the day there were real photographs an <img> would drop into the same
+   slot with no layout change. That is what happened — except that the pictures
+   are still ours: they are .webp files under /art, drawn as HTML and inline
+   SVG in tools/trade-art.html and rendered in headless Chromium by
+   `npm run art`, one per category and one per trade. CategoryArt.tsx holds the
+   same eight scenes and draws them when the catalogue payload is old enough to
+   carry no path; the slot rules are in styles-home.css and cover both.
 
    Every class below belongs to Discover, CategoryArt and CityMap alone. .foot,
    .topbar, .tlink, .wordmark, .blank, .btn, .seg and .land are shared with the
@@ -830,14 +1308,14 @@ textarea { min-height: 90px; resize: vertical; }
    Scoped to .land-home: the same .topbar sits on the white profile, join,
    watch and guest pages and must stay light there. */
 .land-home .topbar {
-  background: rgba(7, 16, 25, 0.74);
-  border-bottom-color: rgba(255, 255, 255, 0.10);
+  background: var(--dodger-grey);
+  border-bottom-color: rgba(0, 0, 0, 0.16);
 }
-.land-home .wordmark { color: #fff; }
-.land-home .tlink { color: #cbd8e5; }
-.land-home .tlink:hover { color: #fff; background: rgba(255, 255, 255, 0.10); }
-.land-home .tlink.solid { background: var(--accent-vivid); color: #06231a; font-weight: 700; }
-.land-home .tlink.solid:hover { background: #55f0b3; color: #06231a; }
+.land-home .wordmark { color: var(--accent); }
+.land-home .tlink { color: #0E1A24; }
+.land-home .tlink:hover { color: #000; background: rgba(255, 255, 255, 0.30); }
+.land-home .tlink.solid { background: var(--accent-vivid); color: #06233A; font-weight: 700; }
+.land-home .tlink.solid:hover { background: #7CC9F5; color: #06233A; }
 
 /* --- band one: the hero -------------------------------------------------
    A real ground, and not one byte of image to make it: three radial washes
@@ -847,9 +1325,9 @@ textarea { min-height: 90px; resize: vertical; }
   position: relative;
   color: #fff;
   background:
-    radial-gradient(115% 85% at 10% -12%, rgba(22, 224, 142, 0.20), transparent 62%),
+    radial-gradient(115% 85% at 10% -12%, rgba(76, 179, 240, 0.20), transparent 62%),
     radial-gradient(85% 75% at 94% 6%, rgba(56, 150, 255, 0.20), transparent 60%),
-    radial-gradient(75% 65% at 50% 112%, rgba(0, 135, 90, 0.24), transparent 66%),
+    radial-gradient(75% 65% at 50% 112%, rgba(0, 90, 156, 0.24), transparent 66%),
     linear-gradient(166deg, var(--night-3) 0%, var(--night-2) 40%, var(--night-1) 100%);
 }
 
@@ -857,7 +1335,7 @@ textarea { min-height: 90px; resize: vertical; }
    putting beside it. */
 .hero {
   display: flex; flex-direction: column; align-items: center; text-align: center;
-  gap: 20px; padding: clamp(46px, 9vw, 104px) 0 clamp(42px, 7vw, 80px);
+  gap: 20px; padding: clamp(28px, 5.4vw, 62px) 0 clamp(42px, 7vw, 80px);
 }
 .hero > * { max-width: 100%; }
 
@@ -878,9 +1356,9 @@ textarea { min-height: 90px; resize: vertical; }
 
 .live {
   display: inline-flex; align-items: center; gap: 9px;
-  font-size: 12.5px; font-weight: 650; color: #d9ffef;
-  background: rgba(22, 224, 142, 0.13);
-  border: 1px solid rgba(22, 224, 142, 0.36);
+  font-size: 12.5px; font-weight: 650; color: #DCF0FF;
+  background: rgba(76, 179, 240, 0.13);
+  border: 1px solid rgba(76, 179, 240, 0.36);
   border-radius: 999px; padding: 7px 15px 7px 12px;
   flex-wrap: wrap; max-width: 100%;
 }
@@ -889,8 +1367,8 @@ textarea { min-height: 90px; resize: vertical; }
   animation: blip 2.4s ease-in-out infinite;
 }
 @keyframes blip {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 224, 142, 0.55); }
-  50%      { box-shadow: 0 0 0 6px rgba(22, 224, 142, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(76, 179, 240, 0.55); }
+  50%      { box-shadow: 0 0 0 6px rgba(76, 179, 240, 0); }
 }
 
 /* --- the postcode search ------------------------------------------------
@@ -953,9 +1431,9 @@ textarea { min-height: 90px; resize: vertical; }
 .located {
   display: inline-flex; align-items: center; gap: 5px 10px; flex-wrap: wrap;
   justify-content: center; max-width: 100%;
-  background: rgba(22, 224, 142, 0.13); border: 1px solid rgba(22, 224, 142, 0.36);
+  background: rgba(76, 179, 240, 0.13); border: 1px solid rgba(76, 179, 240, 0.36);
   border-radius: 999px; padding: 7px 7px 7px 15px;
-  font-size: 14px; color: #d9ffef;
+  font-size: 14px; color: #DCF0FF;
 }
 .located svg { flex: 0 0 auto; }
 .located button {
@@ -963,7 +1441,7 @@ textarea { min-height: 90px; resize: vertical; }
   font-size: 13px; font-weight: 700; border-radius: 999px;
   padding: 0 15px; min-height: 36px;
 }
-.located button:hover { background: var(--accent-vivid); color: #06231a; }
+.located button:hover { background: var(--accent-vivid); color: #06233A; }
 
 /* --- what is actually listed --------------------------------------------
    Counted from the same rows the list below renders, never written down. If
@@ -1082,14 +1560,8 @@ textarea { min-height: 90px; resize: vertical; }
 /* Without this a long business name in a card stretches the whole column and
    the page starts scrolling sideways. */
 .browse-grid > * { min-width: 0; }
-
-/* On a narrow screen the map sits ABOVE the list, at a height that leaves the
-   openings visible underneath. It is never hidden: it is the only thing here a
-   directory cannot do, and putting it behind a toggle read as deleting it. */
-.map-col { order: -1; }
 .list-col { order: 0; }
-.map-col .map-canvas, .map-col .map-fallback { height: clamp(230px, 34vh, 320px); }
-.map-col.map-big .map-canvas, .map-col.map-big .map-fallback { height: 68vh; }
+
 .seg {
   display: inline-flex; gap: 3px; padding: 3px;
   background: var(--surface-2); border: 1px solid var(--control-line); border-radius: 999px;
@@ -1104,11 +1576,9 @@ textarea { min-height: 90px; resize: vertical; }
   background: var(--surface); color: var(--ink); box-shadow: var(--lift-1);
 }
 
+/* One column. The map is its own band above this list now, so there is no
+   second column for the list to make room for. */
 @media (min-width: 960px) {
-  .browse-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 430px); gap: 24px; }
-  /* The map stays put while the list scrolls past it. */
-  .map-col { position: sticky; top: 78px; order: 0; }
-  .map-col .map-canvas, .map-col .map-fallback { height: clamp(420px, 62vh, 620px); }
   .seg { display: none; }
 }
 
@@ -1131,6 +1601,48 @@ textarea { min-height: 90px; resize: vertical; }
 @media (min-width: 960px) {
   .map-canvas, .map-fallback { height: clamp(420px, calc(100vh - 168px), 620px); }
 }
+
+/* --- the map band -------------------------------------------------------
+   The map is the second thing on the page, full width, and it is the picture
+   the product is trying to put in somebody's head: my own streets, with people
+   driving across them to do a job. It is sized like a photograph rather than
+   like a widget — a 430px sidebar pane cannot carry that and never could. */
+.map-band { background: var(--surface); padding: clamp(26px, 4.5vw, 44px) 0 clamp(20px, 3.5vw, 34px); }
+.map-band-head { text-align: center; max-width: 46ch; margin: 0 auto clamp(16px, 2.6vw, 24px); }
+.map-band-head h2 {
+  margin: 0; font-size: clamp(26px, 5vw, 40px); font-weight: 800;
+  letter-spacing: -0.04em; line-height: 1.03;
+}
+.map-band-head p {
+  margin: 10px 0 0; color: var(--muted);
+  font-size: clamp(14.5px, 1.7vw, 16.5px); line-height: 1.5;
+}
+.map-stage .map-canvas, .map-stage .map-fallback {
+  height: clamp(340px, 58vh, 520px);
+}
+@media (min-width: 960px) {
+  .map-stage .map-canvas, .map-stage .map-fallback { height: clamp(440px, 60vh, 600px); }
+}
+
+/* Small, permanent, and in the corner where a map's own small print lives.
+   It says the vans are a drawing. See the comment on it in Discover.tsx. */
+.map-note {
+  position: absolute; left: 10px; bottom: 10px; z-index: 2; pointer-events: none;
+  max-width: calc(100% - 20px);
+  background: rgba(255, 255, 255, 0.9); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 4px 9px; font-size: 11px; font-weight: 550; line-height: 1.3;
+}
+
+/* --- the vans -----------------------------------------------------------
+   The marker element MapLibre positions is the outer div and its transform
+   belongs to MapLibre; the heading is applied to the svg inside it. Anything
+   that transitions here fights a per-frame position update, so nothing does. */
+/* The box is sized inline, per vehicle: a pickup and trailer is twice as long
+   as a car and one fixed square would either shrink the trailer or stretch the
+   car. See vehicleArt.ts. */
+.van { pointer-events: none; will-change: transform; }
+.van svg { display: block; filter: drop-shadow(0 1px 3px rgba(10, 14, 19, 0.5)); }
 
 /* --- an open hour -------------------------------------------------------
    Six elements and no wrappers. Four hundred of these have to lay out without
@@ -1297,11 +1809,181 @@ textarea { min-height: 90px; resize: vertical; }
    which is the half of the value that matters. */
 .wh-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px; }
 
-/* 22px, not the browser's 13: it is the control that switches a whole day off,
-   and `flex: none` stops the row shrinking it back down again. */
-.wh-on { width: 22px; height: 22px; min-height: 22px; flex: none; }
+/* 44px, not 22 and not the browser's 13. WCAG 2.2 SC 2.5.8 puts the floor for
+   a pointer target at 24×24 CSS px, and 22 sat just under it — on the control
+   that switches a whole working day off, which is the one in this row where a
+   near miss publishes hours nobody is working. 44 rather than a bare 24
+   because it is the size every other control on this site is held to, and
+   because a thumb in a van does not aim at 24.
+
+   THE BOX STAYS NATIVE. Repainting a checkbox means `appearance: none` and
+   drawing the tick back on, and a drawn tick is the one that disappears in
+   Windows high-contrast mode. Browsers differ on whether they scale the tick
+   to the box they are given, but all of them make the box itself the target,
+   so the size that matters here lands either way. `flex: none` stops the row
+   shrinking it back down again, and accent-color keeps a ticked box the blue
+   the rest of the app fills controls with.
+
+   The row is no taller for it — the time fields already hold it to 44. What
+   changes is that they lose 22px of the line they share with it, so they drop
+   to a line of their own on a slightly wider screen than before. That is the
+   wrap this row was built to do, happening at the width where two time fields
+   genuinely stop fitting beside a checkbox and a weekday. */
+.wh-on {
+  width: 44px; min-width: 44px; height: 44px; min-height: 44px;
+  flex: none; accent-color: var(--accent);
+}
 
 .wh-day { width: 34px; font-weight: 600; }
 
 .wh-times { display: flex; gap: 8px; flex: 1 1 262px; min-width: 0; }
 .wh-times input { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 8px 10px; }
+
+/* --- the card on file ----------------------------------------------------
+   Owned by CardField.tsx: one calm panel holding Stripe's own fields, used
+   before a booking to keep a card rather than to charge one.
+
+   IT DRAWS NO BORDER OF ITS OWN AROUND THE FIELDS, and that is the whole
+   trick. Stripe paints a bordered box around every input inside its iframe,
+   so a wrapper with a border too gives two lines a millimetre apart that look
+   like a rendering fault. The panel's edge is the outer one; the field's edge
+   is Stripe's; the mount point in between is only a piece of reserved height.
+   The colours Stripe paints with are in CardField's APPEARANCE object and are
+   written out as hex there because an iframe on another origin cannot read
+   the custom properties in this file. The pairs are:
+
+     colorPrimary  --accent (#005A9C)     .Input border  --control-line
+     colorText     --ink                  focus halo     --accent-line
+     colorDanger   the ink inside .error  borderRadius   --r-md
+
+   Change one and change the other, or the card form starts to look like it
+   came from a different site than the page around it. */
+.card-field {
+  gap: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--lift-2);
+  padding: 22px;
+}
+
+/* A phone is where a card is actually typed in, and 22px of padding either
+   side of a 400px screen leaves the fields too narrow to be comfortable. */
+@media (max-width: 460px) {
+  .card-field { padding: 16px; border-radius: var(--r-md); }
+}
+
+/* The bare `label` rule further up is a column flexbox in --muted, written for
+   a label sitting directly above its own input. This one is a heading over a
+   whole region, so it takes back the ink and the weight. */
+.card-field-label {
+  display: block;
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+/* Height held before Stripe's iframe arrives, so the button does not jump up
+   the screen under somebody's thumb as the fields finish loading. */
+.card-field-el { min-height: 120px; }
+
+.card-field .btn { width: 100%; min-height: 50px; font-size: 15.5px; }
+.card-field-line { margin: 0; line-height: 1.5; }
+
+/* Drawn in currentColor rather than white BECAUSE THE BUTTON IS DISABLED while
+   it spins — that is what stops a second press against a setup intent that can
+   only be confirmed once — and a disabled .btn is pale grey with --faint ink.
+   A white ring would be invisible on it at exactly the moment it is meant to
+   be saying that something is happening. */
+.card-field-spin {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: card-field-turn 700ms linear infinite;
+}
+@keyframes card-field-turn { to { transform: rotate(360deg); } }
+
+/* Nothing here needs to move for the form to work: the ring still reads as a
+   ring with a piece missing, and the button says "Saving your card…" beside it
+   in words either way. */
+@media (prefers-reduced-motion: reduce) {
+  .card-field-spin { animation: none; }
+}
+
+/* --- taking bookings, or paused -----------------------------------------
+   Owned by Settings.tsx: the switch that decides whether this business is on
+   the map, in search and in browse at all.
+
+   NOTHING HERE IS THE STATE. The knob's position says it, the words beside it
+   say it, and the colour is the last and least of the three — a track that
+   went from grey to blue and said nothing else would be a business unable to
+   tell whether it was listed, which is the one question this card answers. */
+.taking-row { display: flex; align-items: flex-start; gap: 14px; }
+
+/* The track is 34px tall because that is the size a switch reads as one, and
+   the button around it is 44 because that is the floor every other control on
+   this site is held to — a thumb on a phone in a van does not land inside 34.
+   The padding is the difference and is deliberately empty space. */
+.taking-switch {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 5px 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.taking-switch:disabled { cursor: default; }
+
+.taking-track {
+  width: 58px;
+  height: 34px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid var(--control-line);
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.taking-switch.is-on .taking-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+/* Saving. Not a second colour and not a spinner — the words beside the switch
+   already say "Saving…", and this only stops the control looking pressable
+   while the answer is still on its way. */
+.taking-switch:disabled .taking-track { opacity: 0.55; }
+
+.taking-knob {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--lift-1);
+  transition: transform 160ms ease;
+}
+/* 58 wide, less two 1px borders and two 3px pads, leaves 50 for a 26px knob. */
+.taking-switch.is-on .taking-knob { transform: translateX(24px); }
+
+/* The ring goes on the track, not on the button: the button is 44px of mostly
+   empty space, so a ring around it would float clear of the only thing on
+   screen that looks like a control. */
+.taking-switch:focus-visible { outline: none; }
+.taking-switch:focus-visible .taking-track {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 3px;
+}
+
+/* The knob still ends up at the other end of the track, which is the half of
+   this that carries the meaning. Only the slide goes. */
+@media (prefers-reduced-motion: reduce) {
+  .taking-track, .taking-knob { transition: none; }
+}

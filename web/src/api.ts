@@ -43,6 +43,64 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+/**
+ * A multipart upload that can say how far it has got.
+ *
+ * XMLHttpRequest, in a file that is otherwise entirely `fetch`, and the reason
+ * is the one thing fetch still cannot do: report upload progress. There is no
+ * progress event on a fetch body, so every fetch-based upload in a browser is
+ * indistinguishable from a frozen one until it finishes.
+ *
+ * That gap is the whole justification. The person this matters to is an
+ * operator standing on a driveway on one bar of signal, sending the customer
+ * the photograph that proves the job was done. On that connection a couple of
+ * hundred kilobytes is not instant, and a button that has simply gone quiet is
+ * read as a crash — so the photo gets sent again, and again, each attempt
+ * costing another slice of a conversation's daily photo allowance. A number
+ * that moves is what tells somebody to wait rather than to retry.
+ *
+ * `withCredentials` is the XHR spelling of `credentials: 'include'` above, and
+ * it is what carries the operator's session cookie. The response envelope is
+ * read exactly as request() reads it, so a refusal arrives as the same ApiError
+ * with the same `code` on it whichever of the two made the call.
+ */
+function upload<T>(
+  path: string, form: FormData, onProgress?: (fraction: number) => void,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${BASE}${path}`);
+    xhr.withCredentials = true;
+
+    // Deliberately no timeout. A slow upload in a van is the normal case this
+    // exists for, and a timeout would abandon it at exactly the moment it was
+    // about to finish.
+    if (onProgress) {
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable && e.total > 0) onProgress(e.loaded / e.total);
+      });
+    }
+
+    xhr.addEventListener('load', () => {
+      let body: any = null;
+      try { body = JSON.parse(xhr.responseText); } catch { /* empty or non-JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300) { resolve(body as T); return; }
+      reject(new ApiError(
+        xhr.status, body?.error ?? `Request failed (${xhr.status})`, body?.code));
+    });
+
+    // Status 0 on both, because there is no status: nothing came back. The
+    // caller decides what to say; this only refuses to invent an HTTP code for
+    // a request that never reached an HTTP server.
+    xhr.addEventListener('error', () =>
+      reject(new ApiError(0, 'That did not reach us.')));
+    xhr.addEventListener('abort', () =>
+      reject(new ApiError(0, 'That upload was stopped.')));
+
+    xhr.send(form);
+  });
+}
+
 const get = <T>(p: string) => request<T>(p);
 const post = <T>(p: string, body?: unknown) =>
   request<T>(p, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
@@ -60,13 +118,28 @@ export interface Operator {
   timezone: string; country: string; currency: string; language: string;
   location_mode: 'mobile' | 'premises' | 'hybrid';
   fill_model: 'clients' | 'leads' | 'both';
-  sms_mode: 'device' | 'twilio';
+  sms_mode: 'device';
   min_gap_seconds: number; max_detour_seconds: number; buffer_seconds: number;
   offers_per_wave: number; discount_percent: number; plan: string;
   tagline: string | null; bio: string | null; years_experience: number | null;
   profile_slug: string | null; is_published: number; avatar_key: string | null;
   /** Off by default. Only the operator's own action turns this on. */
   share_location: number;
+  /**
+   * 1 while this business is listed, 0 while it is paused.
+   *
+   * A dozen public queries join on it — the map, search, browse, the profile
+   * page, the openings-alert sweep — so a 0 in this column is the business
+   * gone from every one of them at once, in a single write.
+   *
+   * IT SAYS NOTHING ABOUT WORK ALREADY BOOKED. An appointment somebody has
+   * paid for is untouched by this column, and any copy beside a control that
+   * writes it has to say so in as many words: a business that suspects
+   * pausing might cancel a customer's Saturday will never press it, and one
+   * that finds out afterwards that it did not is owed an apology for the
+   * fortnight it spent deleting openings one at a time instead.
+   */
+  accept_public_bookings: number;
 }
 
 export interface Gap {
@@ -87,6 +160,16 @@ export interface MapArea {
    */
   metro: string;
   trades: string[];
+  /**
+   * What the businesses covering this neighbourhood drive, as the slugs in
+   * the Worker's src/lib/vehicles.ts — 'van', 'car', 'pickup_trailer'. The
+   * map draws the vehicles crossing it from this, so a place served by junk
+   * removal shows a trailer and one served by a phone repairer shows a car.
+   *
+   * The list is the Worker's and is not duplicated here; an unknown slug is
+   * drawn as a van rather than as nothing.
+   */
+  vehicles: string[];
   slot_count: number;
   from_price: string | null;
   next_when: string | null;
@@ -105,7 +188,7 @@ export interface MetroArea {
 }
 
 /**
- * A place Slotfill serves.
+ * A place Round The Way serves.
  *
  * Everything here is static — it changes when the product opens a new place,
  * not through the day — so a page can render its name, its state and its
@@ -132,7 +215,7 @@ export interface Metro {
    * Paragraphs of general facts about the place — climate, terrain, how it is
    * laid out. Plain text, one string per paragraph, and safe to render as
    * paragraphs. Deliberately not marketing copy: nothing in here is a claim
-   * about Slotfill, and there is no equivalent field for one.
+   * about Round The Way, and there is no equivalent field for one.
    */
   geography: string[];
 }
@@ -201,28 +284,87 @@ export interface PublicSlot {
   work_photo_key: string | null;
 }
 
+/**
+ * Somebody who could be offered an opening the operator cannot fill.
+ *
+ * NO PHONE NUMBER ON IT ANY MORE, and that is this whole feature changing
+ * shape. Offers used to be text messages, so this carried the number the
+ * operator's own handset would send to. Neither half of that ever worked: a
+ * customer this site introduces is written with no number by design — see
+ * clientWrite in the Worker's lib/orders.ts — and there is no SMS provider to
+ * send through. `thread_id` is what replaced it: the conversation the offer is
+ * delivered into, which is also the reason this person is a candidate at all.
+ * The Worker does the sending; there is nothing here for the browser to dial.
+ */
 export interface Candidate {
   kind: 'client' | 'lead';
   client_id: string; lead_id: string | null; service_id: string | null;
-  first_name: string; phone_e164: string | null; language: string | null;
+  first_name: string; thread_id: string; language: string | null;
   duration_seconds: number; price_cents: number; title: string;
   overdue_days: number | null; urgency: number | null;
   drive_in_seconds: number | null; drive_out_seconds: number | null;
   detour_seconds: number | null; score: number; reasons: string[];
 }
 
+/** One offer, already sent by the time this arrives in the browser. */
 export interface CreatedOffer {
   offer_id: string; client_id: string; first_name: string;
-  phone_e164: string | null; url: string; message: string;
-  send: { ios: string; android: string; body: string };
+  url: string; message: string;
+  /** The conversation it landed in. The operator can open it in Messages. */
+  thread_id: string;
+  /**
+   * Whether the email nudge actually left. The message is in their
+   * conversation either way; this says whether anything pinged them about it,
+   * which is worth showing rather than letting the operator assume.
+   */
+  emailed: boolean;
   rank: number; score: number; reasons: string[];
 }
 
+/**
+ * One appointment on the operator's own calendar, and what it paid them.
+ *
+ * The money below is read off the order line behind the booking, and every one
+ * of those columns is null on a booking this platform did not sell: an
+ * operator's own manual entry has no order, no fee and no payout, so
+ * `order_item_id` is what separates "nothing has happened to this money yet"
+ * from "there was never any of our money here". A screen that reads the
+ * figures without asking that question first invents a payout for a job the
+ * operator was paid for in cash.
+ *
+ * None of it is worked out here. The Worker sends the price and the fee it
+ * kept, and a payout a browser calculates that disagrees with the transfer by
+ * a cent is a support ticket that costs more than the cent — the same reason
+ * splitOrder lives in one file on the Worker.
+ */
 export interface Appointment {
   id: string; client_id: string | null; service_id: string | null;
   starts_at: number; ends_at: number; status: string;
   address_line: string | null; price_cents: number | null; source: string;
   first_name: string | null; last_name: string | null; service_name: string | null;
+  /** The order line behind this booking. Null when the operator entered it themselves. */
+  order_item_id: string | null;
+  /** What Round The Way kept out of `price_cents`. What is left is the business's. */
+  fee_cents: number | null;
+  /**
+   * Set once the business's share has actually been sent.
+   *
+   * NULL IS WAITING, NOT UNPAID. A share is not sent the moment a customer
+   * pays: it goes after the appointment is over and after the window a late
+   * cancellation could still claim it back in has closed. An operator who
+   * reads a null here as having been stiffed phones the customer directly,
+   * which is the failure this whole product exists to prevent.
+   */
+  transfer_id: string | null;
+  transferred_at: number | null;
+  /** What the customer is owed back, if anything. A line with this set has no payout. */
+  refund_cents: number | null;
+  /** When that refund actually went. `refund_cents` is what was decided; this is what was done. */
+  refunded_at: number | null;
+  /** When the customer's card cleared. Null is not-yet-paid, and not the same as unpaid. */
+  paid_at: number | null;
+  /** The order's payment state, in the payment processor's own words. Never printed as it stands. */
+  payment_status: string | null;
 }
 
 export interface Client {
@@ -257,6 +399,10 @@ export interface ServiceArea {
 }
 
 export interface WorkPhoto {
+  // `r2_key` is the Worker's column name and there is no R2 bucket behind it —
+  // photos live in a Workers KV namespace. The name is kept because it is what
+  // the API actually sends; src/lib/photostore.ts on the Worker side says why
+  // it was not renamed.
   id: string; r2_key: string; caption: string | null;
   width: number | null; height: number | null;
   content_type: string; sort_order: number;
@@ -269,7 +415,12 @@ export interface PublicOperator {
   is_sample?: boolean;
 }
 
-/** Photos are served by the Worker from R2, on this same origin. */
+/**
+ * Photos are served by the Worker out of its Workers KV photo store, on this
+ * same origin. Never a storage URL: the Worker is what decides whether a key
+ * is one a stranger may see (only `w/` and `a/` are), so there is nothing to
+ * point a browser at directly even if there were a public endpoint to use.
+ */
 export const photoUrl = (key: string) => `/api/public/photo/${encodeURIComponent(key)}`;
 
 export interface Notification {
@@ -286,19 +437,167 @@ export interface Thread {
   /** Guest view only — a signed-out customer has no operator record to read. */
   business_name?: string; profile_slug?: string | null;
   timezone?: string; locale?: string;
+  /**
+   * Whether this conversation is reachable from a customer account as well as
+   * from its link.
+   *
+   * THE ONE FACT THE "KEEP THIS LINK" NOTICE CANNOT WORK OUT FOR ITSELF, and
+   * the reason it is on the payload at all. A browser holding a token has no
+   * way to know whether the person who booked ever proved an email address,
+   * and the two answers need opposite advice: a guest with no account must
+   * keep the link or lose the conversation, while somebody with an account
+   * should be told to sign in rather than spend an evening hunting for a link
+   * they do not need. The notice used to state the first of those to everyone.
+   *
+   * Optional because the field is newer than some caches; absent is read as
+   * false, which is the cautious answer — it tells somebody to keep their link,
+   * which is never harmful advice.
+   */
+  on_account?: boolean;
   booking?: {
     service_name: string; starts_at: number; ends_at: number;
     price: string; address_line: string | null;
     /** Null for the older single-slot claims that predate orders. */
     order_item_id: string | null;
+    /**
+     * THE ORDER BEHIND THIS BOOKING, and the field that ends the one dead end
+     * left on this site. Null is an ordinary answer — see GuestBookingOrder.
+     */
+    order: GuestBookingOrder | null;
   } | null;
 }
+
+/**
+ * Where a guest's booking stands with the money, as the Worker sees it.
+ *
+ * WHAT THIS REPLACES IS NOTHING AT ALL, AND THAT WAS THE BUG. The guest payload
+ * used to carry `order_item_id` and no order id, so a browser holding an unpaid
+ * booking had the id of a LINE and the pay route wants an ORDER — two different
+ * keys with no way between them on this side. Book.tsx's pay step has always
+ * told people "your booking is held under your conversation and you can pay
+ * from there", and for every customer who closed the tab at that step, this
+ * page could not honour it: the booking sat unpaid for ever, with the hour held
+ * in somebody's calendar and no money moved. See guestView in src/index.ts.
+ *
+ * `paid` AND `due` ARE NOT EACH OTHER'S OPPOSITE, which is why both are here.
+ * `paid` is whether the money arrived, and it is what the page says out loud.
+ * `due` is whether this page should put a card form in front of the reader, and
+ * it is false for a booking that was cancelled before anybody paid for it — a
+ * state that is neither paid nor payable, and the one a single flag gets wrong.
+ *
+ * NOTHING HERE IS ARITHMETIC. `total` arrives formatted, off the order's stored
+ * total, in the order's own currency. The figure the card is actually charged
+ * is worked out once on the Worker and handed to PayForm by the pay route; no
+ * page adds to it, discounts it or works it out again.
+ */
+export interface GuestBookingOrder {
+  /** What a charge is opened against. This is the field that was missing. */
+  id: string;
+  /** Already formatted by the Worker. Never a number this bundle turns into money. */
+  total: string;
+  /** Whether the money has actually arrived. Set by the webhook, not by a browser. */
+  paid: boolean;
+  /** Whether there is money outstanding that it is right to ask for here. */
+  due: boolean;
+}
+
+/**
+ * A photograph hanging off one message.
+ *
+ * Mirrors MessagePhotoRef in src/lib/chat.ts, and like it carries THREE FIELDS
+ * AND NO URL. The bytes come from a route that authorises the caller on every
+ * single read, so what arrives here is an id a browser turns into a request —
+ * never a link somebody else could follow. A screenshot of a chat window must
+ * not be a permanent public link to the inside of a stranger's house.
+ *
+ * `width` and `height` are 0 when the sending browser did not measure them —
+ * an upload that did not come from this app, or one where the canvas could not
+ * decode the picture. THAT IS A REAL STATE, not a missing one, and it is the
+ * state a renderer has to be careful with: it is a perfectly good reason not to
+ * reserve a box of a particular shape, and a terrible thing to divide by.
+ */
+export interface MessagePhoto {
+  id: string;
+  width: number;
+  height: number;
+}
+
+/**
+ * THE SEGMENT EVERY REQUEST ABOUT ONE CONVERSATION HANGS OFF, and why every
+ * function below calls it `ref` rather than `token`.
+ *
+ * Each of these paths is `/api/public/threads/<ref>/…`, and `<ref>` is one of
+ * two things:
+ *
+ *   A GUEST TOKEN, out of a /c/:token link. The secret IS the authority: it
+ *   works on a phone that has never been signed in, which is the whole point
+ *   of that page and the only thing a guest who never made an account has.
+ *
+ *   A THREAD ID, when the reader is a signed-in customer who owns that
+ *   conversation. The authority is then the session cookie the browser already
+ *   sends, and the id is merely which conversation is meant — holding it
+ *   proves nothing. The Worker resolves the two in one place (guardGuestLink
+ *   in src/lib/guestlink.ts): the token is tried first, and only a segment
+ *   that matched no token is looked up against the account.
+ *
+ * SO THE PARAMETER IS NOT CALLED `token` ANY MORE, and that rename is the
+ * whole reason this note exists. A parameter named `token` holding a thread id
+ * is a lie that reads as a leaked secret to the next person who greps for it,
+ * and the difference matters: one of these values must never appear in a log,
+ * a referrer or a screenshot, and the other is as sensitive as an order number.
+ *
+ * Nothing else changed. There is no second set of endpoints, no second shape
+ * of response and no branching in any caller — which is what stops the two
+ * doors drifting apart, and what let /account reuse the conversation page
+ * whole instead of growing a copy of it.
+ */
+
+/**
+ * Where one conversation photograph is fetched from, for whichever side is
+ * looking at it.
+ *
+ * Two functions and not one because the two doors are genuinely different: the
+ * operator's is flat and authorised by their session cookie, the customer's is
+ * nested under the conversation they are reading. The Worker matches
+ * `GET /api/proof/:id` in shape, which is why the operator's does not name the
+ * thread — the photo id is looked up first and the caller is then made to
+ * prove they are on that conversation.
+ *
+ * No BASE prefix, matching `photoUrl` above. These end up in `src` and `href`
+ * attributes rather than in a fetch, and an image loaded from another origin
+ * does not send the cookie or carry the token that authorises it — so a
+ * cross-origin form of either of these could only ever 404. Same-origin is not
+ * a shortcut here, it is the only thing that works. It is also what makes the
+ * account door work for pictures at all: a signed-in reader's authority is the
+ * cookie, and a cookie only travels same-origin.
+ */
+export const messagePhotoUrl = (photoId: string) =>
+  `/api/message-photo/${encodeURIComponent(photoId)}`;
+
+export const guestMessagePhotoUrl = (ref: string, photoId: string) =>
+  `/api/public/threads/${encodeURIComponent(ref)}`
+  + `/message-photo/${encodeURIComponent(photoId)}`;
 
 export interface ChatMessage {
   id: string; thread_id: string; sender: 'guest' | 'operator';
   body: string; created_at: number;
   /** 1 when a contact detail was stripped before this was stored. */
   redacted?: number;
+  /**
+   * The photograph sent with this message, if there was one.
+   *
+   * NOT OPTIONAL, and the Worker is equally deliberate about it: every message
+   * in every thread payload carries this key, and it is explicitly `null` on
+   * the overwhelming majority that are only words. An optional key would be two
+   * states a renderer has to tell apart — "no photo" and "a Worker that predates
+   * photos" — at exactly the moment the two trees are deploying separately. One
+   * explicit null is one state.
+   *
+   * A message can have a photo and no body at all. The photograph IS the
+   * message in that case, which is the whole point of the feature, so nothing
+   * may render an empty bubble beside one.
+   */
+  photo: MessagePhoto | null;
   /**
    * Only ever present on the response to your OWN send, and never stored. The
    * other side is not told "they tried to give you a phone number" -- that is
@@ -421,7 +720,21 @@ export interface PartsQuote {
   status: 'sent' | 'approved' | 'declined' | 'withdrawn' | 'expired';
   expires_at: number | null;
   decided_at: number | null;
+  /**
+   * When the card was actually charged for it, and the only proof the money
+   * moved. An approved quote with this still null means no charge happened —
+   * the deployment cannot take cards — so a screen that reads `status` alone
+   * tells somebody they have paid for a part nobody has been paid for.
+   */
   charged_at: number | null;
+  /**
+   * How many times the charge has been refused, and what the bank said last.
+   * Carried on the row both sides read so a quote stuck at 'sent' because a
+   * card was declined does not look identical to one nobody has got round to
+   * answering.
+   */
+  charge_attempts: number;
+  charge_error: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -446,16 +759,33 @@ export interface QuotableBooking {
   cancelled_at: number | null;
 }
 
+/**
+ * What a business owes for cancelling a booking somebody had already paid for.
+ *
+ * `reason` is the Worker's FeeReason in src/lib/bypass.ts, and this union used
+ * to name a rung that does not exist — 'cancelled_same_day' — while missing the
+ * two that carry most of the fees actually raised. Anything keyed on it read
+ * back undefined for a real fee, which is how a bill with no explanation on it
+ * reaches somebody's screen.
+ */
 export interface LeadFee {
   id: string;
   order_item_id: string;
   cents: number;
   currency: string;
-  reason: 'cancelled_on_arrival' | 'cancelled_same_day' | 'no_show';
+  reason: 'cancelled_late' | 'cancelled_last_hours' | 'cancelled_on_arrival' | 'no_show';
   status: 'owed' | 'paid' | 'waived';
   note: string | null;
+  /**
+   * How much of it a payout has already covered. A fee is netted off payouts
+   * and a payout is often smaller than the fee, so a row sits half paid for
+   * days — and an operator shown the full amount after most of it has been
+   * taken would reasonably think they were being billed twice.
+   */
+  settled_cents: number;
   settled_at: number | null;
   created_at: number;
+  updated_at: number;
 }
 
 export interface RatingSummary {
@@ -605,6 +935,33 @@ export interface PublicProfileResponse {
    * is the "see all" behind it.
    */
   similar: SimilarBusiness[];
+  /**
+   * WHERE THIS BUSINESS WORKS, as the parts a schema.org address is made of.
+   *
+   * `areas` above is a list of neighbourhood names and nothing in it says
+   * which town, state or country they are in — so the LocalBusiness node the
+   * profile page emits had no `address` to give, and Google will not produce a
+   * rich result for a LocalBusiness without one. The Worker resolves this the
+   * same way lib/seo.ts does for the server-rendered half of the same URL — by
+   * where the majority of this business's round is — and sends it here so the
+   * two halves say the same thing.
+   *
+   * NO STREET LINE, HERE OR THERE. These are vans; they have no premises, and
+   * this product has never been given an address for one. Nothing may invent
+   * a `streetAddress` from this.
+   */
+  metro: {
+    /** 'los-angeles'. */
+    slug: string;
+    /** 'Los Angeles'. */
+    name: string;
+    /** 'California'. */
+    state: string;
+    /** ISO 3166-1 alpha-2, off the metro record. */
+    country: string;
+    /** '/los-angeles' — the server-rendered metro page. */
+    path: string;
+  };
 }
 
 export interface OnlineStatus {
@@ -639,15 +996,137 @@ export interface Estimate {
   starts_at: number | null;
   currency: string | null;
   status: 'asked' | 'quoted' | 'accepted' | 'declined' | 'withdrawn' | 'expired';
+  /** When the quote stops standing. Null on rows written before it existed. */
+  expires_at: number | null;
+  /** When the customer answered it. Null while it is still waiting on them. */
+  decided_at: number | null;
+  /**
+   * THE ORDER AN ACCEPTED ESTIMATE BECAME, and the field the customer's page is
+   * built on. It is written in the SAME statement as the flip to 'accepted' —
+   * see decideEstimate in src/lib/estimates.ts, which spells the invariant out
+   * — so 'accepted' with this still null means one thing and cannot mean
+   * anything else: the customer said yes and the booking did not get made.
+   *
+   * THIS FIELD WAS NOT ON THIS TYPE AND THAT WAS HALF THE BUG. The Worker has
+   * sent it on every guest estimate since the column existed; the browser
+   * simply never read it, so somebody who accepted a quote and closed the tab
+   * had no way back to the payment and this bundle had no way to offer one.
+   * It is what Estimates.tsx uses to find an accepted booking nobody has
+   * charged for and put the card form back in front of them.
+   */
+  order_id: string | null;
   created_at: number;
+  updated_at: number;
 }
 
-export interface Trade { slug: string; label: string; hint?: string }
-export interface TradeCategory { key: string; label: string; trades: Trade[] }
+/**
+ * The order an accepted estimate became, in the shape the card form needs it.
+ *
+ * Mirrors EstimateOrder in src/lib/estimates.ts. Three fields and no more:
+ * the id the charge is opened against, and the figures the customer already
+ * agreed to, repeated so the page can say what it is about to charge without
+ * a second round trip. THE AMOUNT IS THE SERVER'S — nothing in this bundle
+ * may add to it, discount it or work it out again, because the only price
+ * this site ever charges is the one the customer was quoted.
+ */
+export interface EstimateOrder {
+  id: string;
+  total_cents: number;
+  currency: string;
+}
+
+/**
+ * What a decision hands back: the estimate row, plus the booking if one was made.
+ *
+ * `order` is null for a DECLINE and for nothing else. An accept either books
+ * and comes back with an order, or throws — the two are written in one batch
+ * on the Worker and cannot come apart — so a caller handling an accept has two
+ * cases and not three: a 200 with an order id to pay against, or a refusal
+ * with a sentence to show.
+ *
+ * It is read off the top level AND off the estimate because the Worker mirrors
+ * it in both places for exactly that reason: a page reaching for either
+ * spelling finds it, rather than tapping pay against `undefined`.
+ */
+export interface EstimateDecision {
+  estimate: Estimate & { order?: EstimateOrder | null };
+  order: EstimateOrder | null;
+}
+
+/**
+ * A trade and a category as the Worker serves them.
+ *
+ * `art` is the path of that trade's or that category's tile drawing, under
+ * /art. IT IS COMPUTED BY THE WORKER, in src/lib/seo.ts, and shipped on this
+ * payload rather than derived here — the note over `tradeArt` there sets out
+ * why, and the short version is that a browse row is drawn twice, once by a
+ * page in web/src/pages and once by the server-rendered twin, and two copies
+ * of the same path is how one of them ends up pointing at a file that is not
+ * there.
+ *
+ * OPTIONAL, AND NOT BECAUSE IT IS SOMETIMES ABSENT ON PURPOSE. This endpoint
+ * is cached `public, max-age=3600`, so for up to an hour after a deploy a
+ * browser can hand a page the catalogue it fetched BEFORE the field existed.
+ * Every tile therefore has to render without it — see how Discover, Category
+ * and BrowseIndex each guard the <img> — and the day this has been live for
+ * longer than an hour is not the day to make it required, because the caches
+ * outlive the deploy, not the code.
+ */
+export interface Trade { slug: string; label: string; hint?: string; art?: string }
+export interface TradeCategory {
+  key: string; label: string; trades: Trade[]; art?: string;
+}
+
+/** What both catalogue endpoints answer with. */
+export interface TradeCatalog {
+  categories: TradeCategory[];
+  /** The neutral drawing, for the front page's "Everything" tile. */
+  everything_art?: string;
+}
 
 export interface Vehicle {
   make: string | null; model: string | null;
   color: string | null; plate: string | null;
+  /**
+   * What SHAPE it is: one of the slugs the Worker serves from
+   * /api/public/vehicle-kinds. Null for an operator who signed up before the
+   * question existed.
+   */
+  kind: string | null;
+}
+
+/**
+ * One vehicle on the public map: a real fix from a real phone, coarsened to
+ * about a kilometre by the Worker and carrying no identity at all.
+ */
+export interface LiveVan {
+  /**
+   * A handle that rotates every ten minutes. Enough to tell that two polls
+   * are showing the same vehicle, so the dot can be moved rather than
+   * replaced; not enough to follow anybody. Never an operator id.
+   */
+  ref: string;
+  lat: number;
+  lng: number;
+  /** Compass degrees, or null when the phone did not report one. */
+  heading: number | null;
+  /** A slug from the Worker's vehicles.ts — what to draw. */
+  kind: string;
+}
+
+/** Where a business stands on being able to be paid. */
+export interface ConnectStatus {
+  account_id: string | null;
+  charges_enabled: boolean;
+  payouts_enabled: boolean;
+  /** They began onboarding and stopped partway. */
+  started: boolean;
+  checked_at: number | null;
+}
+
+/** One choice on the "what do you drive" list, as the Worker defines it. */
+export interface VehicleKindOption {
+  slug: string; label: string; noun: string; hint: string;
 }
 
 /** The customer's copy of the code, and the van to look for. */
@@ -719,6 +1198,24 @@ export interface CardOnFile {
   payment_added_at: number | null;
 }
 
+/**
+ * Everything a browser needs to put a card on file, and nothing else.
+ *
+ * The key travels with the secret rather than being asked for separately,
+ * because the two only make sense together: a deployment with no Stripe keys
+ * cannot mint a setup intent at all, so anything that answers this
+ * successfully has a key to hand back with it.
+ *
+ * NEITHER OF THESE IS A CREDENTIAL WORTH GUARDING. The publishable key is
+ * public by design and identifies the account to Stripe's own script; the
+ * secret names one attempt at storing one card, cannot move money, and is
+ * useless to anybody who does not also have the card in their hand.
+ */
+export interface SetupIntentHandle {
+  client_secret: string;
+  publishable_key: string;
+}
+
 export interface FeesResponse {
   owed: { cents: number; currency: string | null; count: number; amount: string };
   fees: LeadFee[];
@@ -742,9 +1239,22 @@ export interface ErasureResult {
 // ---------------------------------------------------------------------------
 // The customer's account
 //
-// A mobile number, proved by a six-digit code sent to it in a text message. No
-// password and no mailbox: the account is created at the confirm step of the
-// checkout, in the same action that would take the card.
+// An email address, proved by a six-digit code sent to it. No password: the
+// account is created at the confirm step of the checkout, in the same action
+// that would take the card.
+//
+// IT WAS A MOBILE NUMBER UNTIL MIGRATION 0038, and the swap is not a change of
+// delivery channel. There is no way to send a text from this deployment — a US
+// mobile needs a registered campaign nobody here has — so the code moved to the
+// channel that works, and the ACCOUNT had to move with it. Emailing a code
+// while still keying the account on a number would have meant anybody could
+// type a stranger's mobile beside their own mailbox and be handed that
+// stranger's bookings. Proof and identity have to be the same thing, so the
+// address is now both.
+//
+// THE NUMBER IS STILL COLLECTED AND IS STILL REQUIRED at the checkout — an
+// operator driving to a stranger's address needs something to ring on arrival —
+// but nothing proves it and nothing is unlocked by it.
 //
 // THE MODEL THIS REPLACES WAS WRONG, and a good deal of this bundle still says
 // so — "No account. No app. No card." on the hero, "no account is ever
@@ -771,9 +1281,15 @@ export interface ErasureResult {
  */
 export interface CustomerAccount {
   id: string;
-  /** E.164. Null only on an account that has been closed or erased. */
+  /**
+   * E.164, and a contact detail rather than the account. Nobody proves this —
+   * it is whatever was typed into a booking form — so it names the person the
+   * business rings on the day and unlocks nothing. Null on an account that has
+   * been closed or erased.
+   */
   phone_e164: string | null;
   first_name: string | null;
+  /** The address the code was sent to, which is the account. */
   email: string | null;
   has_card: boolean;
   payment_brand: string | null;
@@ -826,8 +1342,22 @@ export interface CustomerBooking {
   cancelled_at: number | null;
   cancelled_by: string | null;
   arrived_at: number | null;
+  /**
+   * Whether the money on a cancelled booking is still frozen ('held'), on its
+   * way back ('released') or staying where it is ('withheld'). See
+   * src/lib/settlement.ts — both sides of a cancellation freeze until somebody
+   * says whether the work happened anyway.
+   */
   settlement: string;
+  /**
+   * What was DECIDED, and what was DONE. Both are needed and neither stands in
+   * for the other: "cancelled, you get $240 back" and "your $240 went back on
+   * Tuesday" are different sentences to somebody watching their bank account,
+   * and showing only the first makes a refund that never left look exactly like
+   * one that did.
+   */
   refund_cents: number | null;
+  refunded_at: number | null;
   /** The four digits read out on the doorstep. */
   start_code: string | null;
   business_name: string | null;
@@ -836,11 +1366,69 @@ export interface CustomerBooking {
 }
 
 /**
+ * One conversation of this customer's, as their own list of them reports it.
+ *
+ * THE ROW /account NEEDED AND DID NOT HAVE. The bookings list has been there
+ * since the account existed, and underneath it the page had to say: to message
+ * the business, see the photographs or cancel, open the booking from the link
+ * in its confirmation — that link is the only copy there is. Somebody who had
+ * lost it was simply stuck, and losing a link is not an unusual thing to do.
+ *
+ * `id` IS HOW ONE IS OPENED, and it is the field that makes this list worth
+ * anything. There is no token here and there cannot be: only a fingerprint of
+ * a /c/:token is stored, so nothing on the server is able to hand one back.
+ * The id goes in the path and the session cookie is the authority — see the
+ * note on `ref` above guestMessagePhotoUrl.
+ *
+ * `starts_at` IS NULL FOR A CONVERSATION THAT NEVER BECAME A BOOKING, which is
+ * an ordinary member of this list rather than an odd one: a question asked from
+ * a profile page is a conversation, and for plenty of people it is the only
+ * kind they have.
+ */
+export interface CustomerThread {
+  id: string;
+  operator_id: string;
+  subject: string | null;
+  guest_name: string;
+  last_message_at: number;
+  /** Unread messages waiting for THIS customer. The badge on the row. */
+  guest_unread: number;
+  status: 'open' | 'closed';
+  created_at: number;
+  /** Empty string when the business's row has gone. The list still renders. */
+  business_name: string;
+  profile_slug: string | null;
+  appointment_id: string | null;
+  starts_at: number | null;
+  /** The other end of that hour. Null alongside starts_at, never alone. */
+  ends_at: number | null;
+}
+
+/**
+ * One business the reader has conversations with, for the filter above the list.
+ *
+ * THE FILTER THIS SIDE OF THE MARKET NEEDS. An operator's inbox is many people
+ * talking to one business, so a name tells the rows apart. A customer's list is
+ * the reverse — five trades out is five rows differing only by who is on them —
+ * so "which business" is the narrowing that matches how the list is read.
+ *
+ * `threads` is how many conversations that business accounts for, which is what
+ * lets the filter say "Valley Detailing (3)" rather than making somebody pick
+ * blind. It counts every status, like the list it filters.
+ */
+export interface CustomerThreadBusiness {
+  operator_id: string;
+  /** Empty string when the business's row has gone. The choice still renders. */
+  business_name: string;
+  threads: number;
+}
+
+/**
  * What booking actually requires on this deployment, said by the server.
  *
  * Not a constant, which is the whole reason it is a request. Whether a card is
  * needed depends on a Worker secret, and whether an account can be created at
- * all depends on whether a text message can be delivered — neither of which a
+ * all depends on whether a sign-in code can be emailed — neither of which a
  * bundle can know, and both of which a page has to state correctly or it is
  * lying to somebody about to spend money.
  */
@@ -850,20 +1438,28 @@ export interface BookingState {
   /** Reading a booking you already have never needs one. */
   guest_link_works: boolean;
   /**
-   * False on every deployment today: no text-message provider is configured,
-   * so no account can be created and nothing can be booked. That is a refusal
-   * rather than a fallback — the code endpoint answers 503 — so a page that
-   * reads this can say so up front instead of letting somebody fill a basket
-   * in first.
+   * Whether a sign-in code can be delivered at all, and so whether an account
+   * can be created and anything booked. False means a refusal rather than a
+   * fallback — the code endpoint answers 503 — so a page that reads this can
+   * say so up front instead of letting somebody fill a basket in first.
+   *
+   * THE NAME IS A LEFTOVER AND IS KEPT ON PURPOSE. The Worker used to answer it
+   * from the text-message provider and answers it from the email provider since
+   * migration 0038; the question it settles has not changed, and renaming a
+   * field across two trees to tidy a word is how the two come to disagree about
+   * what it means. Do not read it as "texts work".
    */
   sms_ready: boolean;
-  /** False everywhere today. No money moves through this product yet. */
+  /**
+   * Whether this deployment takes money. True in production: the customer pays
+   * the full listed price by card at the moment they book.
+   */
   payments_live: boolean;
-  /** A card is asked for at checkout only once payment is switched on. */
+  /** Whether the checkout asks for a card. True wherever payments are live. */
   card_required: boolean;
   account_note: string;
   card_note: string;
-  /** The sentence explaining the refusal, or null when texts can be sent. */
+  /** The sentence explaining the refusal, or null when a code can be sent. */
   sms_note: string | null;
 }
 
@@ -878,12 +1474,12 @@ export const api = {
   }) => post<{ quote: PartsQuote }>('/api/parts/quotes', b),
   withdrawPartsQuote: (id: string) => del<{ ok: true }>(`/api/parts/quotes/${id}`),
 
-  guestParts: (token: string) =>
+  guestParts: (ref: string) =>
     get<{ quotes: PartsQuote[]; parts_cents: number }>(
-      `/api/public/threads/${encodeURIComponent(token)}/parts`),
-  decidePartsQuote: (token: string, id: string, decision: 'approved' | 'declined') =>
+      `/api/public/threads/${encodeURIComponent(ref)}/parts`),
+  decidePartsQuote: (ref: string, id: string, decision: 'approved' | 'declined') =>
     post<{ quote: PartsQuote }>(
-      `/api/public/threads/${encodeURIComponent(token)}/parts/${id}`, { decision }),
+      `/api/public/threads/${encodeURIComponent(ref)}/parts/${id}`, { decision }),
 
   // --- arrival, cancellation, fees -----------------------------------------
   markArrived: (orderItemId: string) =>
@@ -891,12 +1487,12 @@ export const api = {
   cancelBooking: (orderItemId: string, reason?: string) =>
     post<{ order_item_id: string; fee: LeadFee | null; relisted: boolean }>(
       `/api/bookings/${orderItemId}/cancel`, { reason }),
-  refundQuote: (token: string, orderItemId: string) =>
+  refundQuote: (ref: string, orderItemId: string) =>
     get<{ refund: RefundDecision }>(
-      `/api/public/threads/${encodeURIComponent(token)}/refund/${orderItemId}`),
-  guestCancel: (token: string, orderItemId: string, reason?: string) =>
+      `/api/public/threads/${encodeURIComponent(ref)}/refund/${orderItemId}`),
+  guestCancel: (ref: string, orderItemId: string, reason?: string) =>
     post<{ order_item_id: string; fee: null; relisted: boolean }>(
-      `/api/public/threads/${encodeURIComponent(token)}/cancel/${orderItemId}`, { reason }),
+      `/api/public/threads/${encodeURIComponent(ref)}/cancel/${orderItemId}`, { reason }),
   fees: () => get<FeesResponse>('/api/fees'),
 
   // --- proof of the job ----------------------------------------------------
@@ -908,20 +1504,24 @@ export const api = {
   addJobProof: (orderItemId: string, form: FormData) =>
     request<{ photo: JobPhoto }>(`/api/bookings/${orderItemId}/proof`,
       { method: 'POST', body: form }),
-  guestProof: (token: string, orderItemId: string) =>
+  guestProof: (ref: string, orderItemId: string) =>
     get<ProofSummary>(
-      `/api/public/threads/${encodeURIComponent(token)}/proof/${orderItemId}`),
-  guestAddProof: (token: string, orderItemId: string, form: FormData) =>
+      `/api/public/threads/${encodeURIComponent(ref)}/proof/${orderItemId}`),
+  guestAddProof: (ref: string, orderItemId: string, form: FormData) =>
     request<{ photo: JobPhoto }>(
-      `/api/public/threads/${encodeURIComponent(token)}/proof/${orderItemId}`,
+      `/api/public/threads/${encodeURIComponent(ref)}/proof/${orderItemId}`,
       { method: 'POST', body: form }),
 
   // --- the start code and the van ------------------------------------------
   // The catalogue, grouped. Served by the Worker so the browser never holds a
-  // second copy that can drift out of step with it.
-  tradeCatalog: () => get<{ categories: TradeCategory[] }>('/api/trade-catalog'),
-  publicTradeCatalog: () =>
-    get<{ categories: TradeCategory[] }>('/api/public/trade-catalog'),
+  // second copy that can drift out of step with it — labels, hints and, since
+  // the tiles grew pictures, the path of each drawing. `everything_art` is the
+  // one drawing that belongs to no category: it is the front page's
+  // "Everything" tile, and it rides along here rather than being written out
+  // in Discover.tsx, which would have been the only path to one of these files
+  // spelled by hand anywhere in this tree.
+  tradeCatalog: () => get<TradeCatalog>('/api/trade-catalog'),
+  publicTradeCatalog: () => get<TradeCatalog>('/api/public/trade-catalog'),
 
   // --- open for work right now ---------------------------------------------
   onlineStatus: () => get<OnlineStatus>('/api/online'),
@@ -938,15 +1538,26 @@ export const api = {
       `/api/public/online?lat=${lat}&lng=${lng}${trade ? `&trade=${encodeURIComponent(trade)}` : ''}`),
 
   // --- estimates asked for in the chat --------------------------------------
-  askEstimate: (token: string, request: string) =>
+  askEstimate: (ref: string, request: string) =>
     post<{ estimate: Estimate }>(
-      `/api/public/threads/${encodeURIComponent(token)}/estimates`, { request }),
-  guestEstimates: (token: string) =>
+      `/api/public/threads/${encodeURIComponent(ref)}/estimates`, { request }),
+  guestEstimates: (ref: string) =>
     get<{ estimates: Estimate[] }>(
-      `/api/public/threads/${encodeURIComponent(token)}/estimates`),
-  decideEstimate: (token: string, id: string, decision: 'accepted' | 'declined') =>
-    post<{ estimate: Estimate }>(
-      `/api/public/threads/${encodeURIComponent(token)}/estimates/${id}`, { decision }),
+      `/api/public/threads/${encodeURIComponent(ref)}/estimates`),
+  /**
+   * Accept or decline a quote, from the customer's link.
+   *
+   * ACCEPTING IS A BOOKING NOW. It used to return an estimate row with a new
+   * status on it and nothing else happened: no appointment, no order, no
+   * charge. The operator was told somebody had said yes to $240 of work and
+   * had no job to do it against, and the customer had agreed to a price and
+   * was never asked for money. The Worker now writes the whole booking in one
+   * batch and hands back the order it became, which is what `order` is and why
+   * this signature changed — see EstimateDecision.
+   */
+  decideEstimate: (ref: string, id: string, decision: 'accepted' | 'declined') =>
+    post<EstimateDecision>(
+      `/api/public/threads/${encodeURIComponent(ref)}/estimates/${id}`, { decision }),
   estimates: (status?: string) =>
     get<{ estimates: Estimate[] }>(`/api/estimates${status ? `?status=${status}` : ''}`),
   quoteEstimate: (id: string, b: {
@@ -955,25 +1566,75 @@ export const api = {
   withdrawEstimate: (id: string) => del<{ ok: true }>(`/api/estimates/${id}`),
 
   vehicle: () => get<{ vehicle: Vehicle }>('/api/vehicle'),
+  vehicleKinds: () =>
+    get<{ kinds: VehicleKindOption[] }>('/api/public/vehicle-kinds'),
+  /**
+   * Who is actually out right now, for the front page map. Anonymous by
+   * design — no id, no name, no link — and coarsened server side.
+   */
+  live: () => get<{ vans: LiveVan[]; demo: boolean }>('/api/public/live'),
+
+  /** Whether this deployment can take a card, and the key the form needs. */
+  paymentConfig: () => get<{
+    enabled: boolean; publishable_key: string | null; fee_note: string | null;
+  }>('/api/public/payment-config'),
+
+  /**
+   * Opens the charge for an order and returns the secret the embedded card
+   * form uses. No redirect: the customer pays on this site.
+   */
+  startPayment: (orderId: string) => post<{
+    client_secret: string; payment_intent_id: string;
+    amount_cents: number; currency: string; paid: boolean;
+  }>(`/api/public/orders/${encodeURIComponent(orderId)}/pay`, {}),
+
+  /**
+   * Asks the customer's bank for permission to KEEP a card rather than to
+   * charge one. No money moves and no amount is named.
+   *
+   * This is what a card on file is made of: the same embedded form a payment
+   * uses, on this same page, opened against the customer's own account at the
+   * processor. The card is typed into Stripe and comes back to us as a
+   * reference — see `saveCustomerCard`, which is where that reference goes.
+   *
+   * NEEDS THE CUSTOMER'S SESSION, because a card has to be stored against
+   * somebody. A device that is not signed in gets 401 and the message on it is
+   * the sentence to show.
+   *
+   * A deployment with no Stripe keys refuses with code `stripe_unconfigured`
+   * instead of handing back an empty secret, so a card form can say "not
+   * switched on here" rather than drawing fields that could never work.
+   *
+   * Safe to call again after a decline or a typo: an intent nobody confirms
+   * stores no card and costs nothing, so a second attempt is simply a second
+   * go at typing a card.
+   */
+  setupIntent: () => post<SetupIntentHandle>('/api/public/setup-intent', {}),
+
+  /** Where this business stands on being able to receive money. */
+  stripeAccount: () => get<{ connect: ConnectStatus }>('/api/stripe/account'),
+  refreshStripeAccount: () => post<{ connect: ConnectStatus }>('/api/stripe/account/refresh', {}),
+  /** Starts or resumes payout onboarding; returns the link to send them to. */
+  startOnboarding: () => post<{ url: string; account_id: string }>('/api/stripe/onboard', {}),
   saveVehicle: (v: Partial<Vehicle>) => put<{ vehicle: Vehicle }>('/api/vehicle', v),
   verifyStartCode: (orderItemId: string, code: string) =>
     post<{ verified_at: number }>(`/api/bookings/${orderItemId}/code`, { code }),
-  jobCode: (token: string) =>
-    get<{ job: JobCode | null }>(`/api/public/threads/${encodeURIComponent(token)}/code`),
-  reportVehicle: (token: string, orderItemId: string, note?: string) =>
+  jobCode: (ref: string) =>
+    get<{ job: JobCode | null }>(`/api/public/threads/${encodeURIComponent(ref)}/code`),
+  reportVehicle: (ref: string, orderItemId: string, note?: string) =>
     post<{ ok: true }>(
-      `/api/public/threads/${encodeURIComponent(token)}/vehicle/${orderItemId}`, { note }),
+      `/api/public/threads/${encodeURIComponent(ref)}/vehicle/${orderItemId}`, { note }),
 
   // --- two-sided arrival, and the one question -----------------------------
-  confirmArrival: (token: string, orderItemId: string) =>
+  confirmArrival: (ref: string, orderItemId: string) =>
     post<{ arrival_confirmed_at: number }>(
-      `/api/public/threads/${encodeURIComponent(token)}/arrived/${orderItemId}`),
-  pendingQuestion: (token: string) =>
+      `/api/public/threads/${encodeURIComponent(ref)}/arrived/${orderItemId}`),
+  pendingQuestion: (ref: string) =>
     get<{ question: PendingQuestion | null }>(
-      `/api/public/threads/${encodeURIComponent(token)}/pending`),
-  answerWork: (token: string, orderItemId: string, answer: 'done' | 'not_done') =>
+      `/api/public/threads/${encodeURIComponent(ref)}/pending`),
+  answerWork: (ref: string, orderItemId: string, answer: 'done' | 'not_done') =>
     post<{ settlement: string; refund_cents: number }>(
-      `/api/public/threads/${encodeURIComponent(token)}/answer/${orderItemId}`, { answer }),
+      `/api/public/threads/${encodeURIComponent(ref)}/answer/${orderItemId}`, { answer }),
 
   // --- card on file, standing, no-shows ------------------------------------
   // No card number ever passes through here. The processor's own form takes
@@ -986,8 +1647,8 @@ export const api = {
   // Neither of these is reversible and neither has a grace period, so both
   // call sites put a confirmation in front of them. See DeleteMyData.tsx and
   // CloseAccount.tsx.
-  eraseMyData: (token: string) =>
-    del<ErasureResult>(`/api/public/threads/${encodeURIComponent(token)}/data`),
+  eraseMyData: (ref: string) =>
+    del<ErasureResult>(`/api/public/threads/${encodeURIComponent(ref)}/data`),
   /**
    * The Worker clears the session cookie on its own success response, so the
    * caller's only remaining job is to drop the local copy of the operator.
@@ -998,9 +1659,9 @@ export const api = {
     '/api/standing'),
   reportNoShow: (orderItemId: string, note?: string) =>
     post<{ id: string }>(`/api/bookings/${orderItemId}/no-show`, { note }),
-  guestReportNoShow: (token: string, orderItemId: string, note?: string) =>
+  guestReportNoShow: (ref: string, orderItemId: string, note?: string) =>
     post<{ id: string }>(
-      `/api/public/threads/${encodeURIComponent(token)}/no-show/${orderItemId}`, { note }),
+      `/api/public/threads/${encodeURIComponent(ref)}/no-show/${orderItemId}`, { note }),
 
   // --- the customer's account ----------------------------------------------
   /**
@@ -1011,27 +1672,35 @@ export const api = {
   bookingState: () => get<BookingState>('/api/public/booking-state'),
 
   /**
-   * Step one: text a six-digit code to a mobile number.
+   * Step one: email a six-digit code to an address.
    *
-   * The answer is deliberately identical whether or not that number already
-   * has an account, so nothing here can be used to ask whether somebody's
-   * mobile has booked before. Two refusals are worth handling by name.
-   * 503 `sms_not_configured` means no text can be sent on this deployment and
+   * NO NUMBER AND NO COUNTRY. The address is the account since migration 0038,
+   * so it is the only thing this step needs; sending a number as well would
+   * suggest one is being checked, and none is.
+   *
+   * The answer is deliberately identical whether or not that address already
+   * has an account, so nothing here can be used to ask whether somebody has
+   * booked before. Two refusals are worth handling by name. 503
+   * `email_not_configured` means no code can be sent on this deployment and
    * therefore nothing can be booked — say so, do not retry. 429 means too many
-   * texts have been aimed at that number lately; the message carries the wait.
+   * codes have been aimed at that mailbox lately; the message carries the wait.
    *
-   * `country` picks how a national number is read and defaults to US on the
-   * server. `language` decides which language the message is written in.
+   * `language` decides which language the message is written in.
    */
   requestCustomerCode: (b: {
-    phone: string; country?: string; language?: string;
-    /** See placeOrder. This route is challenged: each call sends a real text. */
+    email: string; language?: string;
+    /** See placeOrder. This route is challenged: each call sends a real email. */
     turnstile_token?: string;
   }) => post<CodeSent>('/api/customer/auth/code', b),
 
   /**
-   * Step two: the six digits. Creates the account if the number has none, and
+   * Step two: the six digits. Creates the account if the address has none, and
    * signs this device in for a year.
+   *
+   * `phone` is written onto the account as a contact detail and is taken on
+   * trust — nothing verifies it and nothing is unlocked by it — and `country`
+   * only says how to read a national number. Neither decides which account this
+   * is: the address does that, which is the whole point of 0038.
    *
    * A wrong, expired, used or never-sent code all answer 400 `bad_code` with
    * one sentence, on purpose — there is no way to tell them apart, because a
@@ -1039,8 +1708,8 @@ export const api = {
    * and the remedy is to ask for another.
    */
   verifyCustomerCode: (b: {
-    phone: string; code: string; country?: string;
-    first_name?: string; email?: string;
+    email: string; code: string;
+    first_name?: string; phone?: string; country?: string;
   }) => post<CustomerSignedIn>('/api/customer/auth/verify', b),
 
   customerMe: () => get<{
@@ -1051,9 +1720,41 @@ export const api = {
   customerLogout: () => post<{ ok: true }>('/api/customer/logout'),
 
   /**
+   * A business stepping over to the customer side, on the same browser.
+   *
+   * A mechanic's own van needs washing and a detailer needs a locksmith, and
+   * until this existed there was nowhere in the product for a business to be
+   * the one doing the booking.
+   *
+   * BOTH SESSIONS LIVE AT ONCE. The customer cookie has a different name from
+   * the operator one, so the session this call is made with is still there
+   * afterwards — the browser is signed in as a business AND as a customer, and
+   * coming back to the business is a link rather than a sign-in. Nothing has to
+   * be signed out first and nothing should be.
+   *
+   * ONE DIRECTION ONLY: there is no matching call the other way, because
+   * becoming a business means a bank account, a vehicle and working hours
+   * rather than a tap.
+   *
+   * IT REFUSES IN TWO CASES AND BOTH MESSAGES ARE WORTH SHOWING WORD FOR WORD.
+   * 400 `no_operator_email` is a business with nothing in its email column —
+   * the address is the whole of the proof, so there is nothing to open. 409
+   * `linked_elsewhere` is that address already belonging to a different
+   * business, which is refused rather than taken over, because taking it over
+   * would hand one business another's bookings and saved card in silence.
+   * Neither is a sentence a browser can write for itself.
+   *
+   * `created` is true only the first time, when the account was made here
+   * rather than found. A business whose owner has already booked somebody with
+   * this address adopts that existing account, standing and all.
+   */
+  enterCustomerMode: () =>
+    post<{ account: CustomerAccount; created: boolean }>('/api/operator/customer-mode'),
+
+  /**
    * Every booking this account has, at every business, including the ones made
    * before the account existed — those are attached to it the first time the
-   * same number is verified.
+   * same address is verified.
    *
    * The `/c/:token` link is not in this payload and cannot be: only its hash
    * is stored. An account reaches its bookings by id instead.
@@ -1061,13 +1762,69 @@ export const api = {
   customerBookings: () => get<{ bookings: CustomerBooking[] }>('/api/customer/bookings'),
 
   /**
+   * One page of this account's conversations, at every business.
+   *
+   * The half that was missing. A booking tells somebody what they bought; the
+   * conversation is where the work was described, where the photographs are,
+   * where the quote was agreed and where the card form sits for one nobody has
+   * paid for. All of it lived behind one link, and this is the way to it that
+   * does not need the link.
+   *
+   * Like the bookings list, it carries no token — only a fingerprint of a
+   * /c/:token is stored — so a row is opened by `id` on the account's own
+   * authority. See CustomerThread.
+   *
+   * PAGED AND FILTERED, WHICH IT WAS NOT WHEN IT FIRST LANDED. It returned
+   * everything on the account with no cursor, which was right for the person
+   * it was written for — somebody with one booking — and wrong for the person
+   * it exists for: "customers will be messaging multiple [businesses]".
+   * Somebody who has had five trades out has five rows that differ only by
+   * which business is on them, and the only way to tell which of them had
+   * replied was to open all five.
+   *
+   * `business` is an operator id, taken from the `businesses` list this same
+   * response carries. That list is its own query rather than the distinct
+   * businesses on this page, because a filter assembled from twenty-five rows
+   * could not offer the business whose conversation is the reason somebody is
+   * paging in the first place.
+   *
+   * `unread` is how many conversations on the whole account are waiting on the
+   * reader — not how many are on this page — which is the number worth putting
+   * at the top of the section.
+   *
+   * `status` is NOT defaulted to 'open' the way the operator's inbox is. The
+   * Worker's default here is 'all', deliberately: a business closing a
+   * conversation must not make it disappear off the customer's own account.
+   */
+  customerThreads: (opts: {
+    unreadOnly?: boolean; business?: string | null;
+    status?: 'open' | 'closed' | 'all';
+    q?: string; cursor?: string | null; limit?: number;
+  } = {}) => {
+    const p = new URLSearchParams();
+    if (opts.unreadOnly) p.set('unread', '1');
+    if (opts.business) p.set('business', opts.business);
+    if (opts.status && opts.status !== 'all') p.set('status', opts.status);
+    if (opts.q) p.set('q', opts.q);
+    if (opts.cursor) p.set('cursor', opts.cursor);
+    if (opts.limit) p.set('limit', String(opts.limit));
+    const qs = p.toString();
+    return get<{
+      threads: CustomerThread[];
+      next_cursor: string | null;
+      unread: number;
+      businesses: CustomerThreadBusiness[];
+    }>(`/api/customer/threads${qs ? `?${qs}` : ''}`);
+  },
+
+  /**
    * The customer's card, in the only form this codebase ever holds one.
    *
    * NO CARD NUMBER PASSES THROUGH HERE. The processor's own form takes the
    * details in the browser and hands back an opaque reference; that reference
    * is all `saveCustomerCard` sends, and the Worker refuses anything shaped
-   * like a card number outright. Nothing produces such a reference today —
-   * Stripe is not wired — so this is the seam and not a working card step.
+   * like a card number outright. The reference is real and the card behind it
+   * is charged: booking takes the full listed price at the moment of booking.
    */
   customerCard: () => get<{
     card: { payment_brand: string | null; payment_last4: string | null;
@@ -1078,10 +1835,10 @@ export const api = {
     post<{ ok: true }>('/api/customer/payment-method', b),
 
   /**
-   * Closing the account: the number, name, mailbox and card reference are
+   * Closing the account: the address, number, name and card reference are
    * emptied and every session dies. The bookings stay — an order is a record
    * between two people. A live suspension is not cleared by this, and signing
-   * up again with the same number lands back on it.
+   * up again with the same address lands back on it.
    */
   closeCustomerAccount: () =>
     post<{ closed: true; sessions_revoked: number }>('/api/customer/close'),
@@ -1100,15 +1857,17 @@ export const api = {
    *
    * NEEDS AN ACCOUNT, the same as a checkout does, because an accepted request
    * becomes a real appointment at an agreed price. Either this device is
-   * already signed in, or `phone` and `code` are sent and the account is
+   * already signed in, or `email` and `code` are sent and the account is
    * created here. Without either it answers 401 `account_required`.
    */
   requestNow: (b: {
     operator_id: string; service_id?: string; guest_name?: string;
     address_line?: string; postcode?: string; note?: string;
     duration_seconds?: number; price_cents?: number;
+    /** The number the business rings on arrival. Proves nothing; see 0038. */
+    phone?: string;
     /** Only when this device is not signed in yet. */
-    phone?: string; code?: string; country?: string;
+    email?: string; code?: string; country?: string;
     /** See placeOrder. This form rings somebody's phone, so it is challenged. */
     turnstile_token?: string;
   }) => post<{ token: string; link?: string; request?: Record<string, unknown> }>(
@@ -1117,7 +1876,7 @@ export const api = {
   countries: () => get<{ countries: Country[] }>('/api/countries'),
 
   /**
-   * Every place Slotfill serves, in the order they opened.
+   * Every place Round The Way serves, in the order they opened.
    *
    * The one call a metro list or a metro page needs. It is static and cached
    * for an hour on the server, so calling it on mount is cheap; pair it with
@@ -1135,12 +1894,24 @@ export const api = {
       located: { postcode: string; place: string | null } | null;
     }>(`/api/public/map${postcode ? `?postcode=${encodeURIComponent(postcode)}` : ''}`),
 
-  guestThread: (token: string) =>
+  guestThread: (ref: string) =>
     get<{ thread: Thread; messages: ChatMessage[] }>(
-      `/api/public/threads/${encodeURIComponent(token)}`),
-  guestSend: (token: string, body: string) =>
+      `/api/public/threads/${encodeURIComponent(ref)}`),
+  guestSend: (ref: string, body: string) =>
     post<{ message: ChatMessage }>(
-      `/api/public/threads/${encodeURIComponent(token)}/messages`, { body }),
+      `/api/public/threads/${encodeURIComponent(ref)}/messages`, { body }),
+  /**
+   * The customer sends a photograph, authorised by nothing but their link.
+   *
+   * `form` carries `file` and, optionally, `body` (an ordinary message body:
+   * same 2000-character cap, same contact-detail filter, and it MAY BE EMPTY)
+   * plus `width` and `height`. Comes back as an ordinary message with a `photo`
+   * on it, so a caller appends it to the transcript exactly as it appends the
+   * answer to `guestSend`.
+   */
+  guestSendPhoto: (ref: string, form: FormData, onProgress?: (f: number) => void) =>
+    upload<{ message: ChatMessage }>(
+      `/api/public/threads/${encodeURIComponent(ref)}/photos`, form, onProgress),
   startGuestThread: (b: {
     operator_id: string; gap_id?: string; guest_name: string;
     subject?: string; first_message?: string;
@@ -1187,12 +1958,73 @@ export const api = {
     estimate: Estimate | null;
   }>(`/api/public/profile/${encodeURIComponent(slug)}/enquiries`, b),
 
-  threads: (unreadOnly?: boolean) =>
-    get<{ threads: Thread[]; unread: number }>(`/api/threads${unreadOnly ? '?unread=1' : ''}`),
+  /**
+   * One page of the operator's inbox, the conversations waiting on them first.
+   *
+   * WHAT THIS USED TO BE: `threads(unreadOnly?: boolean)`, against a route
+   * that returned fifty rows and had no way of asking for the fifty-first. A
+   * business with three hundred conversations had a hundred of them
+   * permanently unreachable from the only screen where a customer's question
+   * can be answered, and the list simply ended without saying so.
+   *
+   * `cursor` comes from the previous page's `next_cursor` and is opaque to
+   * this file on purpose. It encodes which of the two ordering segments the
+   * page stopped in as well as where it stopped, and a browser that took it
+   * apart would be depending on a format the Worker is free to change. A null
+   * `next_cursor` is the end of the list and is the only signal of it: there
+   * is deliberately no total, because a total over a filtered and searched
+   * list is a second query on every poll printing a number that is already
+   * wrong by the time it is drawn.
+   *
+   * `unread` beside the rows is a different number and is not this page's: it
+   * is how many conversations are waiting in total, which is what the header
+   * prints, and it has to stay right while somebody pages or searches.
+   *
+   * `status` is left off the query string when it is 'open', because that is
+   * the Worker's own default — sending it anyway would make every poll a
+   * different URL for no reason.
+   */
+  threads: (opts: {
+    unreadOnly?: boolean; bookedOnly?: boolean;
+    status?: 'open' | 'closed' | 'all';
+    q?: string; cursor?: string | null; limit?: number;
+  } = {}) => {
+    const p = new URLSearchParams();
+    if (opts.unreadOnly) p.set('unread', '1');
+    if (opts.bookedOnly) p.set('booked', '1');
+    if (opts.status && opts.status !== 'open') p.set('status', opts.status);
+    if (opts.q) p.set('q', opts.q);
+    if (opts.cursor) p.set('cursor', opts.cursor);
+    if (opts.limit) p.set('limit', String(opts.limit));
+    const qs = p.toString();
+    return get<{ threads: Thread[]; next_cursor: string | null; unread: number }>(
+      `/api/threads${qs ? `?${qs}` : ''}`);
+  },
   thread: (id: string) => get<{ thread: Thread; messages: ChatMessage[] }>(`/api/threads/${id}`),
   threadSend: (id: string, body: string) =>
     post<{ message: ChatMessage }>(`/api/threads/${id}/messages`, { body }),
+  /** The business sends a photograph. Same form fields as `guestSendPhoto`. */
+  threadSendPhoto: (id: string, form: FormData, onProgress?: (f: number) => void) =>
+    upload<{ message: ChatMessage }>(`/api/threads/${id}/photos`, form, onProgress),
   markThreadRead: (id: string) => post<{ ok: true }>(`/api/threads/${id}/read`, {}),
+  /**
+   * Close a finished conversation, or open it again.
+   *
+   * THE BUTTON FOR A COLUMN NOTHING HAS EVER WRITTEN. threads.status has
+   * existed since the chat shipped and every consumer of it was built — new
+   * messages are refused on a closed thread, the offer fan-out skips one, both
+   * lists have copy for it — with no producer anywhere, so every row was
+   * 'open' for ever and an inbox could only grow.
+   *
+   * ONE CALL FOR BOTH DIRECTIONS because it is one decision with two values.
+   * The customer has no equivalent and is not getting one: closing is the
+   * business withdrawing its willingness to keep talking about a job, which is
+   * its call about its own queue. What the customer gets is honesty — the
+   * conversation stays on their account, still reads, and says on the row that
+   * the business has closed it.
+   */
+  setThreadStatus: (id: string, open: boolean) =>
+    post<{ thread: Thread }>(`/api/threads/${id}/status`, { open }),
 
   postOpening: (b: { starts_at: number; ends_at: number; service_ids?: string[] }) =>
     post<{ opening: Opening }>('/api/openings', b),
@@ -1211,28 +2043,32 @@ export const api = {
    * this is the moment somebody has decided to buy. Two ways to satisfy it and
    * no third:
    *
-   *   already signed in   send nothing extra. The number on the order is taken
-   *                       off the account, not out of `phone` — which is what
-   *                       stops a suspended customer booking under somebody
-   *                       else's mobile, so do not expect `phone` to be
-   *                       honoured for a signed-in caller.
-   *   signing up here     send `phone` and the `code` that was texted to it by
+   *   already signed in   send nothing extra. The account on the order is the
+   *                       one the cookie names, not whatever `email` says —
+   *                       which is what stops a suspended customer booking
+   *                       under somebody else's address.
+   *   signing up here     send `email` and the `code` that was sent to it by
    *                       `requestCustomerCode`. The account is created, the
    *                       session cookie is set on this response, and the
    *                       order is placed in the same request.
    *
    * Neither: 401 `account_required`, whose message is the sentence to show.
    *
+   * `phone` is sent either way and is not part of that decision. It is the
+   * number the business rings on the day, it is taken on trust, and since
+   * migration 0038 it proves nothing at all.
+   *
    * `card_ref` is the processor's reference to a card, never a card number —
-   * see `saveCustomerCard`. Nothing produces one today, and while payment is
-   * switched off none is asked for. Once it is on, a checkout with no card on
-   * the account and no `card_ref` answers 402 `card_required`.
+   * see `saveCustomerCard`. A card is required: a checkout with no card on the
+   * account and no `card_ref` answers 402 `card_required`.
    */
   placeOrder: (b: {
     items: Array<{ gap_id: string; service_ids: string[] }>;
-    guest_name: string; phone: string; email?: string;
+    guest_name: string; phone: string;
+    /** The account this books against, when this device is not signed in yet. */
+    email?: string;
     address_line?: string; postcode?: string; thread_token?: string;
-    /** The six digits, when this device is not signed in yet. */
+    /** The six digits sent to `email`, when this device is not signed in yet. */
     code?: string;
     /** How to read a national `phone`. Defaults to US on the server. */
     country?: string;
@@ -1289,8 +2125,8 @@ export const api = {
     request<{ ok: true }>(`/api/public/watches/${encodeURIComponent(token)}/subscriptions`,
       { method: 'DELETE', body: JSON.stringify({ endpoint }) }),
 
-  trackCustomer: (token: string) =>
-    get<TrackView>(`/api/public/threads/${encodeURIComponent(token)}/track`),
+  trackCustomer: (ref: string) =>
+    get<TrackView>(`/api/public/threads/${encodeURIComponent(ref)}/track`),
   trackMe: () => get<{ position: VanPosition | null; trail: Array<{ lat: number; lng: number; recorded_at: number }> }>('/api/track/me'),
   trackPing: (b: Record<string, unknown>) =>
     post<{ stored: boolean; reason?: string }>('/api/track/ping', b),
@@ -1353,15 +2189,15 @@ export const api = {
     get<{ businesses: SimilarBusiness[] }>(
       `/api/public/profile/${encodeURIComponent(slug)}/similar${
         limit ? `?limit=${limit}` : ''}`),
-  reviewableBookings: (token: string) =>
+  reviewableBookings: (ref: string) =>
     get<{ bookings: Array<{ order_item_id: string; ends_at: number; services: string | null }> }>(
-      `/api/public/threads/${encodeURIComponent(token)}/reviewable`),
-  leaveReview: (token: string, b: { order_item_id: string; rating: number; body?: string }) =>
+      `/api/public/threads/${encodeURIComponent(ref)}/reviewable`),
+  leaveReview: (ref: string, b: { order_item_id: string; rating: number; body?: string }) =>
     post<{ review: Review }>(
-      `/api/public/threads/${encodeURIComponent(token)}/review`, b),
-  releaseReviewPhoto: (token: string, photoId: string, isPublic: boolean) =>
+      `/api/public/threads/${encodeURIComponent(ref)}/review`, b),
+  releaseReviewPhoto: (ref: string, photoId: string, isPublic: boolean) =>
     post<{ ok: true }>(
-      `/api/public/threads/${encodeURIComponent(token)}/review-photo/${photoId}`,
+      `/api/public/threads/${encodeURIComponent(ref)}/review-photo/${photoId}`,
       { public: isPublic }),
   replyToReview: (id: string, text: string) =>
     post<{ ok: true }>(`/api/reviews/${id}/reply`, { text }),
@@ -1374,7 +2210,17 @@ export const api = {
   logout: () => post<{ ok: true }>('/api/auth/logout'),
   me: () => get<{ operator: Operator; is_demo?: boolean }>('/api/me'),
   deleteService: (id: string) => del<{ ok: true }>(`/api/services/${id}`),
-  updateSettings: (body: Partial<Operator>) => patch<{ operator: Operator }>('/api/settings', body),
+  // `accept_public_bookings` is stored as 0 or 1 and read back that way on the
+  // Operator above, but the Worker takes a real boolean here as well as the
+  // number. Sending `false` rather than 0 is what a switch has in its hand, and
+  // a front end that had to remember to convert would eventually send the
+  // string "false" — which every truthiness test in a query would read as a
+  // listed business. Omit is what keeps the two spellings out of one another's
+  // way; an intersection would give this field the type `number & boolean`,
+  // which is `never`, and nothing could be sent at all.
+  updateSettings: (body: Partial<Omit<Operator, 'accept_public_bookings'>>
+    & { accept_public_bookings?: boolean | number }) =>
+    patch<{ operator: Operator }>('/api/settings', body),
 
   gaps: (from?: number, to?: number) => {
     const q = new URLSearchParams();
@@ -1385,8 +2231,11 @@ export const api = {
   detectGaps: (days = 14) => post<{ ok: true; created: number }>('/api/gaps/detect', { days }),
   candidates: (gapId: string) =>
     get<{ gap: Gap; candidates: Candidate[] }>(`/api/gaps/${gapId}/candidates`),
+  // No `sms_mode` on the response any longer: the Worker sends these itself,
+  // into each customer's conversation and their inbox, so there is no second
+  // step for the browser to branch on.
   sendOffers: (gapId: string, candidates?: Array<Pick<Candidate, 'kind' | 'client_id' | 'lead_id'>>) =>
-    post<{ offers: CreatedOffer[]; sms_mode: string; reason?: string }>(
+    post<{ offers: CreatedOffer[]; reason?: string }>(
       `/api/gaps/${gapId}/offers`, candidates ? { candidates } : {}),
   dismissGap: (gapId: string) => post<{ ok: true }>(`/api/gaps/${gapId}/dismiss`, {}),
 

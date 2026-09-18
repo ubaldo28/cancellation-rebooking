@@ -1,5 +1,5 @@
 import type { Env } from '../types';
-import { threadByToken } from './chat';
+import { threadByToken, type ThreadRef } from './chat';
 import { isDemoOperator } from './demo';
 import { FEED_EXCERPT_CHARS, notify } from './feed';
 import { redactContact } from './redact';
@@ -252,9 +252,9 @@ export async function reviewsForTrade(
  * deliberately no operator path to this.
  */
 export async function releasePhoto(
-  env: Env, rawToken: string, photoId: string, isPublic: boolean,
+  env: Env, ref: ThreadRef, photoId: string, isPublic: boolean,
 ): Promise<void> {
-  const thread = await threadByToken(env, rawToken);
+  const thread = await threadByToken(env, ref);
   if (!thread) throw notFound('That link is not valid any more.');
 
   const res = await env.DB.prepare(
@@ -336,14 +336,14 @@ export interface LeaveInput {
  * punish an operator twice for one event and hand any customer a lever.
  */
 export async function leaveReview(
-  env: Env, rawToken: string, input: LeaveInput,
+  env: Env, ref: ThreadRef, input: LeaveInput,
 ): Promise<Review> {
   const rating = Math.round(Number(input?.rating));
   if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
     throw badRequest('Pick between one and five stars.', 'bad_rating');
   }
 
-  const thread = await threadByToken(env, rawToken);
+  const thread = await threadByToken(env, ref);
   if (!thread) throw notFound('That link is not valid any more.');
 
   const item = await env.DB.prepare(
@@ -449,8 +449,8 @@ export async function replyToReview(
 }
 
 /** Which of this customer's finished jobs still have no review. */
-export async function reviewableFor(env: Env, rawToken: string) {
-  const thread = await threadByToken(env, rawToken);
+export async function reviewableFor(env: Env, ref: ThreadRef) {
+  const thread = await threadByToken(env, ref);
   if (!thread?.appointment_id) return [];
 
   const rows = await env.DB.prepare(

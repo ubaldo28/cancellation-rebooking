@@ -2,9 +2,10 @@ import type { Env } from '../types';
 import { hashOfferToken } from './auth';
 import { listingBlock } from './bypass';
 import { notify } from './feed';
-import { firstNameOnly, redactContact } from './redact';
+import { firstNameOnly, maskEmail, maskPhone, redactContact } from './redact';
 import { customerStanding } from './standing';
 import {
+  MAX_DURATION_SECONDS, MAX_NOTE_CHARS, MIN_DURATION_SECONDS,
   badRequest, conflict, haversineMeters, newId, newToken, notFound, now, toE164,
 } from './util';
 
@@ -65,16 +66,37 @@ export const REQUEST_TTL_SECONDS = 5 * 60;
 export const MIN_ONLINE_RADIUS_METERS = 1_000;
 export const MAX_ONLINE_RADIUS_METERS = 80_000;
 
-/** Sanity bounds on what a right-now job can be. Typo guards, not pricing. */
-const MIN_DURATION_SECONDS = 15 * 60;
-const MAX_DURATION_SECONDS = 12 * 60 * 60;
+/**
+ * Sanity bounds on what a right-now job can be. Typo guards, not pricing.
+ *
+ * The two duration bounds are MIN_DURATION_SECONDS / MAX_DURATION_SECONDS in
+ * ./util, shared with estimates.ts: a quarter of an hour to twelve hours, and
+ * the same decision in both places because both end up as the same kind of row
+ * on the same calendar.
+ *
+ * MAX_PRICE_CENTS IS NOT SHARED, AND THAT IS THE POINT OF THIS NOTE. It sits
+ * immediately beside those two in both files and DISAGREES: $10,000 here,
+ * $50,000 in estimates.ts. An instant opening is a slot somebody taps to fill
+ * this afternoon; a quoted estimate is a bespoke job an operator has thought
+ * about and priced, so its typo guard is five times higher.
+ *
+ * WHETHER THAT GAP IS STILL WANTED HAS NOT BEEN DECIDED — it may be
+ * deliberate, or it may be two round numbers chosen a year apart. Until
+ * somebody decides, BOTH STAY as they are. Do not unify them on the way past;
+ * raising this one quietly raises what a stranger can be asked to pay for a
+ * same-day slot. The matching note is at the declaration in estimates.ts.
+ */
 const MAX_PRICE_CENTS = 10_000_00;
 
-/** Strangers type these into a public form. Bounds, not rules. */
+/**
+ * Strangers type these into a public form. Bounds, not rules.
+ *
+ * The note's ceiling is MAX_NOTE_CHARS in ./util, shared with the parts note
+ * and the two quote descriptions — four separate declarations of 300 before.
+ */
 const MAX_NAME_CHARS = 80;
 const MAX_ADDRESS_CHARS = 200;
 const MAX_POSTCODE_CHARS = 20;
-const MAX_NOTE_CHARS = 300;
 
 /** Runaway guards on the two list queries. Neither is a ranking decision. */
 const CANDIDATE_CAP = 200;
@@ -326,6 +348,23 @@ export interface InstantRequest {
  * A list rather than a string because two queries below need the same columns
  * with a table prefix on them, and a hand-maintained second copy of a column
  * list is how a join quietly starts selecting a secret.
+ *
+ * TWO COLUMNS ARE DELIBERATELY ABSENT AND MUST STAY ABSENT.
+ *
+ * `token_hash` is the obvious one: it is the digest of the customer's own
+ * link, and the whole point of storing a digest is that nothing hands it back.
+ *
+ * `login_email` is the one that will look like an oversight to whoever reads
+ * this next, so it is written down here. Migration 0049 put it on the table so
+ * that "delete my data" can find these rows by the person rather than by a
+ * phone number two people in a house might share. It is the customer's PROVED
+ * mailbox — the account they sign in to — and the operator must never see it:
+ * `maskInstantRequest` below masks `email`, which is the contact address the
+ * customer typed, and a raw `login_email` arriving on the same row would hand
+ * the operator in full the very thing the mask exists to withhold, on a
+ * request they have not even accepted. Every query in this file selects this
+ * list, and both of the routes that serve one select it through this list, so
+ * leaving the column out here is what keeps it out of all of them.
  */
 const REQUEST_COLUMNS = [
   'id', 'operator_id', 'service_id', 'starts_at', 'duration_seconds', 'price_cents',
@@ -336,6 +375,51 @@ const REQUEST_COLUMNS = [
 
 const REQUEST_FIELDS = REQUEST_COLUMNS.join(', ');
 const REQUEST_FIELDS_R = REQUEST_COLUMNS.map((c) => `r.${c}`).join(', ');
+
+/**
+ * A request as the OPERATOR is allowed to see it, before and after they accept.
+ *
+ * The number and the mailbox were already masked at the route. The doorstep was
+ * not, and that is the hole this closes: a pending request handed every online
+ * operator within range the street line and five-decimal-place coordinates of a
+ * stranger's home for a job NOBODY HAD ACCEPTED. Every other doorstep in this
+ * product is governed by the release model — migration 0022 releases the
+ * address at the moment a booking exists and withdraws it when the booking goes
+ * away, and maskWithdrawnAddress in redact.ts is what enforces it — and the
+ * instant path was simply outside it. Five minutes of exposure is still
+ * exposure, and an operator who declines has still been handed an address they
+ * now hold forever.
+ *
+ * WHAT IS WITHHELD AND WHAT IS NOT. The postcode stays, because it is what the
+ * operator needs in order to decide: "is this within reach of where I am
+ * sitting" is the whole question a five-minute fuse asks, and it is the same
+ * coarse geography the retention sweep keeps after a job is over. The street
+ * line and the coordinates — which are the address, written differently —
+ * arrive on acceptance, which is the moment they agreed to drive there.
+ *
+ * It lives in this module rather than at the route because a mask written at
+ * one call site is a mask the second call site forgets: see the paragraph on
+ * maskCustomerRow in redact.ts, which is that same lesson learned twice on the
+ * schedule and the client list.
+ */
+export function maskInstantRequest<
+  T extends { status?: unknown; phone_e164?: unknown; email?: unknown },
+>(r: T): T {
+  const out: Record<string, unknown> = {
+    ...r,
+    phone_e164: maskPhone(r.phone_e164 as string | null),
+    email: maskEmail(r.email as string | null),
+  };
+  if (r.status !== 'accepted') {
+    // The coordinates go with the street line. A latitude and longitude to five
+    // decimal places is the doorstep, and withholding one without the other
+    // withholds nothing.
+    out.address_line = null;
+    out.lat = null;
+    out.lng = null;
+  }
+  return out as T;
+}
 
 /** What the customer's polling screen needs, without a second round trip. */
 export interface InstantRequestView extends InstantRequest {
@@ -354,6 +438,14 @@ export interface CreateInstantRequestInput {
   price_cents?: number | null;
   guest_name: string;
   phone: string;
+  /**
+   * The account's proved identity, off the account row and never off the
+   * request body. Standing is counted against it, so taking it from the body
+   * would be taking the one thing that is supposed to be proved from the one
+   * place nobody has proved anything. The route calls checkoutAccount first,
+   * which is what makes this present on every path that reaches here.
+   */
+  login_email: string;
   email?: string | null;
   address_line?: string | null;
   postcode?: string | null;
@@ -434,9 +526,11 @@ export async function createInstantRequest(
   const phone = toE164(input?.phone ?? null, op.country);
   if (!phone) throw badRequest('That does not look like a valid mobile number.', 'bad_phone');
 
-  // After normalising, so a suspension cannot be stepped around by typing the
-  // same number a different way. Same check the ordinary checkout makes.
-  const standing = await customerStanding(env, phone);
+  // AGAINST THE ADDRESS, NOT THE NUMBER — the same check the ordinary checkout
+  // makes, and for the same reason it moved: nobody proves a number any more,
+  // so a suspension hung on one is escapable by typing a different one. See
+  // migration 0038.
+  const standing = await customerStanding(env, input?.login_email ?? '');
   if (standing.blocked) throw conflict(standing.message!, 'suspended');
 
   // Duration and price come from the service when there is one, because those
@@ -519,16 +613,42 @@ export async function createInstantRequest(
     updated_at: t,
   };
 
+  // login_email is written and never read back out of this table by anything in
+  // this file — see the note on REQUEST_COLUMNS, which is why it is not in that
+  // list. It exists for one caller: eraseCustomerByPhone in retention.ts.
+  //
+  // WHAT IT REPLACES. That erasure used to find these rows with
+  // `phone_e164 IN (the numbers this person gave)`, and migration 0038 is the
+  // reason that was the wrong key: nothing proves a number any more, so the
+  // number on this row identifies a handset rather than a person. Two people
+  // sharing a household mobile were one subject, so erasing one deleted the
+  // other's requests; and a person whose account carries no number at all was
+  // no subject, so their own requests — a first name, a street line,
+  // coordinates to five decimal places and whatever they typed about their
+  // house — survived being told they had been forgotten. The address is what
+  // this person proved they can read mail at, and it is what the standing
+  // check three blocks up is already counted against, so it is the only thing
+  // on this request that is honestly about a person. Migration 0049 has the
+  // full version.
+  //
+  // Normalised on the way in is not needed here: `login_email` arrives off the
+  // account row, which customers.ts has already lowercased and trimmed, and
+  // taking it off the account rather than off the request body is what stops
+  // it being a value somebody typed.
+  const loginEmail = (input?.login_email ?? '').trim().toLowerCase() || null;
+
   await env.DB.prepare(
     `INSERT INTO instant_requests (id, operator_id, service_id, starts_at,
-       duration_seconds, price_cents, currency, guest_name, phone_e164, email,
+       duration_seconds, price_cents, currency, guest_name, phone_e164,
+       login_email, email,
        address_line, postcode, lat, lng, note, status, expires_at, decided_at,
        order_id, token_hash, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,NULL,NULL,?,?,?)`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,NULL,NULL,?,?,?)`,
   ).bind(
     request.id, request.operator_id, request.service_id, request.starts_at,
     request.duration_seconds, request.price_cents, request.currency,
-    request.guest_name, request.phone_e164, request.email, request.address_line,
+    request.guest_name, request.phone_e164, loginEmail, request.email,
+    request.address_line,
     request.postcode, request.lat, request.lng, request.note, request.expires_at,
     await hashOfferToken(raw, env), t, t,
   ).run();
@@ -545,10 +665,22 @@ export async function createInstantRequest(
   // for as long as the feed is kept. Where the job is belongs on the request,
   // which the operator opens from this row and which stops answering once the
   // request is gone. See NotifyInput in feed.ts.
+  //
+  // THE NAME AND THE NOTE ARE GONE FROM IT NOW, FOR EXACTLY THAT REASON. The
+  // paragraph above was right about the address and stopped one field short.
+  // A feed row written by an instant request carries no appointment_id and no
+  // thread_id, because a request nobody accepted never becomes either — so
+  // eraseCustomerByPhone, which finds feed rows by those two keys and nothing
+  // else, could not reach one. "Rosa wants somebody now", with whatever Rosa
+  // typed about her house quoted underneath it, therefore survived her asking
+  // to be forgotten and sat in the operator's feed until the ninety-day sweep
+  // happened past. The request row itself holds her name and her words, it is
+  // one tap away through this notification, and erasure deletes it outright —
+  // so the fix is not to key the copy, it is not to make one.
   await notify(env, operatorId, {
     kind: 'public_booking',
-    title: `${guestName} wants somebody now`,
-    body: request.note ?? 'Tap to accept or decline.',
+    title: 'Somebody wants a job now',
+    body: 'Tap to accept or decline — it expires in five minutes.',
     starts_at: request.starts_at,
   });
 
@@ -748,9 +880,12 @@ export async function cancelRequest(
 
   if ((res.meta.changes ?? 0) === 0) return requestByToken(env, rawToken);
 
+  // Without the name, for the reason createInstantRequest gives: a feed row
+  // from this path carries no key erasure can find it by, so it must not carry
+  // anything erasure would have to come back for.
   await notify(env, view.operator_id, {
     kind: 'booking_cancelled',
-    title: `${view.guest_name} cancelled their request`,
+    title: 'A right-now request was cancelled',
     body: 'They withdrew it before you answered.',
     starts_at: view.starts_at,
   });
@@ -762,13 +897,21 @@ export async function cancelRequest(
 // Tidying up
 // ---------------------------------------------------------------------------
 
-/** One "you missed one", wherever expiry is noticed. */
+/**
+ * One "you missed one", wherever expiry is noticed.
+ *
+ * The name is deliberately not in it — see createInstantRequest. This row
+ * outlives the request it is about by up to ninety days and there is no key on
+ * it that an erasure can find, so a customer's first name in the title is a
+ * copy of them that "delete my data" cannot reach. Nothing about the operator's
+ * missed job needs it: the row that is gone is the point of the message.
+ */
 async function notifyMissed(
-  env: Env, row: { operator_id: string; guest_name: string; starts_at: number },
+  env: Env, row: { operator_id: string; starts_at: number },
 ): Promise<void> {
   await notify(env, row.operator_id, {
     kind: 'booking_cancelled',
-    title: `You missed a job from ${row.guest_name}`,
+    title: 'You missed a right-now job',
     body: 'Nobody answered within five minutes, so they were told to find '
       + 'somebody else.',
     starts_at: row.starts_at,

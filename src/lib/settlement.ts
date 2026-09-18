@@ -1,5 +1,5 @@
 import type { Env } from '../types';
-import { threadByToken } from './chat';
+import { threadByToken, type ThreadRef } from './chat';
 import { formatMoney, localeFor } from './countries';
 import { notify } from './feed';
 import { badRequest, conflict, newId, notFound, now } from './util';
@@ -25,11 +25,26 @@ import { badRequest, conflict, newId, notFound, now } from './util';
  * and owes the fee on top. The scheme does not have to be detected to fail --
  * it only has to be unsafe to attempt, and it is.
  *
- * The other half is silence. Somebody genuinely abandoned on their own
- * doorstep complains within minutes. Somebody who quietly received the service
- * says nothing. So no answer resolves to keeping the money and charging
- * nobody: neither side profits from staying quiet, which is what stops the two
- * of them simply agreeing to say nothing.
+ * The other half is silence, and WHO PAYS FOR IT DEPENDS ON WHO CANCELLED.
+ *
+ * When the CUSTOMER cancelled, silence really does decide something. They told
+ * us they were cancelling, the only person who could answer "did they do it
+ * anyway" against their own interest is the operator, and the ladder they were
+ * shown before they confirmed is what applies. Nothing about that changes.
+ *
+ * When the OPERATOR cancelled, silence proves nothing about anybody and the
+ * money goes back. This used to resolve the other way — keep the money, charge
+ * nobody, neither side profits — and that rule was written when NO money could
+ * move, so "keeping" it cost nobody anything and read as a tidy symmetry. Now
+ * that the card is really charged at booking, it means the platform quietly
+ * keeps a stranger's money for a job that was never done because they did not
+ * read an email. There is no version of this product where that is defensible.
+ * The operator's fee stays waived, because an unanswered question is not
+ * evidence against them either, and the deterrent is untouched: an operator
+ * doing the job for cash still cannot rely on the customer to stay quiet, and
+ * an answer of "no, they left" still costs them the whole fee. What changes is
+ * only that the cost of a question nobody answered lands on the platform that
+ * asked it rather than on the customer who paid.
  */
 
 /** The longest the money waits for evidence that has not arrived. */
@@ -106,13 +121,13 @@ export function holdStatement(
  *               'done' is trustworthy in a way that silence is not.
  */
 export async function answerWork(
-  env: Env, rawToken: string, orderItemId: string, answer: WorkAnswer,
+  env: Env, ref: ThreadRef, orderItemId: string, answer: WorkAnswer,
 ): Promise<{ settlement: Settlement; refund_cents: number }> {
   if (answer !== 'done' && answer !== 'not_done') {
     throw badRequest('Tell us whether the work happened.', 'bad_answer');
   }
 
-  const thread = await threadByToken(env, rawToken);
+  const thread = await threadByToken(env, ref);
   if (!thread) throw notFound('That link is not valid any more.');
 
   const item = await env.DB.prepare(
@@ -140,6 +155,12 @@ export async function answerWork(
   //                 for this job, and apply the lead fee already recorded.
   //   'done'     -> refund nothing, pay the operator as a completed job, and
   //                 void the lead fee: the work was done.
+  //
+  // BOTH HALVES NOW HAPPEN, and for a while only the first one did. The refund
+  // moved and the payout did not: settleDueWork excluded cancelled lines, so
+  // "the operator is paid as though the job completed" was a sentence in this
+  // comment and nothing else, and the whole job sat in the platform balance.
+  // payableCents in checkout.ts is what reads this decision now.
   //
   // Both are a single decision taken here, once, on a row that can only be in
   // 'held'. The status guard in the WHERE clause is what makes a double tap on
@@ -184,11 +205,25 @@ export async function answerWork(
 /**
  * The sweep. Settles everything whose hold has run out.
  *
- * Silence resolves to 'withheld' -- the money stays put, the operator is not
- * charged, and both are flagged. That combination is chosen so that no pair of
- * people can profit by agreeing to say nothing: the customer does not get
- * their refund, and the operator does not get a fee waived into a payout. The
- * only way for either side to be made whole is for somebody to answer.
+ * A CUSTOMER cancellation settles on evidence, because their own answer is
+ * already on the record: a van seen at the address means withheld, nothing
+ * seen means the ladder they were quoted is paid out.
+ *
+ * An OPERATOR cancellation that nobody answered RELEASES THE CUSTOMER'S MONEY,
+ * and that is a deliberate reversal. It used to resolve to 'withheld' on the
+ * reasoning that neither side should profit from staying quiet — written when
+ * the payment seam did not exist, so withholding moved nothing and cost nobody
+ * anything. It costs somebody now: the card was charged at booking, the
+ * business cancelled the job, and 'withheld' meant this platform kept the
+ * money for work that was never done because a customer did not open an email.
+ * A fee we are not sure is owed we waive; money we are not sure we may keep we
+ * give back. The two halves are the same principle and only one of them was
+ * ever implemented.
+ *
+ * The operator is still not charged and is still flagged. Silence is not
+ * evidence against them, and the thing that actually deters the doorstep cash
+ * job is unchanged — it was never the silence rule, it was that an operator
+ * has to trust a stranger not to answer "no, they left".
  */
 export async function settleExpiredHolds(env: Env): Promise<number> {
   const t = now();
@@ -209,8 +244,17 @@ export async function settleExpiredHolds(env: Env): Promise<number> {
       ? await hasFlag(env, item.id, 'visit_after')
       : false;
 
+    // An operator cancellation with no answer releases: see the note above.
+    // The customer's side is unchanged, because there silence genuinely is an
+    // answer — they are the one who cancelled, and the ladder they were shown
+    // before they confirmed is what they get.
+    //
+    // 'withheld' here means a van really was seen at that address after the
+    // customer said they were cancelling, so the work happened and the whole
+    // job is the operator's. That is money the payout sweep now moves; it used
+    // to be a status nothing acted on. See payableCents in checkout.ts.
     const settlement: Settlement =
-      item.cancelled_by === 'customer' ? (flagged ? 'withheld' : 'released') : 'withheld';
+      item.cancelled_by === 'customer' ? (flagged ? 'withheld' : 'released') : 'released';
 
     const res = await env.DB.prepare(
       `UPDATE order_items SET settlement=?, settled_at=?, refund_cents=?
@@ -219,16 +263,16 @@ export async function settleExpiredHolds(env: Env): Promise<number> {
     if ((res.meta.changes ?? 0) === 0) continue;   // answered while this ran
 
     if (item.cancelled_by === 'operator' && item.work_confirmed === null) {
-      // Withheld means the money stays with the operator, exactly as an answer
-      // of 'done' does — so the fee has to go the same way, and it did not.
-      // Left owed, silence billed the operator for cancelling a job they were
-      // simultaneously being paid for, and it made the platform the one party
-      // that profits from nobody answering: it kept the customer's money AND
-      // collected the fee. Neither side may gain from silence, which is the
-      // entire reason silence resolves this way.
+      // The fee is waived for the same reason the refund is released: nobody
+      // answered. An unanswered question is not proof the operator walked away
+      // from a job they had been paid to do, and a fee is a real debt that
+      // blocks their listing until it is settled — billing one on a silence is
+      // charging somebody for something nobody established. Waived rather than
+      // deleted, so the record that they cancelled survives the decision not to
+      // charge for it.
       await env.DB.prepare(
         `UPDATE lead_fees SET status='waived', settled_at=?, updated_at=?,
-           note='Nobody said whether the work happened, so the money stayed put.'
+           note='Nobody said whether the work happened, so nothing was charged for it.'
           WHERE order_item_id=? AND status='owed'`,
       ).bind(t, t, item.id).run();
 
@@ -240,8 +284,8 @@ export async function settleExpiredHolds(env: Env): Promise<number> {
 }
 
 /** What a customer needs to be asked, if anything, on their own page. */
-export async function pendingQuestion(env: Env, rawToken: string) {
-  const thread = await threadByToken(env, rawToken);
+export async function pendingQuestion(env: Env, ref: ThreadRef) {
+  const thread = await threadByToken(env, ref);
   if (!thread?.appointment_id) return null;
 
   const item = await env.DB.prepare(
@@ -291,9 +335,9 @@ export async function pendingQuestion(env: Env, rawToken: string) {
  * strongest single signal in the system, which is why it gets its own flag.
  */
 export async function confirmArrival(
-  env: Env, rawToken: string, orderItemId: string,
+  env: Env, ref: ThreadRef, orderItemId: string,
 ): Promise<{ arrival_confirmed_at: number }> {
-  const thread = await threadByToken(env, rawToken);
+  const thread = await threadByToken(env, ref);
   if (!thread) throw notFound('That link is not valid any more.');
 
   const t = now();

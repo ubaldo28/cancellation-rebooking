@@ -659,3 +659,43 @@ main:focus { outline: none; }
 @media (prefers-reduced-motion: reduce) {
   .shell-search-go { transition: none; }
 }
+
+/* --- footer brand block -------------------------------------------------
+   Thumbtack's footer opens with the mark and a one-line promise before any
+   column, and it is what makes the block read as the end of a site rather
+   than as a list of links that happens to be last. */
+.site-foot .foot-brand { min-width: 0; }
+.site-foot .foot-brand ul { list-style: none; margin: 14px 0 0; padding: 0; }
+.site-foot .foot-mark {
+  display: block; font-weight: 700; font-size: 19px;
+  letter-spacing: -0.01em; color: var(--ink);
+}
+.site-foot .foot-brand p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+
+
+/* ==========================================================================
+   THE TESTING BAND
+   ==========================================================================
+   Round The Way can send a hundred emails a day and every new account on
+   either side costs one, so a hundred customers and a hundred businesses is
+   what a day can honour. The band says so on every page, above the bar.
+
+   Quiet on purpose. It is a standing condition rather than an alert: red
+   would make every page look broken, and somebody who reads "in testing" as
+   "this is broken" leaves. Accent-soft is the same ground the site uses for
+   anything it wants read rather than obeyed.
+
+   No fixed height and no position:fixed. It wraps to two lines on a narrow
+   phone and pushes the page down, which is correct — a band that overlays
+   content covers the first thing somebody came to read. */
+.testing-band {
+  margin: 0;
+  padding: 8px 20px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border-bottom: 1px solid var(--accent-line);
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
+}
+.testing-band strong { font-weight: 650; }
